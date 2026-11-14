@@ -1,6 +1,6 @@
 # RG40XX H / muOS 2601 — фактический runtime и ABI
 
-**Снимок:** 2026-11-14, 18:06 UTC. **Устройство:** ANBERNIC RG40XX H, muOS 2601.0 Jacaranda, AArch64. Собран по явно разрешённому read-only SSH inventory. Firmware, библиотеки, настройки и сохранения не изменялись; демка и игра не запускались.
+**Снимок:** 2026-11-14, 18:06 UTC. **Устройство:** ANBERNIC RG40XX H, muOS 2601.0 Jacaranda, AArch64. Собран по явно разрешённому read-only SSH inventory. При сборе снимка firmware, библиотеки, настройки и сохранения не изменялись; демка и игра не запускались. Последующий отдельно разрешённый device test демки описан в [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md); исходный JSON inventory не изменён.
 
 ## 1. Короткий ответ по блокеру Dawn
 
@@ -18,7 +18,7 @@
 
 **Вывод:** эти ошибки не требуют обновления firmware. Вариант с подходящим build toolchain/sysroot для готовой Dawn остаётся обоснованным. Пересборка Dawn — другой возможный вариант, но её необходимость нельзя выводить только из старого образа сборки. После этой проверки пользователь согласовал [новое build-окружение](H700_BUILD_ENVIRONMENT.md). ENV-01/02 затем прошли: отдельный image создан, демка слинкована и проверена без графики в контейнере; firmware осталась неизменной.
 
-Это ещё **не подтверждение полной совместимости Dawn**: конечный executable теперь слинкован; его NEEDED, version nodes и пять selected imports сверены со snapshot, но не каждый exact symbol и не firmware runtime-поведение. Не следует также менять образ на произвольную новую distro: её glibc/libstdc++ могут оказаться новее firmware.
+Это ещё **не подтверждение полной совместимости Dawn**: конечный executable теперь слинкован; его NEEDED, version nodes и пять selected imports сверены со snapshot; затем loader/CPU checks и offscreen/bridge сценарии прошли на firmware. Не каждый exact symbol и не все runtime paths полной игры проверены. Не следует также менять образ на произвольную новую distro: её glibc/libstdc++ могут оказаться новее firmware.
 
 ## 2. Проверены именно отсутствовавшие symbols
 
@@ -101,4 +101,4 @@ _ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE15_M_replace_coldEPcmPKcmm
 
 Output создаётся эксклюзивно, существующий snapshot не перезаписывается. Перед повторным запуском согласовать актуальный SSH destination и выбрать новый локальный output. Нельзя отключать host-key verification. Полный environment, hostname, IP, credentials, game paths и saves не собираются.
 
-В [H700_RUNTIME_ABI.json](H700_RUNTIME_ABI.json) сохранены исходные обезличенные данные. В [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md) — связь с текущей ошибкой линковки; актуальный статус — [H700_PROGRESS.md](H700_PROGRESS.md).
+В [H700_RUNTIME_ABI.json](H700_RUNTIME_ABI.json) сохранены исходные обезличенные данные. В [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md) — история устранённой ошибки линковки и результаты device demo; актуальный статус — [H700_PROGRESS.md](H700_PROGRESS.md).

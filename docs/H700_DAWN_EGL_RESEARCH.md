@@ -1,6 +1,6 @@
 # PF-01: Dawn и firmware EGL — исследование исходников
 
-**Дата:** 2026-11-14. **Статус:** найден точный source snapshot, выполнен статический разбор; runtime-совместимость с RG40XX H не проверена. Это материал для [предплановых проверок](H700_PREFLIGHT.md), не утверждённая архитектура переноса. Позднее по разрешению пользователя подготовлена [изолированная демка](H700_GRAPHICS_PROBE.md); прежний Bookworm link blocker снят отдельным [ABI-matched builder](H700_BUILD_ENVIRONMENT.md), compile/link и безопасные container modes прошли. Device graphics остаётся непроверенной.
+**Дата:** 2026-11-14. **Статус:** найден точный source snapshot и выполнен статический разбор. Позднее отдельная [демка](H700_GRAPHICS_PROBE.md) прошла compile/link в [ABI-matched builder](H700_BUILD_ENVIRONMENT.md), loader/CPU checks и offscreen/bridge pixel/order/teardown assertions на RG40XX H. Визуальная приёмка пока pending; полная совместимость renderer/игры не доказана. Это материал для [предплановых проверок](H700_PREFLIGHT.md), не утверждённая архитектура переноса.
 
 ## 1. Достоверность источника
 
@@ -19,7 +19,7 @@
 
 **Новый renderer нельзя заранее отвергать из-за EGL 1.4 или отсутствия X11/Wayland.** Dawn этого snapshot имеет штатный native API для внешнего EGLDisplay и импорта EGLImage. Поэтому маленькая проверка новой графики с уже работающим firmware presenter имеет основание.
 
-Однако этот API не означает заимствование SDL context и не делает обмен кадрами автоматически синхронизированным. Статически снят вопрос наличия механизма; доступность firmware extensions, фактическая работа обмена и production lifetime/threading остаются отдельными проверками.
+Однако этот API не означает заимствование SDL context и не делает обмен кадрами автоматически синхронизированным. Наличие механизма подтверждено исходниками, а минимальный обмен затем проверен на firmware в single-image демке. Production lifetime/threading и полный набор requirements U остаются отдельными проверками.
 
 ## 3. Подтверждённые контракты
 
@@ -65,13 +65,13 @@ Legacy wrapper не предоставляет STM Begin/EndAccess с acquire/re
 
 ## 5. Что ещё нельзя считать решённым
 
-1. **Lifetime импортированного alias.** EGLImage import создаёт GLuint, но examined path передаёт `OwnsHandle::No`; `Texture::DestroyImpl` удаляет handle только при `Yes`. Полный безопасный путь освобождения alias для production пока не определён. Не создавать wrapper на каждый кадр и не выдавать выход процесса за готовую политику resource recreation. В подготовленной демке использован один фиксированный импорт на полный lifetime отдельного device/instance с проверкой уничтожения наблюдавшегося Dawn context после освобождения всех ссылок. Этот ограниченный shutdown обоснован статически, но на устройстве ещё не проверен; он не решает освобождение каждого импорта при живом production device.
+1. **Lifetime импортированного alias.** EGLImage import создаёт GLuint, но examined path передаёт `OwnsHandle::No`; `Texture::DestroyImpl` удаляет handle только при `Yes`. Полный безопасный путь освобождения alias для production пока не определён. Не создавать wrapper на каждый кадр и не выдавать выход процесса за готовую политику resource recreation. В подготовленной демке использован один фиксированный импорт на полный lifetime отдельного device/instance с проверкой уничтожения наблюдавшегося Dawn context после освобождения всех ссылок. Этот ограниченный shutdown затем прошёл assertions на устройстве в обоих режимах; он не решает освобождение каждого импорта при живом production device и не является измерением driver leaks.
 2. **Context/thread topology.** Toggle, разрешающий использование context с разных потоков, затрагивает scoped current-context behaviour и может создавать дополнительные pipeline contexts. Его нельзя включать как безусловный «фикс SDL sharing». Согласовать минимальную топологию опыта и способ восстановления presenter context.
-3. **Firmware capabilities.** Robustness, fence/image extensions, core proc lookup, configs и фактическая видимость storage требуют проверки на устройстве. Ранее работающий donor bridge не доказывает всех требований Dawn.
-4. **Package composition.** Отдельная демка теперь слинкована с native display/import APIs этого package и прошла container CPU smoke tests. Это закрывает API link check в её объёме, но не firmware loader/runtime или все требования полной игры.
+3. **Firmware capabilities.** Минимальный сценарий Dawn/Mali прошёл на EGL 1.4 / GLES 3.2: device creation, render/readback и inter-context EGLImage storage видимы, completion/teardown assertions прошли. Полный extension/feature audit и все limits U этим не заменяются; compute workload и все game effects не проверены.
+4. **Package composition.** Отдельная демка теперь слинкована с native display/import APIs этого package и прошла container CPU smoke tests. Затем firmware loader и graphics runtime прошли в объёме демки; все требования полной игры этим не проверены.
 5. **Покрытие игры.** Успешный узор на экране не доказывает все GX effects, интерфейс, sound/save paths или производительность. Они остаются частью последующего плана переноса.
 
-Блокировка «нет исходников нужной версии» **снята**. PF-01 не следует автоматически отмечать полностью завершённым: нужны окончательная фиксация минимального ownership/sync/cleanup сценария и согласование дальнейших probes. Production-вопросы, не покрываемые маленькой демкой, должны быть явно закрыты/учтены до утверждения плана реализации, а не оставлены как неоговорённые изменения по ходу.
+Блокировка «нет исходников нужной версии» **снята**. Минимальный ownership/sync/cleanup сценарий зафиксирован и проверен в демке; полный PF-01 нельзя закрыть за production lifetime/threading без решения. Дальнейшие probes согласуются отдельно. Production-вопросы, не покрываемые маленькой демкой, должны быть явно закрыты/учтены до утверждения плана реализации, а не оставлены как неоговорённые изменения по ходу.
 
 ## 6. Первичные source files
 

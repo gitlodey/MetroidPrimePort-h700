@@ -60,7 +60,7 @@
 
 Не переносите донорские коммиты целиком: вместе с GLES-кодом они содержат удаления функций и откаты проверок безопасности. Не подменяйте firmware `libmali`, не включайте KMSDRM по аналогии с R36S и не запускайте старые `deploy_rk3326.sh`/debug-скрипты. Для новых тестов используйте отдельную установку и резервную копию сохранений.
 
-До плана реализации подготовлена [отдельная graphics demo](docs/H700_GRAPHICS_PROBE.md): [ABI-matched Docker builder](docs/H700_BUILD_ENVIRONMENT.md), compile/link, ELF gate и CPU smoke tests прошли. Это не сборка игры и не подтверждение Dawn/Mali runtime: следующий шаг — отдельно согласовать её device test, затем выбрать интеграцию и утвердить план переноса.
+До плана реализации подготовлена [отдельная graphics demo](docs/H700_GRAPHICS_PROBE.md): [ABI-matched Docker builder](docs/H700_BUILD_ENVIRONMENT.md), compile/link и ELF gate прошли. По отдельному разрешению loader/CPU checks, Dawn offscreen (2 кадра) и EGLImage bridge (120 кадров) прошли программные pixel/order/teardown проверки на RG40XX H. Визуальная приёмка пока pending. Это не сборка игры и не доказательство всех requirements/FPS: дальше нужно закрыть остаточные вопросы, согласовать интеграцию и утвердить план переноса.
 
 ---
 
