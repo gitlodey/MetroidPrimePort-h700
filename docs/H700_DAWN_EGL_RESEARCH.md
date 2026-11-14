@@ -1,6 +1,6 @@
 # PF-01: Dawn и firmware EGL — исследование исходников
 
-**Дата:** 2026-11-14. **Статус:** найден точный source snapshot и выполнен статический разбор. Позднее отдельная [демка](H700_GRAPHICS_PROBE.md) прошла compile/link в [ABI-matched builder](H700_BUILD_ENVIRONMENT.md), loader/CPU checks и offscreen/bridge pixel/order/teardown assertions на RG40XX H. Визуальная приёмка пока pending; полная совместимость renderer/игры не доказана. Это материал для [предплановых проверок](H700_PREFLIGHT.md), не утверждённая архитектура переноса.
+**Дата:** 2026-11-14. **Статус:** найден точный source snapshot и выполнен статический разбор. Позднее отдельная [демка](H700_GRAPHICS_PROBE.md) прошла compile/link в [ABI-matched builder](H700_BUILD_ENVIRONMENT.md), loader/CPU checks и offscreen/bridge pixel/order/teardown assertions на RG40XX H. Пользователь подтвердил видимость квадрантов и маркера при кратком наблюдении; полная визуальная проверка и возврат меню не подтверждены. Полная совместимость renderer/игры не доказана. Это материал для [предплановых проверок](H700_PREFLIGHT.md), не утверждённая архитектура переноса.
 
 ## 1. Достоверность источника
 

@@ -2,7 +2,7 @@
 
 ## Текущий статус
 
-**Демка собрана в новом ARM64 Docker image; ENV-01/02 прошли 2026-11-14.** Прежний link blocker Bookworm устранён без изменения Dawn/firmware. 43 unit tests, compile/link, ELF/ABI gate и безопасные контейнерные modes — PASS. На RG40XX H / muOS 2601.0 Jacaranda прошли `--help`, CPU self-test, offscreen (2 кадра) и bridge (120 кадров), включая pixel/order и dedicated-context teardown assertions. Визуальное подтверждение пользователя пока не получено. Результаты — раздел 8. Подробности окружения и его EOL-ограничения — [ENV-01/02](H700_BUILD_ENVIRONMENT.md).
+**Демка собрана в новом ARM64 Docker image; ENV-01/02 прошли 2026-11-14.** Прежний link blocker Bookworm устранён без изменения Dawn/firmware. 43 unit tests, compile/link, ELF/ABI gate и безопасные контейнерные modes — PASS. На RG40XX H / muOS 2601.0 Jacaranda прошли `--help`, CPU self-test, offscreen (2 кадра) и bridge (120 кадров), включая pixel/order и dedicated-context teardown assertions. Пользователь подтвердил видимость квадрантов и маркера; артефактов при кратком наблюдении не заметил. Полная визуальная проверка и возврат меню не подтверждены. Результаты — раздел 8. Подробности окружения и его EOL-ограничения — [ENV-01/02](H700_BUILD_ENVIRONMENT.md).
 
 Код игры, root CMake, dependency pins и донор не изменялись. Первоначальная подготовка демки не включала deploy/graphics; затем пользователь отдельно предоставил свободную приставку и разрешил тест. Использовалась временная установка в `/tmp`, после теста удалённая. Исходный read-only SSH inventory описан в [runtime/ABI](H700_RUNTIME_ABI.md). Любой следующий запуск требует актуального разрешения на окно; успешный тест не разрешает начать перенос.
 
@@ -78,7 +78,7 @@ Output должен быть новым `build/h700-graphics-probe` либо о�
 | Executable `--help` / `--self-test` | **PASS** в контейнере, без SDL/GPU initialization |
 | Container `ldd` | **PASS**, без неразрешённых dependencies; это не firmware loader test |
 | Manifest hashes / licenses | **PASS**; package проверен, штатный collector выполнен |
-| Device runtime / offscreen / bridge | **PASS в ограниченном сценарии**, см. раздел 8; визуальная оценка пока pending |
+| Device runtime / offscreen / bridge | **PASS в ограниченном сценарии**, см. раздел 8; видимость узора подтверждена, без пристального наблюдения |
 
 Исправлены две локальные ошибки реализации демки: repeatable callback использует typed userdata с достаточным lifetime; восстановление presenter не полагается на устаревший SDL TLS cache. Дополнительное ревью выявило двойное удаление presenter context в pinned SDL2 backend: теперь после GL cleanup выполняется проверяемое отсоединение context, а единственное удаление остаётся за `SDL_DestroyWindow`. SDL snapshot не изменён. Публикация stage перенесена после всех gates; добавлены regression tests. Эти исправления не меняют выбранную библиотеку или архитектуру эксперимента.
 
@@ -158,7 +158,7 @@ Timeout не сработал; TERM/KILL не потребовались. Core d
 - Presenter drawable **640×480**. Сам синтетический render target — **64×64**, затем GPU blit в drawable; это не проверка игровой нагрузки при полном разрешении.
 - Adapter сообщает `maxTextureDimension2D=8192`, `maxImmediateSize=64`, `maxComputeInvocationsPerWorkgroup=128`; device creation с запрошенными 4096/64 прошёл. Полный набор U limits/features не запрашивался, compute workload и immediates shader этой демкой не проверены.
 - Dawn предупредил о снижении `maxDynamicUniformBuffersPerPipelineLayout` **72 → 16** и `maxDynamicStorageBuffersPerPipelineLayout` **70 → 16** из-за dynamic-offset allocation limit. Это warning, не отключённая validation error и не доказательство совместимости всех layouts игры.
-- Bridge установил: **GL row 0 соответствует первой строке WebGPU**. Явный переворот при display blit выбран по diagnostic pixels; физическую ориентацию и видимость экрана должен подтвердить пользователь.
+- Bridge установил: **GL row 0 соответствует первой строке WebGPU**. Явный переворот при display blit выбран по diagnostic pixels. Пользователь подтвердил видимость квадрантов и маркера; правильность физической ориентации отдельно не подтверждена.
 
 Существенный очищенный вывод:
 
@@ -171,8 +171,8 @@ PASS bridge frames=120 pixels/ordering and dedicated-context teardown checked
 
 Оба запуска прошли assertions отсутствия неожиданных Dawn validation/device-loss errors и GL errors, завершения queue work и уничтожения наблюдавшегося отдельного Dawn EGLContext после release. Это **bounded teardown witness**, не замер driver memory leaks и не решение удаления каждого alias при живом device.
 
-После запуска процессов игры/демки не обнаружено. Контрольные суммы firmware libc, libstdc++, libmali (EGL/GLES) и SDL2 совпали с исходным ABI snapshot. В изолированных HOME/config/cache/data/state/tmp files не появилось. Созданный test directory удалён после проверки его manifest; пользовательские данные, Ports installation и сохранения не затрагивались. Состояние изображения меню после закрытия удалённо не оценивалось.
+После запуска процессов игры/демки не обнаружено. Контрольные суммы firmware libc, libstdc++, libmali (EGL/GLES) и SDL2 совпали с исходным ABI snapshot. В изолированных HOME/config/cache/data/state/tmp files не появилось. Созданный test directory удалён после проверки его manifest; пользовательские данные, Ports installation и сохранения не затрагивались. Состояние изображения меню после закрытия удалённо не оценивалось. Пользователь сообщил, что после закрытия выключил приставку; возврат меню остаётся непроверенным.
 
-**Вывод:** конкретный путь **firmware SDL2/Mali → внешний EGLDisplay → Dawn OpenGLES → постоянный EGLImage → presenter blit/swap** прошёл программные проверки на целевом устройстве. Визуальная приёмка остаётся pending. Это аргумент для последующего выбора новой графики, не автоматический выбор renderer, не проверка полной игры и не основание обещать 30 FPS. В bridge намеренно есть sleep 100 ms/кадр и последовательные waits/readbacks; длительность процесса не является FPS benchmark.
+**Вывод:** конкретный путь **firmware SDL2/Mali → внешний EGLDisplay → Dawn OpenGLES → постоянный EGLImage → presenter blit/swap** прошёл программные проверки на целевом устройстве. Пользователь видел квадранты и маркер и не заметил артефактов, но за демкой пристально не следил: это подтверждение видимости узора, **не полноценная проверка отсутствия артефактов**. Возврат меню и физическая ориентация отдельно не подтверждены. Это аргумент для последующего выбора новой графики, не автоматический выбор renderer, не проверка полной игры и не основание обещать 30 FPS. В bridge намеренно есть sleep 100 ms/кадр и последовательные waits/readbacks; длительность процесса не является FPS benchmark.
 
 Остаточные вопросы: все обязательные features/limits U, production resource recreation/lifetime, многопоточная topology/синхронизация, реальные GX/retail effects, UI/audio/input/save-load и производительность. PF-02 по MusyX/nod/game-facing SDL API также не закрыт этой демкой.

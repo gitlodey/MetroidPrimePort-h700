@@ -120,6 +120,6 @@ Package находится в `build/h700-graphics-probe-abi238-final/package/`;
 
 **Ограничение ABI gate:** сверяются реальные provider/version nodes и пять конкретных exports, но не каждый импортируемый symbol. Контейнерный loader не заменяет muOS loader, `dlopen` firmware SDL2 и работу Mali. Kernel 4.9 и runtime/driver behaviour также требуют согласованной device-проверки. Достигнута готовность artifact к такой проверке, не доказана полная совместимость игры.
 
-После завершения ENV-01/02 пользователь отдельно разрешил активную проверку: firmware loader/CPU smoke tests, offscreen 2 кадра и bridge 120 кадров прошли программные pixel/order/teardown assertions на RG40XX H. Визуальная оценка пока pending; это не полный ABI/feature audit игры. Сценарий, artifact hashes, результаты и cleanup — [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md). Границы исходной ENV-итерации и её результаты выше сохранены как история.
+После завершения ENV-01/02 пользователь отдельно разрешил активную проверку: firmware loader/CPU smoke tests, offscreen 2 кадра и bridge 120 кадров прошли программные pixel/order/teardown assertions на RG40XX H. Пользователь подтвердил видимость квадрантов и маркера при кратком наблюдении; полная визуальная проверка и возврат меню не подтверждены. Это не полный ABI/feature audit игры. Сценарий, artifact hashes, результаты и cleanup — [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md). Границы исходной ENV-итерации и её результаты выше сохранены как история.
 
 Текущий статус — [H700_PROGRESS.md](H700_PROGRESS.md).
