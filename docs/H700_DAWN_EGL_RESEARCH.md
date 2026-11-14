@@ -87,4 +87,8 @@ Legacy wrapper не предоставляет STM Begin/EndAccess с acquire/re
 - [SharedTextureMemoryGL.cpp](https://github.com/Timdeuces/dawn/blob/118436b3f8f68583eb86e811ca605dc41637e8cc/src/dawn/native/opengl/SharedTextureMemoryGL.cpp), [SharedFenceEGL.cpp](https://github.com/Timdeuces/dawn/blob/118436b3f8f68583eb86e811ca605dc41637e8cc/src/dawn/native/opengl/SharedFenceEGL.cpp) — отличия STM/fence paths от legacy import.
 - [EGLImageWrappingTests.cpp](https://github.com/Timdeuces/dawn/blob/118436b3f8f68583eb86e811ca605dc41637e8cc/src/dawn/tests/white_box/EGLImageWrappingTests.cpp) — доступные tests и границы их доказательства.
 
-Новых graphics probes, сборки или обращений к приставке при этом исследовании не было. Код переноса и dependency pins не изменены.
+Новых graphics probes, сборки или обращений к приставке при этом source research не было. Код переноса и dependency pins не изменены.
+
+## 7. Следующее исследование после успешной демки
+
+[H700_DAWN_INTEGRATION_GAPS.md](H700_DAWN_INTEGRATION_GAPS.md) уточняет настоящий RequestDevice/layout contract U, условия Compatibility fallbacks, потоки и границы GPU completion, а также варианты production alias lifetime. Обнаружены конкретный texture-fetch budget mismatch и отдельная несогласованность optional volfog fallback; это source-level findings, не новые failures Mali. Ближайшие проверки GAP-A/B предложены для согласования, но не реализованы. Ни архитектура, ни изменение Dawn package этим исследованием не выбраны.

@@ -40,6 +40,7 @@
 - **Гипотеза:** разумные бюджеты и повторное использование shader programs могут уменьшить spikes/stutter и снизить риск нехватки памяти.
 - **Будущая проверка:** peak RSS, driver allocations при доступной метрике, high-water marks, cold/warm runs и длительная игра. Сохранять проверку корректности при eviction.
 - **Риск:** чрезмерное уменьшение cache вызывает повторные загрузки/компиляции; резервируемая память не равна измеренной resident memory. Исправление correctness/безопасности памяти при переносе не нужно откладывать под видом оптимизации.
+- **Уточнение по sources, 2026-11-14:** [pinned Dawn с U thread toggle](H700_DAWN_INTEGRATION_GAPS.md) при `GLAllowContextOnMultiThreads && !GLDefer` создаёт до четырёх shared compiler contexts, хотя Aurora OpenGLES использует один compiler worker. Их фактическое число и RAM/driver cost на Mali не измерены. После correctness имеет смысл измерить allocations/cold compile/context costs, не менять dependency или число contexts ради предположительного выигрыша.
 - **Статус:** направления измерения; конкретные бюджеты не назначены.
 
 ## OPT-005 — стоимость необязательных улучшений

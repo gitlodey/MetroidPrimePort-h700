@@ -212,10 +212,12 @@ U переводит `BACKEND_OPENGLES` в Dawn `wgpu::BackendType::OpenGLES`; �
 При этом U уже запрашивает `wgpu::FeatureLevel::Compatibility` и адаптирует требования к adapter limits:
 
 - texture vertex fetch заменяет vertex-stage storage buffers;
-- depth peek и volumetric fog имеют render-pass fallbacks без compute;
+- depth peek и volumetric fog имеют render-pass implementations без compute; наличие реализации не доказывает её доступность/валидность в каждом Compatibility profile;
 - BC/ASTC и другие optional features запрашиваются по наличию у adapter.
 
 Поэтому отсутствие vertex SSBO или compute само по себе не обосновывает отказ от U renderer. Эти fallbacks **не доказывают** совместимость Dawn с firmware Mali, но их надо отделять от проблемы отсутствующего display/context integration. Конкретный код — `webgpu/gpu.cpp`, adapter selection и блок required limits/features.
+
+**Уточнение последующего исследования:** в U texture-fetch layout найден budget mismatch (17/18 fragment textures против эффективного request 16/17); depth peek целиком выключен без Core, а optional volfog render fallback имеет отдельный float sample-type mismatch. Game-facing `GXPeekZ` consumer не найден, поэтому это не доказательство поломки retail-визоров. Эти source-level ограничения и успешная минимальная Dawn/Mali демка разобраны в [H700_DAWN_INTEGRATION_GAPS.md](H700_DAWN_INTEGRATION_GAPS.md); они не означают автоматический выбор архитектуры.
 
 Отсюда два предмета будущего решения:
 
