@@ -63,9 +63,9 @@ android/keystore.properties
 android/*.jks
 android/*.keystore
 
+# Shared project instructions in CLAUDE.md are versioned.
 # Local agent notes: they hold machine paths and private details.
 /AGENTS.md
-/CLAUDE.md
 /STATUS.md
 /STATUS-archive.md
 /orig/

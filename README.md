@@ -1,4 +1,64 @@
-# Metroid Prime Unbound - native port
+# Metroid Prime Unbound — порт для H700
+
+Адаптация нативного порта **Metroid Prime** для **ANBERNIC RG40XX H под muOS 2601.0 Jacaranda**. Это нативная C/C++-игра на основе декомпиляции, не запуск через эмулятор.
+
+> **Статус: подготовка переноса.** Разобраны изменения старого R36S/H700-порта и подготовлен технический обзор. Платформенный код, Docker-профиль и launcher ещё не перенесены в этот репозиторий. Запуск новой базы на RG40XX H и достижение целевых FPS **пока не подтверждены**.
+
+## Цель H700
+
+- Оригинальная игра с оригинальными ресурсами и штатными эффектами.
+- Корректные управление встроенным контроллером, звук, сохранение и загрузка.
+- Ориентир — **стабильные 30 FPS при 640×480, 4:3**; это цель, не достигнутый результат.
+- Сборка в **Linux ARM64 Docker**, ручная установка в **muOS Ports**.
+- Лёгкие улучшения управления и качества изображения можно оставить опциональными после проверки. Remastered/PBR, HD-паки и другие тяжёлые расширения не входят в первый этап.
+
+Работа пока ограничена **RG40XX H + Jacaranda 2601.0**. Совместимость с другими H700-устройствами и прошивками не заявлена; публикация PortMaster-пакета — отдельная задача.
+
+**Игровые данные не включены.** Для запуска нужна собственная копия игры. Не добавляйте в репозиторий или распространяемые пакеты образы дисков, извлечённые игровые ресурсы и личные сохранения. Лицензионные границы описаны в [LICENSE](LICENSE) и [NOTICE](NOTICE).
+
+## Откуда переносим
+
+| Источник | Роль |
+| --- | --- |
+| Этот репозиторий | Новая база upstream, исследованная на `c872da704` (`v0.46.0`) |
+| [jbcgames/MetroidPrimePort, ветка r36s](https://github.com/jbcgames/MetroidPrimePort/tree/r36s) | Донор R36S-адаптации: `aaf8349b144c3419714d489a017483ce7ef3edb0` |
+| Соседний локальный checkout `MetroidPrimePort` | R36S-донор с H700 bring-up: `3f31d19f6956e0c0ada7ed56b48703b9e0c00cd6` |
+
+Обе линии происходят из проекта `Odrannnn/MetroidPrimePort`; доступность прежних GitHub-ссылок не гарантируется. Для аудита используются локальные Git-ревизии.
+
+В старом checkout игра уже запускалась на целевой приставке, проверялись отдельные графические исправления и сохранение/загрузка. Это **не подтверждение работоспособности новой базы**: там другой renderer и другая реализация ряда подсистем.
+
+## С чего начать
+
+1. Начать с **[короткой версии на 3–5 минут](docs/H700_PORT_SUMMARY.md)** — основные выводы без геймдев-терминологии. Обоснования и детали — в **[полном обзоре переноса](docs/H700_PORT_REVIEW.md)**.
+2. Для разработки — **[CLAUDE.md](CLAUDE.md)**: устройство репозитория, ограничения и правила работы.
+3. Для существующих upstream-команд — [docs/NATIVE_PORT.md](docs/NATIVE_PORT.md) и [tools/README.md](tools/README.md). Это не готовая инструкция сборки H700.
+
+Дополнительные источники пока находятся в соседнем донорском checkout:
+
+- [RG40XX H: аппаратная платформа](../MetroidPrimePort/docs/RG40XX_H_HARDWARE.md);
+- [muOS Jacaranda: программная платформа](../MetroidPrimePort/docs/MUOS_PLATFORM.md);
+- [исторический журнал bring-up](../MetroidPrimePort/docs/MUOS_BRINGUP.md).
+
+Эти три ссылки требуют соседнего каталога `MetroidPrimePort`; автономная сводка ограничений и результатов есть в обзоре внутри этого репозитория. Статус и контрольные суммы локальных исходных справочников приведены в его разделе об источниках.
+
+## Сборка и запуск на приставке
+
+**В этом checkout пока нет перенесённых `Dockerfile.muos`, H700 CMake preset и Ports launcher.** Команды из донорского журнала относятся к старому коду и не должны выдаваться за рабочие команды новой версии.
+
+**Вывод изображения на H700 уже решён и проверен в старом порте:** R36S-коммит создал механизм, H700-коммит довёл этот вариант до запуска на нашей muOS. Путь: **SDL3-over-SDL2 → firmware SDL2 `mali` → EGL/GLES**. Открыт не вопрос вывода с нуля, а способ интеграции с новой архитектурой: адаптировать старую отрисовку к новой игре либо подключить новую отрисовку к проверенному платформенному пути. Ни один вариант пока не реализован здесь; стабильные 30 FPS остаются отдельной целью.
+
+В целевой muOS есть `/dev/fb0` и `/dev/mali0`, но отсутствует `/dev/dri`. Наличие OpenGL ES в upstream само по себе не даёт готовой интеграции с этим display stack.
+
+Не переносите донорские коммиты целиком: вместе с GLES-кодом они содержат удаления функций и откаты проверок безопасности. Не подменяйте firmware `libmali`, не включайте KMSDRM по аналогии с R36S и не запускайте старые `deploy_rk3326.sh`/debug-скрипты. Для новых тестов используйте отдельную установку и резервную копию сохранений.
+
+Следующий шаг — согласовать план реализации по обзору; проверенные H700-команды появятся вместе с соответствующим кодом и результатами проверки.
+
+---
+
+## О базовом порте (upstream)
+
+Ниже сохранена справка о возможностях и происхождении базового **Metroid Prime Unbound**. Перечень платформ, форматов и функций относится к upstream, **не к проверенной H700-сборке**. Ссылки на прежний upstream могут быть недоступны.
 
 > **Disclaimer:** this is an independent project, not affiliated with or endorsed
 > by [PrimeDecomp](https://github.com/PrimeDecomp/prime). It builds on their
@@ -12,7 +72,7 @@
 **You can load prime remastered models and textures in the game (check F1 > mods), you must provide your
 personal Metroid Prime Remastered dumped image, no assets are provided in this repo**
 
-A native build of **Metroid Prime** for Linux, Windows, Android, macOS and iPhone/iPad, compiled
+The upstream project provides a native build of **Metroid Prime** for Linux, Windows, Android, macOS and iPhone/iPad, compiled
 from the [PrimeDecomp](https://github.com/PrimeDecomp/prime) decompilation and
 rendered through Aurora (SDL3/WebGPU). There's no emulator involved. Supported
 discs: USA 1.00, 1.01 and 1.02, PAL and Trilogy, both USA and PAL.
@@ -21,7 +81,7 @@ discs: USA 1.00, 1.01 and 1.02, PAL and Trilogy, both USA and PAL.
 reads it from a disc image and never ships any of its assets. This repository
 ships no disc image, and neither does any package or release built from it.
 
-## What it adds over the console release
+## Upstream features (not yet validated on H700)
 
 - **Modern controls:** Mouse & Keyboard, Dual stick camera, Gyro controls, Native touch controls for mobile!
 - **Remastered assets:**  (Experimental) import models, effects and lighting from your own Metroid Prime
@@ -56,29 +116,31 @@ ships no disc image, and neither does any package or release built from it.
   slot name and the password if any, and connect; no seed file is needed. Each seed and slot gets its own separate save, checks made
   offline are sent on the next connect, chat with command support, DeathLink.
   
-## Downloads
+## Downloads and upstream disc support
 
-Releases are published on the
-[GitHub releases page](https://github.com/Odrannnn/MetroidPrimePort/releases).
-Every build needs your own disc image; none of them contains one.
+This H700 adaptation does not yet provide a validated RG40XX H package. The
+[former upstream releases page](https://github.com/Odrannnn/MetroidPrimePort/releases)
+is a historical reference; its availability is not guaranteed, and its builds
+must not be assumed to work on muOS.
 
-**Quick start:** download the build for your platform, start it, and pick your disc image when it
-asks. Supported discs are the GameCube USA 1.00, 1.01
-and 1.02 (`GM8E01`), PAL (`GM8P01`) and Trilogy (USA `R3ME01` and PAL `R3MP01`), as `.iso`, `.gcm`,
-`.rvz`, `.wbfs`, `.ciso` or `.nkit`. 
+The upstream disc support includes GameCube USA 1.00, 1.01 and 1.02 (`GM8E01`),
+PAL (`GM8P01`) and Trilogy (USA `R3ME01`, PAL `R3MP01`); see
+[the native-port reference](docs/NATIVE_PORT.md#run) for formats and experimental
+support details. This is not the H700 test matrix. Every build needs your own
+disc image; no game assets may be packaged with it.
 
-Press **F1** for every setting.
+The upstream settings menu opens with **F1** or **Start+Back** on a controller.
 
-## Building
+## Building the upstream port (not the H700 Docker profile)
 
-CMake 3.25+, Ninja and a C++20 toolchain; a normal clone is enough. The
-requirements, the configure, build and test commands for Linux, Windows and
+CMake 3.25+, Ninja, a C++20 compiler/library and a C compiler with C23 support
+for MusyX; a normal clone is enough. The requirements, the configure, build and test commands for Linux, Windows and
 macOS, the CMake options and what CI runs are in
 [`docs/NATIVE_PORT.md`](docs/NATIVE_PORT.md#build); the Android build is in
 [`docs/ANDROID.md`](docs/ANDROID.md). Before changing the game code, read
 [where port code goes](docs/NATIVE_PORT.md#where-port-code-goes).
 
-## Running
+## Running a native host build (not a muOS launcher)
 
 ```sh
 ./build/native/metroid_prime_port "/path/to/Metroid Prime (USA) (v1.00).iso"
@@ -98,6 +160,14 @@ macOS, the CMake options and what CI runs are in
 ## Credits
 
 This port would not exist without the work of these projects. Thank you.
+
+**Upstream and H700 work**
+
+- `Odrannnn/MetroidPrimePort`: the Metroid Prime Unbound upstream code and features.
+- [jbcgames/MetroidPrimePort](https://github.com/jbcgames/MetroidPrimePort/tree/r36s): the R36S/GLES donor.
+- gitlodey: the RG40XX H / muOS bring-up and this migration effort.
+- [bmdhacks/SDL, sdl2-backend](https://github.com/bmdhacks/SDL/tree/sdl2-backend):
+  the SDL3-over-SDL2 fork used by the donor; integration into this checkout is pending.
 
 **Foundation**
 
@@ -160,6 +230,8 @@ Nintendo and Retro Studios, and ships no game data.
 
 | Document | What it covers |
 |---|---|
+| [docs/H700_PORT_REVIEW.md](docs/H700_PORT_REVIEW.md) | Подробный аудит R36S/H700-изменений и применимость к новой базе |
+| [CLAUDE.md](CLAUDE.md) | Контекст H700 и правила для coding agents |
 | `docs/SETTINGS.md` | Every control, setting and environment variable |
 | `docs/NATIVE_PORT.md` | The detailed reference: build options, smoke-test hooks, platform notes |
 | `docs/MODS.md` | HD texture packs and the mods folder |
@@ -180,4 +252,6 @@ Nintendo and Retro Studios, and ships no game data.
 
 ## AI assistance
 
-Parts of this port were written with AI coding assistants, under my oversight.
+The upstream project reports using AI coding assistants under its maintainer's
+oversight. AI assistance is also used for this H700 migration; source review,
+validation results and unverified assumptions must be reported separately.
