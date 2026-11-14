@@ -1,0 +1,37 @@
+# Demo-only ABI baseline. Mantic is EOL; see docs/H700_BUILD_ENVIRONMENT.md.
+# Native linux/arm64 manifest, not the mutable ubuntu:23.10 tag.
+FROM ubuntu@sha256:72c9c923b9807a752ba9c8ba41432e62bb88312de9d15b536caeaf3ea5965ad5
+
+# HTTP bootstraps the archived repository before ca-certificates is installed.
+# APT signature/package verification remains enabled; signed indexes are pinned too.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources \
+    && printf '%s\n' \
+       'deb http://old-releases.ubuntu.com/ubuntu mantic main universe' \
+       'deb http://old-releases.ubuntu.com/ubuntu mantic-updates main universe' \
+       'deb http://old-releases.ubuntu.com/ubuntu mantic-security main universe' \
+       > /etc/apt/sources.list \
+    && apt-get update \
+    && printf '%s\n' \
+       'd5539f456b74f789f8977eeee5f3c2399225de8a424b4cfff66843b78697a311  /var/lib/apt/lists/old-releases.ubuntu.com_ubuntu_dists_mantic_InRelease' \
+       '22d7500cff13df9ee4be385d661d63c964c72ff81487e737adc05b3d6e575520  /var/lib/apt/lists/old-releases.ubuntu.com_ubuntu_dists_mantic-updates_InRelease' \
+       '5fca3465e4e80bccdd0eba53c90a6575a908c3b467fd293f2be58da42afd445e  /var/lib/apt/lists/old-releases.ubuntu.com_ubuntu_dists_mantic-security_InRelease' \
+       | sha256sum --check --strict \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       ca-certificates binutils \
+       libc6=2.38-1ubuntu6.3 libc6-dev=2.38-1ubuntu6.3 libc-bin=2.38-1ubuntu6.3 \
+       libstdc++6=13.2.0-4ubuntu3 libstdc++-13-dev=13.2.0-4ubuntu3 \
+       libgcc-s1=13.2.0-4ubuntu3 g++-13=13.2.0-4ubuntu3 \
+       clang-16=1:16.0.6-15 cmake=3.27.4-1 ninja-build=1.11.1-2 \
+       python3=3.11.4-5 pkg-config=1.8.1-2 \
+       libegl-dev=1.6.0-1 libgles-dev=1.6.0-1 \
+    && mkdir -p /opt/h700-toolchain \
+    && cp /var/lib/apt/lists/*InRelease /opt/h700-toolchain/ \
+    && dpkg-query -W -f='${binary:Package}\t${Version}\t${Architecture}\n' \
+       | LC_ALL=C sort > /opt/h700-toolchain/packages.tsv \
+    && rm -rf /var/lib/apt/lists/*
+
+# This is the only source copied into the narrow build context/image.
+COPY verify_environment.py /usr/local/lib/h700/verify_environment.py
+RUN python3 -B /usr/local/lib/h700/verify_environment.py --output /opt/h700-toolchain/abi.json
+
+WORKDIR /out

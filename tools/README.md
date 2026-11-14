@@ -45,6 +45,9 @@ Their output is committed, so a build does not need them or their inputs.
 
 | Script | What it does |
 |---|---|
+| [`h700_runtime_inventory.py`](h700_runtime_inventory.py) | Explicit-target, verified-SSH system ELF inventory; no remote files, graphics or firmware changes. Writes a new sanitized JSON snapshot; see [runtime/ABI reference](../docs/H700_RUNTIME_ABI.md). |
+| [`h700_graphics_probe/build.py`](h700_graphics_probe/build.py) | Standalone offline ARM64 Dawn/EGLImage demo build; no deploy. Compile/link, ABI metadata gates and CPU smoke tests passed in the [dedicated builder](../docs/H700_BUILD_ENVIRONMENT.md); not device-validated. See [status and limits](../docs/H700_GRAPHICS_PROBE.md). Both graphics modes require a separately agreed screen session. |
+| [`h700_graphics_probe/verify_environment.py`](h700_graphics_probe/verify_environment.py) | Read-only AArch64/glibc/C++ export checks inside the demo-only image; Docker recipe and pinned inputs are documented in [build environment](../docs/H700_BUILD_ENVIRONMENT.md). |
 | `mprig.py` | Isolated headless runs of the port (Xvfb + game + debug console); see `docs/DEBUGGING.md` |
 | `mpsoak.py` | Pre-release crash soak over the mprig rig (Remastered/retail x validation x MSAA); see `docs/DEBUGGING.md` |
 | `mpcon.py` | Client for the debug command console (`MP_CONSOLE`) |

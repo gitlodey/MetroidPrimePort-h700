@@ -1,0 +1,5 @@
+# Only the environment recipe and its standalone read-only verifier are sent.
+**
+!Dockerfile.abi238
+!.dockerignore
+!verify_environment.py

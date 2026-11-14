@@ -9,16 +9,17 @@
 ## Сначала прочитай
 
 1. [README.md](README.md) — цель и актуальный статус.
-2. [docs/H700_PORT_REVIEW.md](docs/H700_PORT_REVIEW.md) — подробный аудит донорских изменений, матрица решений и границы доказательности.
-3. [docs/NATIVE_PORT.md](docs/NATIVE_PORT.md) — сборка базового порта и раздел `Where port code goes`.
-4. При работе с подсистемой — её код, tests и документацию: [docs/SETTINGS.md](docs/SETTINGS.md), [docs/DEBUGGING.md](docs/DEBUGGING.md), [PORT_NOTES.md](PORT_NOTES.md), [tools/README.md](tools/README.md).
+2. [docs/H700_WORKFLOW.md](docs/H700_WORKFLOW.md) и [docs/H700_PROGRESS.md](docs/H700_PROGRESS.md) — обязательный процесс, текущий этап и блокировки. До реализации также прочитай утверждённый план, когда он появится.
+3. [docs/H700_PORT_REVIEW.md](docs/H700_PORT_REVIEW.md) — подробный аудит донорских изменений, матрица решений и границы доказательности.
+4. [docs/NATIVE_PORT.md](docs/NATIVE_PORT.md) — сборка базового порта и раздел `Where port code goes`.
+5. При работе с подсистемой — её код, tests и документацию: [docs/SETTINGS.md](docs/SETTINGS.md), [docs/DEBUGGING.md](docs/DEBUGGING.md), [PORT_NOTES.md](PORT_NOTES.md), [tools/README.md](tools/README.md).
 
 Не считай исторические pending-статусы из начала bring-up журнала последним результатом. Различай анализ исходников, старые device-tests и собственные свежие проверки.
 
 ## Цель и приоритеты
 
 - Оригинальные ресурсы, штатные эффекты, корректные управление, звук и сохранение/загрузка.
-- Ориентир — **стабильные 30 FPS при 640×480, 4:3**. Это пока не подтверждённый результат.
+- Первый этап — успешная воспроизводимая сборка и корректная работа игры на целевом устройстве. Оптимизация — следующий отдельный этап, её ориентир — **стабильные 30 FPS при 640×480, 4:3**. Это пока не подтверждённый результат; не смешивай приёмку переноса с достижением целевого FPS.
 - Основной целевой build path — **Linux ARM64 Docker**; установка вручную в **muOS Ports**.
 - Сначала correctness и воспроизводимые измерения, затем оптимизация.
 - Remastered/PBR/HD packs не обязательны для первого этапа. Дешёвые input/QoL и визуальные улучшения можно сохранять опционально после проверки.
@@ -70,7 +71,7 @@ projects/
 - Исторические ES 3.2 / EGL 1.4 не доказывают все extensions, formats, limits или корректность нескольких contexts.
 - Audio в доноре работал через ALSA/PipeWire; условный `PIPEWIRE_RUNTIME_DIR=/run` решал routing, а не громкость.
 - Встроенный controller обнаруживался как `muOS-Keys`; firmware DB — `/usr/lib/gamecontrollerdb.txt`. Полная mapping/deadzone/rumble проверка всё равно нужна.
-- Debian Bookworm container — build environment, **не Jacaranda sysroot**. ABI проверяется по каждому новому artifact и его dependency chain.
+- Старый Debian Bookworm container и новый изолированный builder демки — build environments, **не Jacaranda sysroot**. Для демки проверен `tools/h700_graphics_probe/Dockerfile.abi238`: [решение, EOL-ограничения и результаты](docs/H700_BUILD_ENVIRONMENT.md). Это не утверждённый profile полной игры. ABI проверяется по каждому новому artifact и его dependency chain.
 
 Наблюдения свободной RAM, частот и CPU/GPU utilisation — разовые измерения, не гарантии бюджета/производительности. Подробности и датированные результаты — в обзоре.
 
@@ -118,7 +119,7 @@ ctest --test-dir build/native -L port --output-on-failure
 
 Требования compiler/library сверяй с `docs/NATIVE_PORT.md`: C++20 и C23 support для MusyX. Успешный donor build на Clang16 не подтверждает совместимость всего нового upstream с тем же toolchain. Configure может скачивать зависимости и требовать сеть/место на диске.
 
-Проверяй от узких tests к broader build. Для новых ARM64 artifacts проверяй архитектуру, ELF interpreter, `NEEDED`, `GLIBC_*`, `GLIBCXX_*`, `CXXABI_*`, bundled SDL3 и `dlopen` firmware SDL2. `--version` не проверяет graphics/audio/input. Host `ldd` в container не заменяет device runtime.
+Проверяй от узких tests к broader build. Перед выбором toolchain/runtime сверяйся с [docs/H700_RUNTIME_ABI.md](docs/H700_RUNTIME_ABI.md) и его JSON snapshot: это измеренные firmware exports, не гарантии для любого будущего artifact. Не путай старый Bookworm container runtime с более новым runtime приставки; обновление macOS не меняет Docker image. Для новых ARM64 artifacts проверяй архитектуру, ELF interpreter, `NEEDED`, `GLIBC_*`, `GLIBCXX_*`, `CXXABI_*`, точные требуемые symbols, bundled SDL3 и `dlopen` firmware SDL2. `--version` не проверяет graphics/audio/input. Host `ldd` в container не заменяет device runtime.
 
 Для performance используй повторяемые сцены, continuous frametimes и отдельные CPU/wall/wait measurements. Не называй один screenshot средним FPS боя и не складывай перекрывающиеся main/worker times. Не обещай 30 FPS до измерения.
 
@@ -136,7 +137,15 @@ ctest --test-dir build/native -L port --output-on-failure
 
 ## Рабочий процесс
 
-- Начни с `git status`; сохрани чужие local/untracked changes. Не коммить и не создавай ветки без запроса.
+Обязательные подробные правила — [docs/H700_WORKFLOW.md](docs/H700_WORKFLOW.md). Приоритеты:
+
+- **До исходников переноса — подробный утверждённый план.** Известные технические вопросы закрыть заранее исследованиями и согласованными демками; наличие демки не разрешает начать перенос.
+- Итерации — примерно 1–2 часа активной работы. Для каждой заранее определить зачем, объём, зависимости, способ реализации, проверки, приёмку и откат. Большие задачи разбивать, не оставлять ключевые решения «на потом».
+- Утверждённая итерация: небольшой объём → проверка → документация/прогресс → отдельный commit → push → подтверждение. Не считать частичный или непроверенный результат завершённым.
+- **Потребовалось изменение плана — немедленно остановить всю работу по переносу**, сообщить причины, варианты, честные плюсы/минусы и влияние. Дождаться явного согласия; затем обновить всю затронутую документацию и только после этого продолжать. Не реализовывать альтернативу заранее.
+- Необходимые технические документы получать из первичных источников; при недоступности просить конкретный материал у пользователя. Если инструмента нет, попросить установить его с объяснением, не искать костыли и не устанавливать молча.
+- [docs/H700_PROGRESS.md](docs/H700_PROGRESS.md) держать краткой страницей статуса. Находки для будущего ускорения сохранять в [docs/H700_OPTIMIZATION_NOTES.md](docs/H700_OPTIMIZATION_NOTES.md), не реализовывать попутно.
+- Начни с `git status`; сохрани чужие local/untracked changes. Не создавай ветки без запроса. Commit/push выполняй для завершённых утверждённых итераций по согласованному процессу либо по отдельному запросу; не выдавай подготовку плана за разрешение начать реализацию.
 - Для атрибуции используй P→R, R→H и сравнение с текущей базой; чтение только donor HEAD скрывает, какой коммит ввёл регрессию.
 - Исправляй причину; добавляй regression case там, где это разумно. Не отключай tests или meaningful code ради зелёного результата.
 - Не копируй старые dependency providers/версии/абсолютные пути вместо адаптации к текущему build system.
