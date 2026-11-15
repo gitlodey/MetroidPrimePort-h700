@@ -2,7 +2,7 @@
 
 **Цель:** новая база игры работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. Оптимизация к 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** подготовка плана. Прежняя Dawn/EGLImage демка прошла bounded pixel/order/teardown проверки на H700. Последующий отдельно разрешённый `capabilities` test создал device с U request, но **оба выбранных GX layouts отклонены: 17 fragment textures при лимите 16**. Отдельно разрешённая mixed-fetch демка затем прошла обе layout checks на Mali, но остановилась до первого workload draw: synthetic shader использовал недопустимый Compatibility interpolation sampling `First`. По разрешению пользователя это исправлено в новом `mixed-v2`; пакет прошёл подготовку, но на Mali ещё не запускался. План production-реализации не утверждён, game/platform code не менялся.
+**Текущий этап:** подготовка плана. **Mixed-fetch демка `mixed-v2` прошла на реальном H700:** оба layouts/pipelines, 8 draws / 32768 pixels, updates и bounded buffer growth — PASS, exit 0 без timeout. Тем самым подтверждён локальный путь обхода исходного U layout-барьера 17 > 16, но production renderer ещё не адаптирован. Прежняя EGLImage bridge демка также прошла свой bounded сценарий; полная интеграция/игра не проверены. План production-реализации не утверждён.
 
 ## Готово
 
@@ -23,18 +23,18 @@
 
 ## Сравнение решений текущего барьера
 
-По запросу пользователя выполнено [статическое сравнение вариантов 1 и 3](H700_LAYOUT_OPTIONS.md). Вариант 1 — fixed non-PBR profile: 10 fragment textures, но нужны guards материалов/assets/cache и перестройка group 2. Вариант 3 — vertex texture fetch + fragment SSBO: 16 textures + 1 fragment storage buffer; исходный buffer и uploads уже существуют. **Вариант 3 разрешён только как отдельный эксперимент**, не production-реализация. [Mixed-fetch демка](H700_MIXED_FETCH_PROBE.md) собрана в `build/h700-graphics-probe-mixed-v1/package/`: 70 helper tests, inputs/8 reference hashes, compile/link, ABI, CPU и оба Null layout self-tests по 4 cases — PASS. Hashes/licenses/manifest проверены. Затем по отдельному разрешению выполнен **один H700 run**: RequestDevice и оба mixed layouts — PASS; render pipeline setup — **FAIL из-за flat interpolation sampling `First` в shader демки**, exit 1 без timeout. Draw/pixels/updates/growth ещё не выполнены. [Точные результаты и cleanup](H700_MIXED_FETCH_PROBE.md).
+[Сравнены варианты 1 и 3](H700_LAYOUT_OPTIONS.md). Вариант 1 — fixed non-PBR profile с 10 fragment textures, требует guards материалов/assets/cache. Вариант 3 — vertex texture fetch + fragment SSBO, сохраняет 16 графических textures. Первый `mixed-v1` run остановился на Compatibility interpolation `First` в shader демки; история отказа сохранена в [отчёте](H700_MIXED_FETCH_PROBE.md), это не отказ SSBO.
 
-**Точечная правка готова:** `flat, either` вместо неявного `First`, без изменения u32 checksum/pixel oracle/8 workload cases. Новый `build/h700-graphics-probe-mixed-v2/package/`: **71 helper tests**, compile/link/ABI/CPU, 4+4 Null layout controls и **2 mixed shader/render pipelines на Null Compatibility** — PASS; hashes/licenses/manifest проверены. Это не GPU execution, новый device run не выполнялся.
+**Исправленный `mixed-v2` — device PASS:** явный `flat, either`, прежний exact pixel oracle. Подготовка: 71 helper tests, build/ABI/CPU, 4+4 Null layout controls, 2 Null shader pipelines, hashes/licenses/manifest — PASS. Затем отдельно разрешённый Mali run: **8/8 draws и 32768/32768 pixels**, updates, GPU-preserved growth и чтение за старой границей — PASS. Финальный marker и exit 0; test directory удалён, процессов нет, firmware hashes неизменны. [Artifact, точные результаты и границы](H700_MIXED_FETCH_PROBE.md).
 
 ## Осталось до плана реализации
 
-- Limits/features, U RequestDevice и proposed mixed layouts измерены в harness; production layout не адаптирован. Compatibility-ошибка synthetic shader исправлена; отдельно проверить mixed execution на H700. Threading/recreation и PF-02 по game-facing SDL/MusyX/nod ещё не проверены. Подробная визуальная проверка и возврат меню также не подтверждены.
+- Mixed data path подтверждён на H700 в harness; перенести его в настоящий shader generator/resource lifecycle можно только по согласованному плану. Другие GX shader/resource operations, threading/recreation и PF-02 по game-facing SDL/MusyX/nod остаются открыты. Подробная визуальная проверка и возврат меню также не подтверждены.
 - Согласовать способ интеграции; заранее решить production lifetime/recreation и threading/sync.
 - Определить build profile полной игры, безопасную установку и приёмку; утвердить итерации по 1–2 часа.
 
-**Реальное состояние:** подтверждён конкретный layout-барьер **неизменённого U** на H700; это не доказательство невозможности Dawn или необходимости менять firmware/backend. Полная игра и 30 FPS не подтверждены. Lifetime и многопоточная интеграция требуют отдельных решений; Null limit не входит в список блокеров порта.
+**Реальное состояние:** исходный U layout всё ещё требует адаптации, но выбранный mixed обход теперь подтверждён реальным shader execution, не только limits/Null. Замена Dawn/firmware/backend для этого вопроса не потребовалась. Полная игра и 30 FPS не подтверждены; lifetime и многопоточная интеграция требуют отдельных решений.
 
-**Следующий шаг:** отдельно согласованный повторный mixed-fetch run с готовым `mixed-v2` package. Layout budget принят на Mali, но 8 draws / 32768 pixels и buffer updates/growth ещё не проверены; это не причина отказываться от варианта 3 или менять backend.
+**Следующий предлагаемый шаг:** согласовать включение mixed resource contract в план renderer-переноса с конкретными source/cache/lifecycle изменениями и приёмкой, учитывая оставшиеся известные вопросы интеграции. Повторять ту же демку для уже отвеченного вопроса не требуется.
 
-**Нужно от пользователя:** разрешить повторный run и подтвердить свободное окно приставки. Правка и новый пакет готовы без SSH/deploy; прежний test directory удалён, firmware hashes после того run неизменны. Production-реализация не начиналась.
+**Нужно от пользователя:** согласовать следующий шаг планирования; device experiment завершён и очищен. Production-реализация и дополнительные graphics runs не начинались.

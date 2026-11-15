@@ -33,7 +33,7 @@
 
 ## Текущий статус
 
-**Исправленный `mixed-v2` package готов к отдельно согласованному повторному H700 run.** Shader явно использует `flat, either`; оба render pipelines прошли Null Compatibility validation без GPU execution. Последний hardware run относится к `mixed-v1`: device и layouts прошли, pipeline setup остановлен sampling `First` до workload draw. История отказа сохранена ниже; pixels/updates/growth на Mali всё ещё не подтверждены. Production sources и зависимости не менялись, новых обращений к приставке нет.
+**Исправленный `mixed-v2` прошёл отдельно разрешённый H700 run: PASS.** Оба mixed layouts, оба shader pipelines и все 8 draws / **32768 pixels** с updates/bounded buffer growth прошли на Mali-G31, exit 0 без timeout. Ошибка `First` устранена явным `flat, either`. История failed `mixed-v1` сохранена ниже. Подтверждён выбранный data path в демке, не production shader generator/полная игра/threading/EGLImage lifetime. Cleanup завершён; production sources и зависимости не менялись.
 
 При подготовке **mixed-v1** из корня репозитория выполнены:
 
@@ -164,10 +164,82 @@ python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe
 | `libSDL3.so.0` | 2771560 | `ffb36e54c7c25f17f788f74550fcfd7da7136a66fa1e24771497b0a18f134e70` |
 | `manifest.json` | 22287 | `eec8da8a124bd5b36b64ee52ecfb82cb706dd25cd92871c91ee679498522ab68` |
 
-Builder/pins и ABI maxima прежние: GLIBC_2.38 / GLIBCXX_3.4.32 / CXXABI_1.3.13 для executable. Firmware/runtime библиотеки не упаковываются. Новый package **не device-validated**; прежние Mali layout PASS относятся к `mixed-v1`, а не доказательству успешного исполнения исправленного workload. Повторный device run требует отдельного разрешения.
+Builder/pins и ABI maxima прежние: GLIBC_2.38 / GLIBCXX_3.4.32 / CXXABI_1.3.13 для executable. Firmware/runtime библиотеки не упаковываются. На этапе подготовки package ещё не был device-validated: прежние layout PASS относились к `mixed-v1`. Последующий отдельно разрешённый `mixed-v2` device run и его границы зафиксированы ниже.
 
-### Cleanup
+### Разрешение на повторный run `mixed-v2`
+
+После исправления и подготовки пакета пользователь явно разрешил запуск. Разрешён один `--mode mixed-fetch` из `mixed-v2` после verified SSH/preflight и package integrity check, с прежними isolated runtime, timeout/process group и cleanup. Это не разрешение на дополнительные graphics modes, изменение firmware, source fixes в ходе прогона или production-перенос. Run завершён; фактический PASS и cleanup записаны в следующем разделе `mixed-v2`.
+
+### Cleanup `mixed-v1`
 
 Собственный test directory удалён после проверки ownership/manifest marker. Процессов игры/демки нет, все шесть firmware hashes неизменны. Во всех семи изолированных runtime directories — **0 файлов**. Игра, saves, Ports, clocks, settings и services не менялись. Визуальная проверка/возврат меню не подтверждались: mixed mode не показывает узор.
 
 Полный raw result сохранён только локально в ignored `build/h700-graphics-probe-mixed-v1/device-mixed-fetch.json`. Приватный SSH target и уникальный session path в Git не включены; локальная session orchestration остаётся в ignored build directory, не становится новым project framework.
+
+## Фактический H700 run `mixed-v2` — PASS
+
+Пользователь отдельно разрешил повторный запуск после исправления shader. Цепочка: actual mixed shader/resource execution ещё неизвестно → один run проверенного `mixed-v2` → при успехе закрыть feasibility выбранного data path, при отказе сохранить точную причину → cleanup и остановка, не автоматический production-перенос или новый эксперимент.
+
+### Preflight и artifact
+
+- Verified SSH host key, AArch64/Linux 4.9.170, процессов игры/демки нет.
+- **MemAvailable 822152 kB**, swap отсутствует, `/tmp` free **510255104 bytes** — разовый снимок, не заявленный бюджет игры.
+- Все шесть проверенных firmware hashes совпали с исходным ABI snapshot.
+- Manifest `mixed-v2` SHA-256 **`eec8da8a124bd5b36b64ee52ecfb82cb706dd25cd92871c91ee679498522ab68`**, **51 файл** и все source hashes проверены локально; после передачи в новый unique `/tmp` directory package проверен повторно на устройстве.
+- Те же изолированные HOME/XDG/TMPDIR, package-only `LD_LIBRARY_PATH`, SDL3-over-SDL2 → firmware SDL2 `mali`; core dumps off, timeout **35 s + TERM/5 s/KILL** только собственной process group. Сигналы и timeout не потребовались.
+
+| Команда | Exit | Timeout | Wall time, s |
+| --- | ---: | --- | ---: |
+| `--help` | 0 | нет | 0.037 |
+| `--self-test` | 0 | нет | 0.091 |
+| `--mode mixed-fetch` | **0** | нет | **0.695** |
+
+Wall time — длительность ограниченного теста с setup/readbacks, **не FPS benchmark**. Другие graphics modes не запускались.
+
+### Фактическая приёмка
+
+Аппаратный Mali-G31, EGL 1.4 / GLES 3.2, drawable 640×480. Policy и final limits соответствуют предыдущему measured path: texture fetch = 1, no-compute = 0, lightmap = 0; device **16 sampled textures, 0 vertex SSBO, 4 fragment SSBO**. Запрошены fragment storage >=1 и 64-byte immediates; uniform/storage alignment 64/16. Features ASTC, texture-component-swizzle, implicit-device-synchronization и native thread toggle включены, validation/robustness сохранены. Включённый toggle не равен проверке concurrent workers.
+
+| Проверка | Результат |
+| --- | --- |
+| Mixed RequestDevice | **PASS** |
+| Исходные U normal/shadow layouts | Оба отклонены конкретно **17 > 16** — отрицательные controls прошли, исходный U mirror не исправлялся |
+| Mixed normal/shadow layouts | **Оба PASS**, 16 textures + 1 fragment SSBO, без vertex SSBO |
+| Actual normal/shadow shader pipelines | **Оба созданы и использованы**, отказ interpolation `First` не повторился |
+| Initial data | **2/2 PASS**, по 4096 pixels и source readback 8192 words |
+| Update existing source | **2/2 PASS**, epoch 1, тот же buffer/mirror |
+| Grow preserved source | **2/2 PASS**, рост 8192 → 16384 words через GPU copy без нового CPU source upload; сохранён epoch 1 |
+| Update grown source | **2/2 PASS**, epoch 2, vertex probe word 12288 за прежней границей |
+| Итог workload | **8/8 draws, 32768/32768 exact RGBA pixels — PASS**, source-buffer readbacks также прошли |
+| API teardown / diagnostics | **PASS**, финальный success marker и exit 0 |
+
+Существенный output:
+
+```text
+PASS mixed layout shadow=0 fragment_textures=16 fragment_storage=1 vertex_storage=0
+PASS mixed layout shadow=1 fragment_textures=16 fragment_storage=1 vertex_storage=0
+PASS mixed case=initial variant=normal pixels=4096 sourceWords=8192 probe=8191 source=epoch0
+PASS mixed case=initial variant=shadow pixels=4096 sourceWords=8192 probe=8191 source=epoch0
+PASS mixed case=update-existing variant=normal pixels=4096 sourceWords=8192 probe=8191 source=epoch1
+PASS mixed case=update-existing variant=shadow pixels=4096 sourceWords=8192 probe=8191 source=epoch1
+PASS mixed case=grow-preserved variant=normal pixels=4096 sourceWords=16384 probe=8191 source=GPU-preserved-epoch1-no-upload
+PASS mixed case=grow-preserved variant=shadow pixels=4096 sourceWords=16384 probe=8191 source=GPU-preserved-epoch1-no-upload
+PASS mixed case=update-grown variant=normal pixels=4096 sourceWords=16384 probe=12288 source=epoch2
+PASS mixed case=update-grown variant=shadow pixels=4096 sourceWords=16384 probe=12288 source=epoch2
+PASS mixed workload draws=8 pixels=32768 updates/growth checked
+PASS mixed-fetch layouts=2 draws=8 pixels=32768 updates/growth/teardown checked (not game/FPS)
+```
+
+### Вывод и ограничения
+
+**Вариант 3 реализуем на нашем Dawn/Mali в проверенном объёме:** vertex texture reads и fragment SSBO reads совместно работают при исходной group 2 из 16 sampled textures, с правильными pixels, word boundary 4095/4096, обновлениями и bounded buffer replacement. Это уже не только расчёт/Null validation или reported capacity.
+
+**Исходный production U по-прежнему не адаптирован.** Синтетический shader не заменяет перенос изменения в настоящий generator, все его consumers, cache policy и lifetime paths. Не проверены все original GX effects/EFB operations, полная многопоточная topology, production EGLImage ownership/recreation, PF-02, UI/input/audio/save-load и FPS. Эта демка не импортирует EGLImage и не показывает экранный узор; визуальная приёмка/возврат меню этим не закрыты.
+
+Следующий предлагаемый шаг — согласовать включение mixed resource contract в план переноса с конкретными изменениями/проверками renderer; отдельно учесть уже известные lifetime/threading вопросы. Не начинать production code и не расширять исследовательскую матрицу без связи с целевым путём и согласования.
+
+### Cleanup `mixed-v2`
+
+После теста процессов игры/демки нет; все шесть firmware hashes совпадают и с preflight, и с исходным snapshot. Во всех семи изолированных runtime directories **0 файлов**; собственный test directory удалён после ownership marker check. Игра, saves, Ports, firmware, clocks, настройки и services не менялись.
+
+Raw result — только локально в ignored `build/h700-graphics-probe-mixed-v2/device-mixed-fetch.json`, без публикации private target/session path. Artifact и source hashes после прогона сохранены; повторных/дополнительных graphics runs не было.
