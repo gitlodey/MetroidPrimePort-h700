@@ -201,6 +201,10 @@ U уже запрашивает `gl_allow_context_on_multi_threads`, котор�
 
 В стороне остаются PF-02 для MusyX/nod/game-facing SDL API, build profile полной игры, input/audio/save-load и итоговая приёмка. Это исследование их не закрывает и не разрешает production-перенос.
 
+### Последующее сравнение решений layout-барьера
+
+После device failure пользователь запросил сравнение двух локальных решений: [фиксированный base profile и mixed vertex-texture / fragment-storage fetch](H700_LAYOUT_OPTIONS.md). Разбор рекомендует второй как более локальный кандидат: device сообщает 4 fragment SSBO при 0 vertex SSBO, а buffer уже существует и заполняется до fetch-texture copies. Это не разрешение менять production code и не результат runtime mixed-path test. Base profile остаётся альтернативой; пересборка Dawn и замена firmware не требуются самим обнаруженным budget mismatch.
+
 ### Последующая подготовка GAP-A/B
 
 Первая попытка расширения остановилась на Null maximum 16; первоначальные восемь cases GAP-B не пройдены. Это признано уходом от цели, не блокером H700. Затем пользователь разрешил закончить демку с новыми вводными: [готовый `contract-v2` package](H700_CONTRACT_PROBE.md) прошёл compile/link, ABI, 62 helper tests, CPU checks и четыре реальных Null controls бюджета 16. Профиль device-budget-17 явно не покрыт, validation не ослаблена. Новый `capabilities` проверяет default U request и **только фактически выбранные** GX layouts на Mali; принудительные альтернативы не запускаются. Затем пользователь предоставил приставку: один `capabilities` run создал device и воспроизвёл **17 > 16** для обоих выбранных layouts. Cleanup завершён, firmware hashes неизменны. Dawn/backend/production code не менялись; последующие эксперименты и адаптация не начинались.

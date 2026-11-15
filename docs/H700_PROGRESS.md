@@ -21,6 +21,10 @@
 
 **Подготовка расширенной демки прошла, selected-layout device gate — нет.** 62 helper tests, compile/link, ABI, CPU checks и четыре Null controls бюджета 16 — PASS. Отдельно разрешённый H700 run выявил реальную несовместимость неизменённого U layout, не проблему Null. Null profile 17 не является gate и не объявлен проверенным; Dawn/окружение не менялись.
 
+## Сравнение решений текущего барьера
+
+По запросу пользователя выполнено [статическое сравнение вариантов 1 и 3](H700_LAYOUT_OPTIONS.md). Вариант 1 — fixed non-PBR profile: 10 fragment textures, но нужны guards материалов/assets/cache и перестройка group 2. Вариант 3 — vertex texture fetch + fragment SSBO: 16 textures + 1 fragment storage buffer; исходный buffer и uploads уже существуют. **Рекомендован вариант 3 как более локальный кандидат, выбор и реализация ещё не утверждены.** Его shader/readback workload на Mali не проверен; новых сборок/device runs нет.
+
 ## Осталось до плана реализации
 
 - Limits/features и U RequestDevice измерены в harness; selected layout требует адаптации. Shader/resource workload, threading/recreation и PF-02 по game-facing SDL/MusyX/nod ещё не проверены. Подробная визуальная проверка и возврат меню также не подтверждены.
@@ -29,6 +33,6 @@
 
 **Реальное состояние:** подтверждён конкретный layout-барьер **неизменённого U** на H700; это не доказательство невозможности Dawn или необходимости менять firmware/backend. Полная игра и 30 FPS не подтверждены. Lifetime и многопоточная интеграция требуют отдельных решений; Null limit не входит в список блокеров порта.
 
-**Следующий предлагаемый шаг:** небольшой статический дизайн локальной специализации resource/layout profile под измеренный budget 16 с сохранением retail-функциональности. Не менять visibility вслепую и не форсировать storage path при vertex storage 0.
+**Следующий предлагаемый шаг:** согласовать ограниченный mixed-fetch probe по [сравнению](H700_LAYOUT_OPTIONS.md): layouts бюджета 16, vertex texture + fragment buffer чтение и контрольные pixels/updates. Это новый вопрос, не повтор неизменённого `capabilities` и не начало production-переноса. Не менять visibility без замены потребителя и не форсировать vertex SSBO при limit 0.
 
-**Нужно от пользователя:** согласовать этот следующий шаг; production-реализация и новые device tests пока не разрешены. Разрешённый тест завершён и очищен, повторять его для того же вопроса не требуется.
+**Нужно от пользователя:** согласовать подготовку следующей probe-итерации; device run требует отдельного окна. Production-реализация не разрешена. Предыдущий device test завершён и очищен.
