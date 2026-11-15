@@ -8,7 +8,7 @@
 
 Код игры, root CMake, dependency pins и донор не изменялись. Первоначальная подготовка демки не включала deploy/graphics; затем пользователь отдельно предоставил свободную приставку и разрешил тест. Использовалась временная установка в `/tmp`, после теста удалённая. Исходный read-only SSH inventory описан в [runtime/ABI](H700_RUNTIME_ABI.md). Любой следующий запуск требует актуального разрешения на окно; успешный тест не разрешает начать перенос.
 
-**Следующая отдельная демка варианта 3 подготовлена:** [mixed-fetch](H700_MIXED_FETCH_PROBE.md), новый `mixed-v1/package`. Восемь synthetic draws должны проверить vertex texture / fragment SSBO reads, все 16 group-2 textures, updates и bounded buffer replacement. Подготовка (70 helper tests, build/ABI/CPU, старые и mixed Null layouts) прошла; actual shader/pixel workload на Mali не запускался. Production code не менялся.
+**Следующая отдельная демка варианта 3 подготовлена:** [mixed-fetch](H700_MIXED_FETCH_PROBE.md), новый `mixed-v1/package`. Восемь synthetic draws должны проверить vertex texture / fragment SSBO reads, все 16 group-2 textures, updates и bounded buffer replacement. Подготовка (70 helper tests, build/ABI/CPU, старые и mixed Null layouts) прошла. Последующий отдельно разрешённый H700 run принял оба mixed layouts, но остановился на render pipeline setup из-за synthetic flat interpolation sampling `First`, недопустимого в Compatibility mode. Общий exit 1, timeout отсутствует; до workload draws/pixels дело не дошло. Cleanup завершён, firmware hashes неизменны. Production code не менялся.
 
 ## 1. Что реализовано
 
@@ -30,7 +30,7 @@
 | `--mode offscreen` | SDL2/Mali bootstrap, аппаратный Dawn OpenGLES Compatibility device, WGSL render и CPU-проверка GPU readback |
 | `--mode bridge` | Постоянный presenter EGLImage → native Dawn wrapper → GPU draw → ожидание completion → чтение контрольных pixels и GPU blit/swap |
 | `--mode capabilities` | U request/limits/features и validation выбранных GX layouts; требует окно, узор не рисует. На H700: device PASS, оба selected layouts FAIL 17 > 16, exit 1; не shader/pixel/threading test |
-| `--mode mixed-fetch` | Отдельная proposed адаптация: vertex textures + fragment SSBO, обе layouts, 8 draws с readbacks/updates/growth. Окно требуется, display pattern не рисуется; на Mali ещё не выполнялся |
+| `--mode mixed-fetch` | Отдельная proposed адаптация: vertex textures + fragment SSBO, обе layouts, 8 draws с readbacks/updates/growth. Окно требуется, display pattern не рисуется. На Mali: оба mixed layouts PASS, setup FAIL на interpolation `First`, workload draws не выполнены |
 | `--layout-self-test` | Контейнерный Null-only контроль четырёх layouts при бюджете 16; без SDL/EGL/GPU, не доказательство Mali support |
 | `--mixed-layout-self-test` | Отдельные 4 Null controls бюджета 16: mixed-positive и original texture-negative normal/shadow; без shader/pixel execution |
 | `--help`, `--self-test` | Без SDL/EGL/Dawn initialization; второй проверяет CPU pattern/arguments/extensions и U contract policy/counts |

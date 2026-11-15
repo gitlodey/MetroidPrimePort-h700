@@ -2,7 +2,7 @@
 
 ## Разрешение и цель
 
-Пользователь после [сравнения вариантов 1 и 3](H700_LAYOUT_OPTIONS.md) разрешил попробовать отдельную демку варианта 3. Это разрешение на подготовку asset-free probe, **не production-реализацию и не новый SSH/deploy/device run**. Для устройства нужно отдельно согласованное свободное окно. Донор, game/platform sources, Dawn/SDL pins и builder не меняются.
+Пользователь после [сравнения вариантов 1 и 3](H700_LAYOUT_OPTIONS.md) разрешил подготовку asset-free probe, без production-реализации и device run. Затем явно подтвердил свободную приставку и разрешил **один `--mode mixed-fetch` run** по сценарию ниже. Разрешение включает verified SSH/preflight, временный package, loader/CPU smoke checks и cleanup, не дополнительные graphics modes или production-адаптацию. Донор, game/platform sources, Dawn/SDL pins и builder не меняются.
 
 **Goal gate:** корректный запуск новой игры на H700 → выбранный U layout отклонён 17 > 16 → проверить разделение texture fetch в vertex и storage buffer read во fragment → успех позволит планировать локальную адаптацию U, отказ даст конкретную причину для сравнения с base profile → остановиться на проверенном пакете, без автоматического запуска на Mali.
 
@@ -33,7 +33,7 @@
 
 ## Текущий статус
 
-**Подготовка завершена; package готов к отдельно согласованному H700 run.** Новый `mixed-fetch` на Mali не запускался. План был зафиксирован до изменения probe-кода; production sources не менялись.
+**Подготовка прошла; отдельно разрешённый H700 run выполнен с частичным результатом, overall FAIL.** Device и оба mixed layouts созданы, но `CreateRenderPipeline` отклонил синтетический shader демки из-за неподдерживаемой в Compatibility mode flat interpolation sampling `First`. До mixed draws/readbacks дело не дошло; buffer execution не подтверждено. Это дефект совместимости тестового shader, не доказанный отказ fragment SSBO. Production sources не менялись; повторного запуска/исправления после этого результата нет.
 
 Из корня репозитория выполнены:
 
@@ -53,7 +53,7 @@ python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe
 | Старый `--layout-self-test` | **4/4 PASS**: прежние storage-positive и texture-negative normal/shadow controls бюджета 16 |
 | Новый `--mixed-layout-self-test` | **4/4 PASS**: mixed-positive и original texture-negative normal/shadow controls бюджета 16; только Dawn Null layouts |
 | Package | **PASS**, licenses/metadata/manifest, 51 файл вместе с manifest; все artifact/source hashes перепроверены, `package.partial` отсутствует |
-| Mali shader/pixel/resource workload | **Не выполнялся**, не считается PASS по компиляции C++ или Null layouts |
+| Mali shader/pixel/resource workload при подготовке | Не запускался. Последующий отдельно разрешённый run описан ниже; overall FAIL до первого workload draw |
 
 Дополнительно выполнен независимый read-only review stages/layouts, oracle обновления/роста и failure propagation: подтверждённых статических блокеров не найдено. Package hashes проверены отдельно родительской задачей. Это не заменяет исполнение shaders на Mali.
 
@@ -82,7 +82,7 @@ Manifest отдельно указывает `mixed_layout_validation_scope` и 
 
 ### Граница device-проверки
 
-Следующий шаг — отдельно согласовать свободную приставку и один `--mode mixed-fetch` run по описанной выше изоляции. Окно может быть очищено: режим проверяет offscreen pixels и не импортирует EGLImage/не показывает узор. Внешний timeout 35 s, затем TERM и через 5 s KILL только собственной process group; никаких clocks/services/firmware/save changes. При смене текущей Mali policy или недостаточных reported capacities — явный отказ, не другой backend.
+Первоначально следующий шаг требовал отдельного разрешения на один `--mode mixed-fetch` run; пользователь затем явно подтвердил свободную приставку и разрешил его. Условия выполненного запуска: Окно может быть очищено: режим проверяет offscreen pixels и не импортирует EGLImage/не показывает узор. Внешний timeout 35 s, затем TERM и через 5 s KILL только собственной process group; никаких clocks/services/firmware/save changes. При смене текущей Mali policy или недостаточных reported capacities — явный отказ, не другой backend.
 
 Успех требует обеих original negative controls, обоих mixed layouts и всех 8 draws / **32768 pixels** плюс source-buffer readbacks, updates и bounded growth. Финальный marker только после API cleanup/проверки diagnostics:
 
@@ -91,3 +91,51 @@ PASS mixed-fetch layouts=2 draws=8 pixels=32768 updates/growth/teardown checked 
 ```
 
 Это не проверка production shader generator, всех PBR effects, EGLImage alias lifetime/recreation, concurrent contexts или полной игры. На этом этапе проверить нужно выбранный data path, а не универсальный renderer.
+
+## Фактический H700 run — частичный результат, overall FAIL
+
+Пользователь подтвердил свободное устройство. Цепочка этой сессии: H700 layout-барьер → один mixed-fetch run с прежним artifact → сохранить конкретный layout/shader/resource результат → cleanup и остановка, без повторных graphics runs.
+
+Verified SSH и preflight: AArch64, Linux 4.9.170, процессов игры/демки нет; шесть проверенных firmware loader/libc/libstdc++/EGL/GLES/SDL2 hashes совпали с исходным snapshot. MemAvailable **824968 kB**, swap отсутствует, `/tmp` free **510255104 bytes**. Эти числа — разовый снимок, не бюджет игры.
+
+Проверены все **51 package files** и локальные source hashes. Пакет передан в новый уникальный `/tmp` directory и повторно проверен на устройстве по manifest/hashes. Runtime изолирован: HOME/XDG config/cache/data/state/runtime/TMPDIR, `LD_LIBRARY_PATH` только package, per-process SDL3-over-SDL2 → SDL2 `mali`, core dumps off. Внешний timeout 35 s, TERM + 5 s до KILL только собственной process group; timeout/сигналы не понадобились.
+
+| Команда | Exit | Timeout | Wall time, s |
+| --- | ---: | --- | ---: |
+| `--help` | 0 | нет | 0.059 |
+| `--self-test` | 0 | нет | 0.169 |
+| `--mode mixed-fetch` | **1** | нет | **0.471** |
+
+Фактически выбран аппаратный **Mali-G31**, EGL 1.4 / GLES 3.2, drawable 640×480. Policy: texture fetch = 1, no-compute = 0, lightmap = 0. Mixed request явно содержит sampled textures = 16, vertex storage = 0, fragment storage = 1. Итоговый device: **16 sampled textures, 0 vertex storage buffers, 4 fragment storage buffers**; alignment uniform/storage 64/16, storage binding limit 268435456 bytes. ASTC, texture-component-swizzle и implicit-device-synchronization включены; thread toggle включён, validation/robustness сохранены.
+
+| Часть проверки | Фактический результат |
+| --- | --- |
+| RequestDevice mixed profile | **PASS** |
+| Исходные U layouts normal/shadow | Оба отклонены именно **17 > 16**, отрицательные controls прошли |
+| Mixed layouts normal/shadow | **Оба PASS на Mali**, 16 textures + 1 fragment SSBO, 0 vertex SSBO |
+| Synthetic render pipeline setup | **FAIL**, первая сохранённая validation diagnostic — normal pipeline / interpolation sampling `First` |
+| 8 workload draws / 32768 pixels / updates / buffer growth | **Не выполнены**, PASS case markers: 0 |
+| Финальная device-приёмка | **FAIL**, success marker отсутствует; отрицательные controls и layout PASS не маскируют отказ |
+
+Существенный output:
+
+```text
+PASS mixed layout shadow=0 fragment_textures=16 fragment_storage=1 vertex_storage=0
+PASS mixed layout shadow=1 fragment_textures=16 fragment_storage=1 vertex_storage=0
+FAIL Mixed setup: The interpolation sampling (First) of the vertex output at location 0 is not supported in compatibility mode
+ - While calling [Device].CreateRenderPipeline([RenderPipelineDescriptor ""Mixed normal GX-shaped pipeline""]).
+```
+
+### Причина и границы вывода
+
+Синтетический shader в [mixed.cpp:235–245](../tools/h700_graphics_probe/mixed.cpp) передаёт собственную контрольную сумму как `@location(0) @interpolate(flat) signature: u32`. На этом Compatibility device Dawn отверг получившийся sampling `First`. Это **ошибка совместимости введённого harness shader**, не driver crash и не evidence поломки SSBO/readback. В целевом [GX shader generator](../extern/aurora/lib/gx/shader.cpp) литерал `@interpolate(flat` не найден; именно этот varying добавлен демкой.
+
+Расчётный resource budget теперь подтверждён real-device layout validation. Но совместное shader execution texture/SSBO, pixels и buffer growth **ещё не доказаны**. Основания менять firmware/Dawn, переходить к варианту 1 или объявлять вариант 3 рабочим по этому отказу нет.
+
+Следующий предлагаемый шаг — точечная compatibility-правка передачи контрольной суммы в shader демки с сохранением oracle/всех 8 cases и validation; затем новый artifact/build gates и отдельно согласованный повторный device run. Не менять production shader, не ослаблять проверки и не расширять backend matrix. Исправление и повторный запуск в этой сессии не выполнялись.
+
+### Cleanup
+
+Собственный test directory удалён после проверки ownership/manifest marker. Процессов игры/демки нет, все шесть firmware hashes неизменны. Во всех семи изолированных runtime directories — **0 файлов**. Игра, saves, Ports, clocks, settings и services не менялись. Визуальная проверка/возврат меню не подтверждались: mixed mode не показывает узор.
+
+Полный raw result сохранён только локально в ignored `build/h700-graphics-probe-mixed-v1/device-mixed-fetch.json`. Приватный SSH target и уникальный session path в Git не включены; локальная session orchestration остаётся в ignored build directory, не становится новым project framework.
