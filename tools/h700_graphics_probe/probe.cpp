@@ -1,5 +1,6 @@
 #include "pattern.hpp"
 #include "contract.hpp"
+#include "mixed.hpp"
 
 #include <SDL3/SDL.h>
 #include <EGL/egl.h>
@@ -56,6 +57,7 @@ struct Options {
   bool help = false;
   bool self_test = false;
   bool layout_self_test = false;
+  bool mixed_layout_self_test = false;
 };
 
 Options options(int argc, char** argv) {
@@ -65,6 +67,7 @@ Options options(int argc, char** argv) {
     if (arg == "--help" && argc == 2) out.help = true;
     else if (arg == "--self-test" && argc == 2) out.self_test = true;
     else if (arg == "--layout-self-test" && argc == 2) out.layout_self_test = true;
+    else if (arg == "--mixed-layout-self-test" && argc == 2) out.mixed_layout_self_test = true;
     else if (arg == "--mode" && i + 1 < argc && out.mode.empty()) out.mode = argv[++i];
     else if (arg == "--frames" && i + 1 < argc && out.frames == 0) {
       std::string_view value(argv[++i]);
@@ -74,10 +77,11 @@ Options options(int argc, char** argv) {
               "--frames must be an integer from 2 to 120");
     } else throw std::runtime_error("Unknown, duplicated or incomplete argument");
   }
-  if (out.help || out.self_test || out.layout_self_test) return out;
-  require(out.mode == "offscreen" || out.mode == "bridge" || out.mode == "capabilities",
-          "Choose --mode offscreen, bridge or capabilities explicitly; all initialize SDL video");
-  if (out.mode == "capabilities") require(!out.frames, "--frames is not valid with capabilities");
+  if (out.help || out.self_test || out.layout_self_test || out.mixed_layout_self_test) return out;
+  require(out.mode == "offscreen" || out.mode == "bridge" || out.mode == "capabilities" || out.mode == "mixed-fetch",
+          "Choose --mode offscreen, bridge, capabilities or mixed-fetch explicitly; all initialize SDL video");
+  if (out.mode == "capabilities" || out.mode == "mixed-fetch")
+    require(!out.frames, "--frames is not valid with capabilities or mixed-fetch");
   else if (!out.frames) out.frames = out.mode == "bridge" ? 30 : 2;
   return out;
 }
@@ -85,14 +89,16 @@ Options options(int argc, char** argv) {
 void help() {
   std::cout << "Usage: h700_graphics_probe --help | --self-test | --layout-self-test\n"
                "       h700_graphics_probe --mode offscreen|bridge [--frames 2..120]\n"
-               "       h700_graphics_probe --mode capabilities\n"
+               "       h700_graphics_probe --mode capabilities|mixed-fetch\n"
+                              "       h700_graphics_probe --mixed-layout-self-test\n"
                "--help/--self-test never initialize SDL/EGL/Dawn.\n"
-               "--layout-self-test uses only Dawn Null validation, no SDL/EGL/GPU.\n"
-               "ALL three device modes create a 640x480 SDL2/Mali window and can occupy the screen.\n"
+               "Both layout self-tests use only Dawn Null validation, no SDL/EGL/GPU.\n"
+               "ALL four device modes create a 640x480 SDL2/Mali window and can occupy the screen.\n"
                "No game/assets/settings/saves/network; no clocks or firmware changes.\n"
                "Run graphics modes only in an agreed free device session, with an external timeout.\n"
                "Offscreen: WGSL pattern + GPU readback. Bridge: one persistent EGLImage, serial access.\n"
                "Capabilities: U device request, complete limits/features, scoped GX layout validation.\n"
+                              "Mixed-fetch: proposed stage split, original negative controls, 8 draws with pixels/updates/growth.\n"
                "Not a game renderer test, threading stress test or FPS benchmark.\n";
 }
 
@@ -129,7 +135,17 @@ void self_test() {
   rejected = false;
   try { (void)options(5, invalid_caps); } catch (const std::exception&) { rejected = true; }
   require(rejected, "capabilities rejects frame count");
+  char mixed_mode[] = "mixed-fetch", mixed_layout[] = "--mixed-layout-self-test";
+  char* mixed_args[] = {name, mode, mixed_mode};
+  require(options(3, mixed_args).mode == "mixed-fetch" && options(3, mixed_args).frames == 0, "fixed mixed mode");
+  char* mixed_null[] = {name, mixed_layout};
+  require(options(2, mixed_null).mixed_layout_self_test, "explicit mixed Null CLI");
+  char* invalid_mixed[] = {name, mode, mixed_mode, count, two};
+  rejected = false;
+  try { (void)options(5, invalid_mixed); } catch (const std::exception&) { rejected = true; }
+  require(rejected, "mixed mode rejects frame count");
   contract::self_test();
+  mixed::self_test();
   std::cout << "PASS self-test (CPU-only pattern, options and U contract policy/layout checks; no SDL/EGL/Dawn)\n";
 }
 
@@ -285,7 +301,7 @@ struct Platform {
   ~Platform() { (void)cleanup(); }
 };
 
-enum class CoreMode { Pattern, Contract, NullValidation };
+enum class CoreMode { Pattern, Contract, NullValidation, Mixed, NullMixed };
 
 template <class T>
 void report_limit(std::string_view scope, const char* name, T value) {
@@ -379,8 +395,9 @@ struct Core {
   }
 
   void init(CoreMode mode = CoreMode::Pattern) {
-    const bool null_backend = mode == CoreMode::NullValidation;
-    const bool full_contract = mode == CoreMode::Contract;
+    const bool null_backend = mode == CoreMode::NullValidation || mode == CoreMode::NullMixed;
+    const bool mixed_profile = mode == CoreMode::Mixed || mode == CoreMode::NullMixed;
+    const bool full_contract = mode == CoreMode::Contract || mode == CoreMode::Mixed;
     const bool extended = null_backend || full_contract;
     const char* unsafe[] = {"allow_unsafe_apis"};
     wgpu::DawnTogglesDescriptor instance_toggles{wgpu::DawnTogglesDescriptor::Init{
@@ -451,15 +468,26 @@ struct Core {
       adapter.GetFeatures(&available);
       report_limits("adapter", supported, supported_compatibility);
       report_features("adapter", {available.features, available.featureCount});
-      if (full_contract) {
+      if (full_contract || mixed_profile) {
         policy = contract::choose_policy(supported, supported_compatibility);
         required = contract::required_limits(supported, policy);
         requested_compatibility = contract::required_compatibility(policy);
-        requested_features = contract::required_features({available.features, available.featureCount});
-        std::cout << "PROFILE U-default-native policy_texture_fetch=" << policy.texture_fetch
+        if (full_contract) requested_features = contract::required_features({available.features, available.featureCount});
+        if (mixed_profile) {
+          contract::check_mixed_limits(supported, supported_compatibility);
+          if (!null_backend) require(policy.texture_fetch && !policy.lightmap,
+              "Mali policy changed from the measured texture-fetch/no-lightmap path; review before testing");
+          policy.texture_fetch = true;
+          policy.lightmap = false;
+          required = contract::mixed_required_limits(supported, policy);
+          requested_compatibility = contract::mixed_required_compatibility();
+        }
+        std::cout << "PROFILE " << (mixed_profile ? "mixed-fetch-proposal" : "U-default-native") << " policy_texture_fetch=" << policy.texture_fetch
                   << " policy_no_compute=" << policy.no_compute << " policy_lightmap=" << policy.lightmap << '\n';
         std::cout << "DIFFERENCES external EGLDisplay/no compatibleSurface; no application/env overrides or cache; "
-                     "validation and robustness remain ON; no shader/pixel/threading/recreation test\n";
+                     "validation and robustness remain ON; "
+                                       << (mixed_profile ? "mixed shader workload is a separate check, not full game/threading/recreation\n"
+                                                         : "no shader/pixel/threading/recreation test\n");
       } else {
         // A control for scoped validation, not a simulation of unqueried Mali limits.
         constexpr uint32_t budget = 16;
@@ -523,7 +551,11 @@ struct Core {
       device.GetFeatures(&enabled);
       report_limits("device", effective_limits, effective_compatibility);
       report_features("device", {enabled.features, enabled.featureCount});
-      if (null_backend) {
+      if (mixed_profile) {
+        contract::check_mixed_limits(effective_limits, effective_compatibility);
+        require(effective_limits.maxSampledTexturesPerShaderStage == 16, "Mixed test must keep effective budget 16");
+      }
+      if (null_backend && !mixed_profile) {
         require(!device.HasFeature(wgpu::FeatureName::CoreFeaturesAndLimits), "Null test must use Compatibility device");
         require(effective_limits.maxSampledTexturesPerShaderStage == 16,
                 "Null device did not preserve the requested texture budget");
@@ -619,6 +651,69 @@ void layout_self_test() {
   require(cases == 4, "Null validation case count changed unexpectedly");
   std::cout << "COVERAGE Null budget=16 only; device-budget-17/lightmap cases and Mali remain unvalidated\n";
   std::cout << "PASS layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)\n";
+}
+
+void check_mixed_layout(Core& core, bool shadow) {
+  struct Result {
+    bool called = false;
+    wgpu::PopErrorScopeStatus status{};
+    wgpu::ErrorType type{};
+    std::string message;
+  };
+  auto result = std::make_shared<Result>();
+  core.device.PushErrorScope(wgpu::ErrorFilter::Validation);
+  auto layouts = contract::mixed_layout(core.device, shadow);
+  auto future = core.device.PopErrorScope(wgpu::CallbackMode::WaitAnyOnly,
+      [result](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type, wgpu::StringView message) {
+        result->called = true;
+        result->status = status;
+        result->type = type;
+        result->message = text(message);
+      });
+  core.wait(future);
+  require(result->called && result->status == wgpu::PopErrorScopeStatus::Success &&
+              result->type == wgpu::ErrorType::NoError && bool(layouts.pipeline),
+          "Mixed GX layout validation failed: " + result->message);
+  std::cout << "PASS mixed layout shadow=" << shadow << " fragment_textures=16 fragment_storage=1 vertex_storage=0\n";
+}
+
+void mixed_layout_self_test() {
+  contract::self_test();
+  Core core;
+  core.init(CoreMode::NullMixed);
+  unsigned cases = 0;
+  for (bool shadow : {false, true}) {
+    require(!check_gx_layout(core, true, false, shadow), "Original 17 > 16 control unexpectedly passed");
+    ++cases;
+    check_mixed_layout(core, shadow);
+    ++cases;
+  }
+  core.cleanup();
+  require(core.diagnostics->errors.load() == 0 && cases == 4, "Mixed Null teardown/case count failed");
+  std::cout << "COVERAGE mixed layouts budget=16 only; no shader/pixel/Mali execution\n";
+  std::cout << "PASS mixed-layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)\n";
+}
+
+void run_mixed_fetch() {
+  std::cout << "START mode=mixed-fetch (SDL window; bounded shader/resource test, not game/threading/FPS)\n";
+  Platform platform;
+  platform.init();
+  {
+    Core core;
+    core.init(CoreMode::Mixed);
+    for (bool shadow : {false, true}) {
+      require(!check_gx_layout(core, true, false, shadow), "Original 17 > 16 control unexpectedly passed");
+      check_mixed_layout(core, shadow);
+    }
+    mixed::run(core.device, core.queue, [&core](wgpu::Future future) { core.wait(future); },
+               [&core] { core.completed(); });
+    core.completed();
+    core.cleanup();
+    require(core.diagnostics->errors.load() == 0, "Mixed mode device teardown failed");
+  }
+  require(platform.make_current(), "Cannot restore presenter after mixed workload");
+  require(platform.cleanup(), "SDL/EGL mixed-mode cleanup failed");
+  std::cout << "PASS mixed-fetch layouts=2 draws=8 pixels=32768 updates/growth/teardown checked (not game/FPS)\n";
 }
 
 void run_capabilities() {
@@ -870,6 +965,8 @@ int main(int argc, char** argv) {
     if (opts.help) help();
     else if (opts.self_test) self_test();
     else if (opts.layout_self_test) layout_self_test();
+    else if (opts.mixed_layout_self_test) mixed_layout_self_test();
+    else if (opts.mode == "mixed-fetch") run_mixed_fetch();
     else if (opts.mode == "capabilities") run_capabilities();
     else run_graphics(opts);
     return 0;

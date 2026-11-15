@@ -30,13 +30,17 @@ MARKER = ".h700-graphics-probe"
 SNAPSHOT = Path("docs/H700_RUNTIME_ABI.json")
 ENVIRONMENT_INPUTS = ("verify_environment.py", "Dockerfile.abi238", ".dockerignore")
 CONTRACT_INPUTS = ("contract.hpp", "contract.cpp")
-# Exact U bytes mirrored by contract.cpp; changes require review of the mirror.
+MIXED_INPUTS = ("mixed.hpp", "mixed.cpp")
+# Exact U bytes mirrored/referenced by contract.cpp and mixed.cpp; review on drift.
 CONTRACT_REFERENCE_SHA256 = {
     "extern/aurora/lib/webgpu/gpu.cpp": "bccac03231852388acb82fb69317646f2a8112bec805fbce436f837309df80b7",
     "extern/aurora/lib/gfx/frame.cpp": "af429b9f8757c1ad170ac84814d70aea2d8a84206a08afec7bb837d901f04ab0",
     "extern/aurora/lib/gx/gx.cpp": "259afb0bdc5a7db0e2e5ffd3505b184021958d8788f02eb5d547d37ee7b8ec2a",
     "extern/aurora/lib/gx/gx.hpp": "2b61a2b2d152470eeefd866ea420e8e64a0a4b54afd420eb0a843e51e60f276c",
     "extern/aurora/lib/gfx/probe.hpp": "9317c81e6b21438b0a1d37e4147feee60592b6dc7b4a97d1985f531480a05376",
+    "extern/aurora/lib/gfx/resources.hpp": "24754f024ddbf996d7299931a4d793fd0054285f6bf0eb84121c47e75f57d2ae",
+    "extern/aurora/lib/gfx/encoding.cpp": "83c97cd6019b2c1b53f8a55a979f769c35fe2c77152a39bc2034d3ec77bac3d2",
+    "extern/aurora/lib/gx/shader.cpp": "ed1741fa89014a2c25107aa775f5daa3c1feb0f9947faefae7988e8d57617087",
 }
 LAYOUT_SELF_TEST_SUCCESS = "PASS layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)"
 LAYOUT_VALIDATION_SCOPE = {
@@ -44,6 +48,14 @@ LAYOUT_VALIDATION_SCOPE = {
     "positive": "U storage-fetch normal/shadow layouts without lightmap",
     "negative": "U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
     "not_validated": ["device-budget-17/lightmap layouts", "Mali request/layout", "shaders/pixels/threading/recreation"],
+}
+MIXED_LAYOUT_SELF_TEST_SUCCESS = "PASS mixed-layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)"
+MIXED_LAYOUT_VALIDATION_SCOPE = {
+    "backend": "Null", "effective_sampled_texture_budget": 16, "cases": 4,
+    "positive": "Mixed normal/shadow layouts: vertex texture fetch, 16 fragment textures + 1 fragment SSBO; no vertex SSBO",
+    "negative": "Original U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
+    "not_validated": ["GPU shader/pixel/resource-update workload", "Mali request/layout/execution",
+                      "threading", "recreation", "game integration"],
 }
 ABI_LIMITATIONS = [
     "Firmware snapshot covers version nodes and only five selected exports, not every imported symbol",
@@ -107,7 +119,7 @@ def verify_contract_reference(root):
         actual = sha256(path)
         require(actual == expected,
                 f"Contract reference drift: {rel} (expected {expected}, got {actual}); "
-                "review the U changes, update the contract.hpp/.cpp mirror and reference hashes after review; "
+                "review the U changes, update the contract.hpp/.cpp and mixed.hpp/.cpp mirrors and reference hashes after review; "
                 "do not edit production sources to bypass this check")
         hashes[rel] = actual
     return hashes
@@ -115,7 +127,7 @@ def verify_contract_reference(root):
 
 def check_inputs(root):
     required = [PROBE / name for name in ("CMakeLists.txt", "build.py", "probe.cpp", "pattern.hpp",
-                                         *CONTRACT_INPUTS, *ENVIRONMENT_INPUTS)]
+                                         *CONTRACT_INPUTS, *MIXED_INPUTS, *ENVIRONMENT_INPUTS)]
     required.append(SNAPSHOT)
     required += [Path(p) for p in ("tools/collect_licenses.sh", "LICENSE", "NOTICE",
                                   "packaging/licenses/dawn.txt")]
@@ -214,7 +226,7 @@ def run(command, timeout=60, env=None, separate_stderr=False):
 
 def source_hashes(root):
     paths = [PROBE / name for name in ("probe.cpp", "pattern.hpp", "CMakeLists.txt", "build.py",
-                                      *CONTRACT_INPUTS, *ENVIRONMENT_INPUTS)]
+                                      *CONTRACT_INPUTS, *MIXED_INPUTS, *ENVIRONMENT_INPUTS)]
     paths.extend((Path("tools/collect_licenses.sh"), SNAPSHOT))
     paths.extend(Path(rel) for rel in CONTRACT_REFERENCE_SHA256)
     return {path.as_posix(): sha256(root / path) for path in paths}
@@ -228,8 +240,9 @@ def publish_package(package):
 
 
 def smoke_tests(package, out, reports, env):
-    for mode in ("--help", "--self-test", "--layout-self-test"):
-        scope = "Dawn Null validation only; no SDL/EGL/GPU" if mode == "--layout-self-test" else "no SDL initialization"
+    for mode in ("--help", "--self-test", "--layout-self-test", "--mixed-layout-self-test"):
+        scope = ("Dawn Null validation only; no SDL/EGL/GPU"
+                 if mode in ("--layout-self-test", "--mixed-layout-self-test") else "no SDL initialization")
         try:
             text, stderr = run([package / "h700_graphics_probe", mode], timeout=30, env=env, separate_stderr=True)
         except ValueError as error:
@@ -248,6 +261,11 @@ def smoke_tests(package, out, reports, env):
             require(bool(lines) and lines[-1] == LAYOUT_SELF_TEST_SUCCESS,
                     "Dawn Null layout-self-test exited without its final four-case budget-16 success marker: " +
                     LAYOUT_SELF_TEST_SUCCESS)
+        if mode == "--mixed-layout-self-test":
+            (package / "metadata/mixed-layout-self-test.txt").write_text(output)
+            require(bool(lines) and lines[-1] == MIXED_LAYOUT_SELF_TEST_SUCCESS,
+                    "Dawn Null mixed-layout-self-test exited without its final four-case budget-16 success marker: " +
+                    MIXED_LAYOUT_SELF_TEST_SUCCESS)
 
 
 def container_build(args):
@@ -304,9 +322,11 @@ def container_build(args):
                 "firmware_snapshot_sha256": sha256(root / SNAPSHOT), "abi_limitations": ABI_LIMITATIONS,
                 "tools": versions, "sources_sha256": sources,
                 "contract_reference_sha256": provenance["contract_reference_sha256"],
-                "layout_validation_scope": LAYOUT_VALIDATION_SCOPE, "jobs": args.jobs,
+                "layout_validation_scope": LAYOUT_VALIDATION_SCOPE,
+                "mixed_layout_validation_scope": MIXED_LAYOUT_VALIDATION_SCOPE, "jobs": args.jobs,
                 "build_type": "Release", "cpu": "cortex-a53", "abi_limits": LIMITS, "abi": abi,
                 "validation": "Container compiler/link/ABI/help/CPU self-test/ldd and Dawn Null layout validation only; "
+                              "includes separate mixed-layout controls, not GPU workload validation; "
                               "no SDL/EGL/GPU initialization in smoke tests; no new firmware runtime validation",
                 "files_sha256": {p.relative_to(package).as_posix(): sha256(p)
                                  for p in sorted(package.rglob("*")) if p.is_file()}}

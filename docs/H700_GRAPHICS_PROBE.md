@@ -8,12 +8,15 @@
 
 Код игры, root CMake, dependency pins и донор не изменялись. Первоначальная подготовка демки не включала deploy/graphics; затем пользователь отдельно предоставил свободную приставку и разрешил тест. Использовалась временная установка в `/tmp`, после теста удалённая. Исходный read-only SSH inventory описан в [runtime/ABI](H700_RUNTIME_ABI.md). Любой следующий запуск требует актуального разрешения на окно; успешный тест не разрешает начать перенос.
 
+**Следующая отдельная демка варианта 3 подготовлена:** [mixed-fetch](H700_MIXED_FETCH_PROBE.md), новый `mixed-v1/package`. Восемь synthetic draws должны проверить vertex texture / fragment SSBO reads, все 16 group-2 textures, updates и bounded buffer replacement. Подготовка (70 helper tests, build/ABI/CPU, старые и mixed Null layouts) прошла; actual shader/pixel workload на Mali не запускался. Production code не менялся.
+
 ## 1. Что реализовано
 
 Исходники — [tools/h700_graphics_probe/](../tools/h700_graphics_probe/):
 
 - `probe.cpp` — явные device modes offscreen, bridge и capabilities; без `--mode` SDL video не запускается. `--layout-self-test` использует только Null backend.
-- `contract.hpp/.cpp` — зеркало default U request и GX layouts; CPU policy assertions, без исправления game code.
+- `contract.hpp/.cpp` — неизменённое зеркало default U request/layouts и отдельный proposed mixed contract; CPU policy assertions, без исправления game code.
+- `mixed.hpp/.cpp` — synthetic mixed-fetch shaders/resources, CPU oracle, updates и bounded buffer growth.
 - `pattern.hpp` — ожидаемые pixels и синтетический WGSL shader: четыре цветных квадранта и меняющийся белый/пурпурный маркер.
 - `CMakeLists.txt` — изолированная Linux ARM64 сборка, без подключения game sources.
 - `build.py` — offline Docker build, проверка inputs, отдельный output, ELF/ABI gate и asset-free staging.
@@ -27,10 +30,12 @@
 | `--mode offscreen` | SDL2/Mali bootstrap, аппаратный Dawn OpenGLES Compatibility device, WGSL render и CPU-проверка GPU readback |
 | `--mode bridge` | Постоянный presenter EGLImage → native Dawn wrapper → GPU draw → ожидание completion → чтение контрольных pixels и GPU blit/swap |
 | `--mode capabilities` | U request/limits/features и validation выбранных GX layouts; требует окно, узор не рисует. На H700: device PASS, оба selected layouts FAIL 17 > 16, exit 1; не shader/pixel/threading test |
+| `--mode mixed-fetch` | Отдельная proposed адаптация: vertex textures + fragment SSBO, обе layouts, 8 draws с readbacks/updates/growth. Окно требуется, display pattern не рисуется; на Mali ещё не выполнялся |
 | `--layout-self-test` | Контейнерный Null-only контроль четырёх layouts при бюджете 16; без SDL/EGL/GPU, не доказательство Mali support |
+| `--mixed-layout-self-test` | Отдельные 4 Null controls бюджета 16: mixed-positive и original texture-negative normal/shadow; без shader/pixel execution |
 | `--help`, `--self-test` | Без SDL/EGL/Dawn initialization; второй проверяет CPU pattern/arguments/extensions и U contract policy/counts |
 
-**Все три device modes создают SDL video window и могут занять экран**, включая capabilities и offscreen: окно нужно для проверенного firmware bootstrap. Нельзя считать offscreen пассивным inventory.
+**Все четыре device modes создают SDL video window и могут занять экран**, включая mixed-fetch, capabilities и offscreen: окно нужно для проверенного firmware bootstrap. Нельзя считать offscreen пассивным inventory.
 
 Выбор hardware adapter ограничен OpenGLES/Mali; offscreen/bridge проверяют 4096 texture dimension и 64-byte immediates baseline, capabilities использует зеркальный default U request. Ошибки validation/device loss не отключаются. Эти два limits не заменяют проверку полного набора требований U. Фильтрация по Mali-G31 намеренно ограничивает поддерживаемое устройство.
 

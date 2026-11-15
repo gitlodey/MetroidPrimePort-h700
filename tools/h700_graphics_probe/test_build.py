@@ -99,7 +99,8 @@ class BuildTests(unittest.TestCase):
 
     def test_missing_archive_is_not_downloaded(self):
         for rel in (build.PROBE / "CMakeLists.txt", build.PROBE / "build.py", build.PROBE / "probe.cpp",
-                    build.PROBE / "pattern.hpp", *(build.PROBE / name for name in build.CONTRACT_INPUTS),
+                    build.PROBE / "pattern.hpp",
+                    *(build.PROBE / name for name in (*build.CONTRACT_INPUTS, *build.MIXED_INPUTS)),
                     Path("tools/collect_licenses.sh"), Path("LICENSE"),
                     Path("NOTICE"), Path("packaging/licenses/dawn.txt"), build.SNAPSHOT,
                     *(build.PROBE / name for name in build.ENVIRONMENT_INPUTS)):
@@ -214,19 +215,22 @@ class BuildTests(unittest.TestCase):
     def test_source_hashes_are_relative_and_detect_changes(self):
         for rel in (build.PROBE / "probe.cpp", build.PROBE / "pattern.hpp", build.PROBE / "CMakeLists.txt",
                     build.PROBE / "build.py", Path("tools/collect_licenses.sh"), build.SNAPSHOT,
-                    *(build.PROBE / name for name in (*build.CONTRACT_INPUTS, *build.ENVIRONMENT_INPUTS)),
+                    *(build.PROBE / name for name in (*build.CONTRACT_INPUTS, *build.MIXED_INPUTS, *build.ENVIRONMENT_INPUTS)),
                     *(Path(rel) for rel in build.CONTRACT_REFERENCE_SHA256)):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("first")
         first = build.source_hashes(self.root)
-        for rel in (build.PROBE / "pattern.hpp", *(build.PROBE / name for name in build.CONTRACT_INPUTS),
+        for rel in (build.PROBE / "pattern.hpp",
+                    *(build.PROBE / name for name in (*build.CONTRACT_INPUTS, *build.MIXED_INPUTS)),
                     *(Path(rel) for rel in build.CONTRACT_REFERENCE_SHA256)):
             with self.subTest(path=rel):
                 (self.root / rel).write_text("second")
                 self.assertNotEqual(first, build.source_hashes(self.root))
                 (self.root / rel).write_text("first")
         self.assertTrue(set(build.CONTRACT_REFERENCE_SHA256).issubset(first))
+        for name in (*build.CONTRACT_INPUTS, *build.MIXED_INPUTS):
+            self.assertIn((build.PROBE / name).as_posix(), first)
         self.assertNotIn(str(self.root), json.dumps(first))
 
     def test_command_runner_uses_timeout_and_checks_exit_status(self):
@@ -274,7 +278,7 @@ class ContractReferenceTests(unittest.TestCase):
 
     def inputs_fixture(self):
         paths = [build.PROBE / name for name in ("CMakeLists.txt", "build.py", "probe.cpp", "pattern.hpp",
-                                                *build.CONTRACT_INPUTS, *build.ENVIRONMENT_INPUTS)]
+                                                *build.CONTRACT_INPUTS, *build.MIXED_INPUTS, *build.ENVIRONMENT_INPUTS)]
         paths += [build.SNAPSHOT, Path("tools/collect_licenses.sh"), Path("LICENSE"), Path("NOTICE"),
                   Path("packaging/licenses/dawn.txt"),
                   build.DEPS / f"sdl-subbuild/sdl-populate-prefix/src/{build.SDL_PIN}.tar.gz",
@@ -289,6 +293,16 @@ class ContractReferenceTests(unittest.TestCase):
         stamp.parent.mkdir()
         stamp.write_text(f"https://github.com/bmdhacks/SDL/archive/{build.SDL_PIN}.tar.gz")
         return contract_reference_fixture(self.root)
+
+    def test_reference_guards_cover_original_and_mixed_design_inputs(self):
+        self.assertEqual(set(build.CONTRACT_REFERENCE_SHA256), {
+            "extern/aurora/lib/webgpu/gpu.cpp", "extern/aurora/lib/gfx/frame.cpp",
+            "extern/aurora/lib/gx/gx.cpp", "extern/aurora/lib/gx/gx.hpp", "extern/aurora/lib/gfx/probe.hpp",
+            "extern/aurora/lib/gfx/resources.hpp", "extern/aurora/lib/gfx/encoding.cpp",
+            "extern/aurora/lib/gx/shader.cpp",
+        })
+        self.assertEqual(build.CONTRACT_INPUTS, ("contract.hpp", "contract.cpp"))
+        self.assertEqual(build.MIXED_INPUTS, ("mixed.hpp", "mixed.cpp"))
 
     def test_reference_matches_exact_reviewed_bytes(self):
         expected = contract_reference_fixture(self.root)
@@ -384,6 +398,38 @@ class ContractReferenceTests(unittest.TestCase):
             archive.assert_not_called()
             path.write_bytes(original)
 
+    def test_mixed_files_are_required_inputs(self):
+        self.inputs_fixture()
+        for name in build.MIXED_INPUTS:
+            path = self.root / build.PROBE / name
+            original = path.read_bytes()
+            path.unlink()
+            with self.subTest(name=name), patch.object(build, "verify_archive") as archive, \
+                 patch.object(build, "run") as run, \
+                 self.assertRaisesRegex(ValueError, "Missing input:.*" + name):
+                build.check_inputs(self.root)
+            archive.assert_not_called()
+            run.assert_not_called()
+            path.write_bytes(original)
+        self.assertFalse((self.root / "build/h700-graphics-probe").exists())
+
+    def test_mixed_inputs_cannot_escape_project(self):
+        self.inputs_fixture()
+        for name in build.MIXED_INPUTS:
+            path = self.root / build.PROBE / name
+            original = path.read_bytes()
+            with tempfile.TemporaryDirectory() as directory:
+                outside = Path(directory) / name
+                outside.write_bytes(original)
+                path.unlink()
+                path.symlink_to(outside)
+                with self.subTest(name=name), patch.object(build, "verify_archive") as archive, \
+                     self.assertRaisesRegex(ValueError, "Input escapes project:.*" + name):
+                    build.check_inputs(self.root)
+                archive.assert_not_called()
+                path.unlink()
+                path.write_bytes(original)
+
     def test_real_check_inputs_cli_is_readonly_and_never_runs_commands(self):
         expected = self.inputs_fixture()
         before = {str(p.relative_to(self.root)): p.read_bytes() if p.is_file() else None
@@ -412,12 +458,14 @@ class SmokeTests(unittest.TestCase):
     def test_only_safe_modes_run_and_preserve_null_output(self):
         package, reports, env = self.smoke_fixture()
         output = "budget16 normal/shadow controls; budget17 remains unvalidated\n" + build.LAYOUT_SELF_TEST_SUCCESS + "\n"
+        mixed_output = "mixed normal/shadow controls; no GPU workload\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n"
         with patch.object(build, "run", side_effect=[("Usage\n", ""), ("PASS self-test (CPU-only)\n", ""),
-                                                    (output, "Null diagnostic\n")]) as run:
+                                                    (output, "Null diagnostic\n"),
+                                                    (mixed_output, "Mixed Null diagnostic\n")]) as run:
             build.smoke_tests(package, self.root, reports, env)
         self.assertEqual([call.args[0] for call in run.call_args_list],
                          [[package / "h700_graphics_probe", mode]
-                          for mode in ("--help", "--self-test", "--layout-self-test")])
+                          for mode in ("--help", "--self-test", "--layout-self-test", "--mixed-layout-self-test")])
         for call in run.call_args_list:
             self.assertEqual(call.kwargs, {"timeout": 30, "env": env, "separate_stderr": True})
         report = (self.root / "elf-report.txt").read_text()
@@ -428,6 +476,12 @@ class SmokeTests(unittest.TestCase):
         layout_report = (package / "metadata/layout-self-test.txt").read_text()
         self.assertTrue(layout_report.startswith(output))
         self.assertIn("Null diagnostic", layout_report)
+        self.assertNotIn(mixed_output, layout_report)
+        mixed_report = (package / "metadata/mixed-layout-self-test.txt").read_text()
+        self.assertEqual(mixed_report, mixed_output + "\n=== --mixed-layout-self-test stderr ===\nMixed Null diagnostic\n")
+        self.assertIn("--mixed-layout-self-test (Dawn Null validation only; no SDL/EGL/GPU)", report)
+        self.assertIn(mixed_report, report)
+        self.assertNotIn("--mode", [str(arg) for call in run.call_args_list for arg in call.args[0]])
 
     def test_layout_zero_exit_without_exact_final_four_case_budget16_marker_is_rejected(self):
         package, reports, env = self.smoke_fixture()
@@ -444,6 +498,26 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual((package / "metadata/layout-self-test.txt").read_text(), output)
             self.assertIn(output, (self.root / "elf-report.txt").read_text())
 
+    def test_mixed_zero_exit_without_exact_final_four_case_budget16_marker_is_rejected(self):
+        package, reports, env = self.smoke_fixture()
+        marker = build.MIXED_LAYOUT_SELF_TEST_SUCCESS
+        self.assertEqual(marker, "PASS mixed-layout-self-test cases=4 budget=16 "
+                                 "(Dawn Null validation only; no SDL/EGL/GPU)")
+        for output in ("", "Usage\n", "PASS mixed-layout-self-test\n", build.LAYOUT_SELF_TEST_SUCCESS,
+                       marker.replace("cases=4", "cases=2"), marker.replace("cases=4", "cases=8"),
+                       marker.replace("budget=16", "budget=17"), marker.replace("budget=16", "budget=15"),
+                       marker.replace("Dawn Null", "OpenGLES"), "prefix " + marker, marker + " extra", marker + " ",
+                       marker + "\nFAIL later check\n"):
+            with self.subTest(output=output), \
+                 patch.object(build, "run", side_effect=[("Usage", ""), ("PASS self-test (CPU-only)", ""),
+                     (build.LAYOUT_SELF_TEST_SUCCESS, ""), (output, "")]) as run, \
+                 self.assertRaisesRegex(ValueError, "mixed-layout-self-test.*final four-case budget-16 success marker"):
+                build.smoke_tests(package, self.root, reports, env)
+            self.assertEqual(run.call_count, 4)
+            self.assertEqual((package / "metadata/mixed-layout-self-test.txt").read_text(), output)
+            self.assertEqual((package / "metadata/layout-self-test.txt").read_text(), build.LAYOUT_SELF_TEST_SUCCESS)
+            self.assertIn(output, (self.root / "elf-report.txt").read_text())
+
     def test_cpu_zero_exit_without_pass_marker_is_rejected(self):
         package, reports, env = self.smoke_fixture()
         with patch.object(build, "run", side_effect=[("Usage", ""), ("early exit", "")]) as run, \
@@ -454,12 +528,16 @@ class SmokeTests(unittest.TestCase):
 
     def test_stderr_success_marker_cannot_substitute_for_stdout(self):
         package, reports, env = self.smoke_fixture()
-        for mode in ("--self-test", "--layout-self-test"):
+        for mode in ("--self-test", "--layout-self-test", "--mixed-layout-self-test"):
             outputs = [("Usage", "")]
-            if mode == "--layout-self-test":
+            if mode != "--self-test":
                 outputs.append(("PASS self-test (CPU-only)", ""))
-            outputs.append(("early exit\n", build.LAYOUT_SELF_TEST_SUCCESS if mode == "--layout-self-test"
-                            else "PASS self-test (CPU-only)"))
+            if mode == "--mixed-layout-self-test":
+                outputs.append((build.LAYOUT_SELF_TEST_SUCCESS, ""))
+            marker = {"--self-test": "PASS self-test (CPU-only)",
+                      "--layout-self-test": build.LAYOUT_SELF_TEST_SUCCESS,
+                      "--mixed-layout-self-test": build.MIXED_LAYOUT_SELF_TEST_SUCCESS}[mode]
+            outputs.append(("early exit\n", marker))
             with self.subTest(mode=mode), patch.object(build, "run", side_effect=outputs), \
                  self.assertRaisesRegex(ValueError, "success marker"):
                 build.smoke_tests(package, self.root, reports, env)
@@ -475,6 +553,22 @@ class SmokeTests(unittest.TestCase):
             build.smoke_tests(package, self.root, reports, env)
         self.assertIn(build.LAYOUT_SELF_TEST_SUCCESS, (self.root / "elf-report.txt").read_text())
         self.assertIn("FAILED", (self.root / "elf-report.txt").read_text())
+
+    def test_mixed_nonzero_exit_is_not_accepted_even_with_success_marker(self):
+        package, reports, env = self.smoke_fixture()
+        result = build.subprocess.CompletedProcess(["probe"], 1, stdout=build.MIXED_LAYOUT_SELF_TEST_SUCCESS,
+                                                   stderr="mixed failure diagnostic\n")
+        with patch.object(build.subprocess, "run", side_effect=[
+                build.subprocess.CompletedProcess(["probe"], 0, stdout="Usage"),
+                build.subprocess.CompletedProcess(["probe"], 0, stdout="PASS self-test (CPU-only)"),
+                build.subprocess.CompletedProcess(["probe"], 0, stdout=build.LAYOUT_SELF_TEST_SUCCESS), result]) as run, \
+             self.assertRaisesRegex(ValueError, "failed \\(1\\)"):
+            build.smoke_tests(package, self.root, reports, env)
+        self.assertEqual(run.call_count, 4)
+        report = (self.root / "elf-report.txt").read_text()
+        self.assertIn(build.MIXED_LAYOUT_SELF_TEST_SUCCESS, report)
+        self.assertIn("mixed failure diagnostic", report)
+        self.assertIn("--mixed-layout-self-test (Dawn Null validation only; no SDL/EGL/GPU) FAILED", report)
 
 
 class ContainerBuildTests(unittest.TestCase):
@@ -500,9 +594,10 @@ class ContainerBuildTests(unittest.TestCase):
                  "/opt/h700-toolchain/abi.json": image_report, "/opt/h700-toolchain/packages.tsv": packages}
         return out, expected, paths
 
-    def mock_container_build(self, drift=None, layout_output=None):
+    def mock_container_build(self, drift=None, layout_output=None, mixed_result=None):
         out, expected, paths = self.container_fixture()
         layout_output = build.LAYOUT_SELF_TEST_SUCCESS + "\n" if layout_output is None else layout_output
+        mixed_result = (build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n", "") if mixed_result is None else mixed_result
 
         def command(argv, **kwargs):
             tool = str(argv[0])
@@ -515,6 +610,10 @@ class ContainerBuildTests(unittest.TestCase):
             if tool == "ldd":
                 return "libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6\n"
             if tool == str(out / "package.partial/h700_graphics_probe"):
+                if argv[1] == "--mixed-layout-self-test":
+                    if isinstance(mixed_result, ValueError):
+                        raise mixed_result
+                    return mixed_result
                 return ({"--help": "Usage\n", "--self-test": "PASS self-test (CPU-only)\n",
                          "--layout-self-test": layout_output}[argv[1]], "")
             if tool == "bash":
@@ -551,7 +650,7 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertIn("device-budget-17/lightmap layouts", coverage["not_validated"])
         self.assertIn("Mali request/layout", coverage["not_validated"])
         self.assertEqual({rel: manifest["sources_sha256"][rel] for rel in expected}, expected)
-        for name in build.CONTRACT_INPUTS:
+        for name in (*build.CONTRACT_INPUTS, *build.MIXED_INPUTS):
             self.assertEqual(manifest["sources_sha256"][(build.PROBE / name).as_posix()],
                              build.sha256(self.root / build.PROBE / name))
         self.assertEqual(manifest["files_sha256"]["metadata/layout-self-test.txt"],
@@ -562,6 +661,30 @@ class ContainerBuildTests(unittest.TestCase):
         commands = [call.args[0] for call in run.call_args_list]
         self.assertFalse(any("--mode" in command for command in commands))
         self.assertIn("--layout-self-test", [str(arg) for command in commands for arg in command])
+        self.assertIn("--mixed-layout-self-test", [str(arg) for command in commands for arg in command])
+        self.assertFalse(any("mixed-fetch" in command for command in commands))
+
+    def test_manifest_records_separate_mixed_report_hash_and_truthful_coverage(self):
+        mixed_output = "mixed controls detail\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n"
+        mixed_stderr = "mixed Null diagnostic\n"
+        out, _, _ = self.mock_container_build(mixed_result=(mixed_output, mixed_stderr))
+        package = out / "package"
+        manifest = json.loads((package / "manifest.json").read_text())
+        self.assertEqual(manifest["mixed_layout_validation_scope"], {
+            "backend": "Null", "effective_sampled_texture_budget": 16, "cases": 4,
+            "positive": "Mixed normal/shadow layouts: vertex texture fetch, 16 fragment textures + 1 fragment SSBO; no vertex SSBO",
+            "negative": "Original U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
+            "not_validated": ["GPU shader/pixel/resource-update workload", "Mali request/layout/execution",
+                              "threading", "recreation", "game integration"],
+        })
+        mixed_report = package / "metadata/mixed-layout-self-test.txt"
+        self.assertEqual(mixed_report.read_text(), mixed_output +
+                         "\n=== --mixed-layout-self-test stderr ===\n" + mixed_stderr)
+        self.assertEqual(manifest["files_sha256"]["metadata/mixed-layout-self-test.txt"], build.sha256(mixed_report))
+        self.assertEqual((package / "metadata/layout-self-test.txt").read_text(), build.LAYOUT_SELF_TEST_SUCCESS + "\n")
+        self.assertIn("not GPU workload validation", manifest["validation"])
+        self.assertIn(mixed_output, (out / "elf-report.txt").read_text())
+        self.assertIn(mixed_stderr, (out / "elf-report.txt").read_text())
 
     def test_midbuild_reference_drift_prevents_publication(self):
         with self.assertRaisesRegex(ValueError, "sources changed during build"):
@@ -574,6 +697,36 @@ class ContainerBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sources changed during build"):
             self.mock_container_build(drift=build.PROBE / "contract.cpp")
         self.assertFalse((self.root / "build/h700-graphics-probe-fixture/package").exists())
+
+    def test_midbuild_mixed_inputs_and_new_reference_drift_prevent_publication(self):
+        paths = [build.PROBE / name for name in build.MIXED_INPUTS]
+        paths += [Path("extern/aurora/lib/gfx/resources.hpp"), Path("extern/aurora/lib/gfx/encoding.cpp"),
+                  Path("extern/aurora/lib/gx/shader.cpp")]
+        for rel in paths:
+            with self.subTest(path=rel), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(self, "root", Path(directory).resolve()):
+                with self.assertRaisesRegex(ValueError, "sources changed during build"):
+                    self.mock_container_build(drift=rel)
+                out = self.root / "build/h700-graphics-probe-fixture"
+                self.assertFalse((out / "package").exists())
+                self.assertFalse((out / "package.partial/manifest.json").exists())
+
+    def test_mixed_failure_prevents_manifest_and_publication(self):
+        marker = build.MIXED_LAYOUT_SELF_TEST_SUCCESS
+        results = [("early exit\n", ""), (build.LAYOUT_SELF_TEST_SUCCESS, ""),
+                   (marker.replace("cases=4", "cases=8"), ""), (marker.replace("budget=16", "budget=17"), ""),
+                   ("early exit\n", marker), ValueError("probe failed (1):\n" + marker)]
+        for result in results:
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as directory, \
+                 patch.object(self, "root", Path(directory).resolve()):
+                with self.assertRaisesRegex(ValueError, "success marker|failed \\(1\\)"):
+                    self.mock_container_build(mixed_result=result)
+                out = self.root / "build/h700-graphics-probe-fixture"
+                self.assertFalse((out / "package").exists())
+                self.assertFalse((out / "package.partial/manifest.json").exists())
+                self.assertIn("--mixed-layout-self-test", (out / "elf-report.txt").read_text())
+                self.assertEqual((out / "package.partial/metadata/layout-self-test.txt").read_text(),
+                                 build.LAYOUT_SELF_TEST_SUCCESS + "\n")
 
     def test_layout_early_exit_prevents_manifest_and_publication(self):
         with self.assertRaisesRegex(ValueError, "final four-case budget-16 success marker"):

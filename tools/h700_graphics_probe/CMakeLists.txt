@@ -30,7 +30,7 @@ add_subdirectory("${H700_DEPS}/sdl-src" "${CMAKE_CURRENT_BINARY_DIR}/sdl" EXCLUD
 
 find_library(H700_EGL EGL REQUIRED)
 find_library(H700_GLES GLESv2 REQUIRED)
-add_executable(h700_graphics_probe probe.cpp contract.cpp)
+add_executable(h700_graphics_probe probe.cpp contract.cpp mixed.cpp)
 set_target_properties(h700_graphics_probe PROPERTIES
   CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF
   BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")

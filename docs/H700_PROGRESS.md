@@ -2,7 +2,7 @@
 
 **Цель:** новая база игры работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. Оптимизация к 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** подготовка плана. Прежняя Dawn/EGLImage демка прошла bounded pixel/order/teardown проверки на H700. Последующий отдельно разрешённый `capabilities` test создал device с U request, но **оба выбранных GX layouts отклонены: 17 fragment textures при лимите 16**. До согласования адаптации новые эксперименты остановлены; план реализации не утверждён, game/platform code не менялся.
+**Текущий этап:** подготовка плана. Прежняя Dawn/EGLImage демка прошла bounded pixel/order/teardown проверки на H700. Последующий отдельно разрешённый `capabilities` test создал device с U request, но **оба выбранных GX layouts отклонены: 17 fragment textures при лимите 16**. После сравнения пользователь разрешил подготовку отдельной mixed-fetch демки; она готова к отдельно согласованному device run. План production-реализации не утверждён, game/platform code не менялся.
 
 ## Готово
 
@@ -23,7 +23,7 @@
 
 ## Сравнение решений текущего барьера
 
-По запросу пользователя выполнено [статическое сравнение вариантов 1 и 3](H700_LAYOUT_OPTIONS.md). Вариант 1 — fixed non-PBR profile: 10 fragment textures, но нужны guards материалов/assets/cache и перестройка group 2. Вариант 3 — vertex texture fetch + fragment SSBO: 16 textures + 1 fragment storage buffer; исходный buffer и uploads уже существуют. **Рекомендован вариант 3 как более локальный кандидат, выбор и реализация ещё не утверждены.** Его shader/readback workload на Mali не проверен; новых сборок/device runs нет.
+По запросу пользователя выполнено [статическое сравнение вариантов 1 и 3](H700_LAYOUT_OPTIONS.md). Вариант 1 — fixed non-PBR profile: 10 fragment textures, но нужны guards материалов/assets/cache и перестройка group 2. Вариант 3 — vertex texture fetch + fragment SSBO: 16 textures + 1 fragment storage buffer; исходный buffer и uploads уже существуют. **Вариант 3 разрешён только как отдельный эксперимент**, не production-реализация. [Mixed-fetch демка](H700_MIXED_FETCH_PROBE.md) собрана в `build/h700-graphics-probe-mixed-v1/package/`: 70 helper tests, inputs/8 reference hashes, compile/link, ABI, CPU и оба Null layout self-tests по 4 cases — PASS. Hashes/licenses/manifest проверены. На Mali shader/readback workload нового binary ещё не запускался.
 
 ## Осталось до плана реализации
 
@@ -33,6 +33,6 @@
 
 **Реальное состояние:** подтверждён конкретный layout-барьер **неизменённого U** на H700; это не доказательство невозможности Dawn или необходимости менять firmware/backend. Полная игра и 30 FPS не подтверждены. Lifetime и многопоточная интеграция требуют отдельных решений; Null limit не входит в список блокеров порта.
 
-**Следующий предлагаемый шаг:** согласовать ограниченный mixed-fetch probe по [сравнению](H700_LAYOUT_OPTIONS.md): layouts бюджета 16, vertex texture + fragment buffer чтение и контрольные pixels/updates. Это новый вопрос, не повтор неизменённого `capabilities` и не начало production-переноса. Не менять visibility без замены потребителя и не форсировать vertex SSBO при limit 0.
+**Следующий шаг:** один отдельно согласованный `--mode mixed-fetch` на H700: обе mixed layouts, 8 draws / 32768 контрольных pixels, обновления и bounded source-buffer growth. [Приёмка и безопасный сценарий](H700_MIXED_FETCH_PROBE.md). Это новый вопрос, не повтор неизменённого `capabilities` и не начало production-переноса.
 
-**Нужно от пользователя:** согласовать подготовку следующей probe-итерации; device run требует отдельного окна. Production-реализация не разрешена. Предыдущий device test завершён и очищен.
+**Нужно от пользователя:** подтвердить свободное окно приставки для этого run; подготовка пакета завершена без SSH/deploy. Production-реализация не разрешена. Предыдущий device test завершён и очищен.

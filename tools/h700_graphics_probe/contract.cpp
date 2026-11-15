@@ -49,6 +49,15 @@ std::array<wgpu::BindGroupLayoutEntry, 2> static_entries(bool texture_fetch) {
   return entries;
 }
 
+std::array<wgpu::BindGroupLayoutEntry, 3> mixed_static_entries() {
+  const auto original = static_entries(true);
+  std::array<wgpu::BindGroupLayoutEntry, 3> entries{original[0], original[1], {}};
+  entries[1].visibility = wgpu::ShaderStage::Vertex;
+  entries[2] = {.binding = 2, .visibility = wgpu::ShaderStage::Fragment,
+                .buffer = {.type = wgpu::BufferBindingType::ReadOnlyStorage}};
+  return entries;
+}
+
 // U: extern/aurora/lib/gfx/frame.cpp:856-874. minBindingSize remains zero.
 wgpu::BindGroupLayoutEntry uniform_entry() {
   return {
@@ -200,6 +209,57 @@ wgpu::PipelineLayout gx_layout(const wgpu::Device& device, bool texture_fetch, b
   return device.CreatePipelineLayout(&descriptor);
 }
 
+void check_mixed_limits(const wgpu::Limits& limits, const wgpu::CompatibilityModeLimits& compatibility) {
+  const auto at_least = [](uint32_t value, uint32_t minimum) {
+    return value != WGPU_LIMIT_U32_UNDEFINED && value >= minimum;
+  };
+  check(at_least(limits.maxSampledTexturesPerShaderStage, 16), "Mixed fetch requires 16 sampled textures");
+  check(at_least(limits.maxTextureDimension2D, 4096), "Mixed fetch requires 4096-wide textures");
+  check(at_least(limits.maxStorageBuffersPerShaderStage, 1) &&
+            at_least(compatibility.maxStorageBuffersInFragmentStage, 1),
+        "Mixed fetch requires a fragment storage buffer, not a vertex storage buffer");
+  check(limits.maxStorageBufferBindingSize != WGPU_LIMIT_U64_UNDEFINED &&
+            limits.maxStorageBufferBindingSize >= kMixedBufferBytes &&
+            limits.maxBufferSize != WGPU_LIMIT_U64_UNDEFINED && limits.maxBufferSize >= kMixedBufferBytes,
+        "Mixed fetch requires a 65536-byte storage binding and buffer");
+  check(at_least(limits.maxImmediateSize, 64), "Mixed fetch requires 64-byte immediates");
+}
+
+wgpu::Limits mixed_required_limits(const wgpu::Limits& supported, const Policy& policy) {
+  // Storage is needed even if both original U fallbacks would otherwise avoid it.
+  auto result = required_limits(supported, policy);
+  result.maxSampledTexturesPerShaderStage = 16;
+  result.maxStorageBuffersPerShaderStage = 2;
+  result.maxStorageBufferBindingSize = supported.maxStorageBufferBindingSize;
+  return result;
+}
+
+wgpu::CompatibilityModeLimits mixed_required_compatibility() {
+  return wgpu::CompatibilityModeLimits{wgpu::CompatibilityModeLimits::Init{
+      .maxStorageBuffersInVertexStage = 0, .maxStorageBuffersInFragmentStage = 1}};
+}
+
+MixedLayouts mixed_layout(const wgpu::Device& device, bool shadow) {
+  const auto statics = mixed_static_entries();
+  const auto uniform = uniform_entry();
+  const auto textures = texture_entries(shadow);
+  const wgpu::BindGroupLayoutDescriptor staticDesc{
+      .label = "Mixed vertex textures / fragment storage", .entryCount = statics.size(), .entries = statics.data()};
+  const wgpu::BindGroupLayoutDescriptor uniformDesc{
+      .label = "Uniform bind group layout", .entryCount = 1, .entries = &uniform};
+  const wgpu::BindGroupLayoutDescriptor textureDesc{
+      .label = shadow ? "Mixed GX shadow textures" : "Mixed GX normal textures",
+      .entryCount = kTextureBindings - 1, .entries = textures.data()};
+  MixedLayouts result{{device.CreateBindGroupLayout(&staticDesc), device.CreateBindGroupLayout(&uniformDesc),
+                        device.CreateBindGroupLayout(&textureDesc)}, {}};
+  const wgpu::PipelineLayoutDescriptor descriptor{
+      .label = shadow ? "Mixed GX Shadow Pipeline Layout" : "Mixed GX Pipeline Layout",
+      .bindGroupLayoutCount = result.groups.size(), .bindGroupLayouts = result.groups.data(),
+      .immediateSize = kImmediateSize};
+  result.pipeline = device.CreatePipelineLayout(&descriptor);
+  return result;
+}
+
 void self_test() {
   const Policy defaults;
   check(!defaults.texture_fetch && !defaults.no_compute && !defaults.lightmap, "Policy defaults");
@@ -295,6 +355,62 @@ void self_test() {
     std::vector<wgpu::FeatureName> absent(kFeatures.begin(), kFeatures.end());
     absent.erase(std::find(absent.begin(), absent.end(), feature));
     check(required_features(absent) == absent, "Never request an absent feature");
+  }
+
+  const auto mixed = mixed_static_entries();
+  check(mixed[0].visibility == wgpu::ShaderStage::Vertex &&
+            mixed[1].visibility == wgpu::ShaderStage::Vertex && mixed[2].binding == 2 &&
+            mixed[2].visibility == wgpu::ShaderStage::Fragment &&
+            mixed[2].buffer.type == wgpu::BufferBindingType::ReadOnlyStorage,
+        "Mixed stage separation");
+  const auto mixedCompat = mixed_required_compatibility();
+  check(mixedCompat.maxStorageBuffersInVertexStage == 0 && mixedCompat.maxStorageBuffersInFragmentStage == 1,
+        "Mixed explicit compatibility request");
+  supported.maxSampledTexturesPerShaderStage = 16;
+  supported.maxTextureDimension2D = 8192;
+  supported.maxStorageBuffersPerShaderStage = 8;
+  supported.maxStorageBufferBindingSize = kMixedBufferBytes;
+  supported.maxBufferSize = kMixedBufferBytes;
+  supported.maxImmediateSize = 64;
+  compatibility.maxStorageBuffersInVertexStage = 0;
+  compatibility.maxStorageBuffersInFragmentStage = 4;
+  check_mixed_limits(supported, compatibility);
+  const auto mixedRequest = mixed_required_limits(supported, {.texture_fetch = true, .no_compute = true});
+  check(mixedRequest.maxSampledTexturesPerShaderStage == 16 && mixedRequest.maxStorageBuffersPerShaderStage >= 1 &&
+            mixedRequest.maxStorageBufferBindingSize == kMixedBufferBytes, "Mixed fallback still requests storage");
+  const auto rejects = [&](const wgpu::Limits& limits, const wgpu::CompatibilityModeLimits& compat) {
+    bool rejected = false;
+    try { check_mixed_limits(limits, compat); } catch (const std::runtime_error&) { rejected = true; }
+    check(rejected, "Mixed capacity guard must reject unsupported/undefined values");
+  };
+  for (uint32_t value : {0u, WGPU_LIMIT_U32_UNDEFINED}) {
+    auto bad = compatibility;
+    bad.maxStorageBuffersInFragmentStage = value;
+    rejects(supported, bad);
+  }
+  for (uint32_t value : {15u, WGPU_LIMIT_U32_UNDEFINED}) {
+    auto bad = supported;
+    bad.maxSampledTexturesPerShaderStage = value;
+    rejects(bad, compatibility);
+  }
+  for (uint64_t value : {kMixedBufferBytes - 1, WGPU_LIMIT_U64_UNDEFINED}) {
+    auto bad = supported;
+    bad.maxStorageBufferBindingSize = value;
+    rejects(bad, compatibility);
+  }
+  for (bool shadow : {false, true}) {
+    const auto textures = texture_entries(shadow);
+    uint32_t fragmentTextures = 0, fragmentStorage = 0, vertexStorage = 0;
+    const auto countEntry = [&](const wgpu::BindGroupLayoutEntry& entry) {
+      const bool fragment = (entry.visibility & wgpu::ShaderStage::Fragment) != wgpu::ShaderStage::None;
+      const bool vertex = (entry.visibility & wgpu::ShaderStage::Vertex) != wgpu::ShaderStage::None;
+      fragmentTextures += fragment && entry.texture.sampleType != wgpu::TextureSampleType::BindingNotUsed;
+      fragmentStorage += fragment && entry.buffer.type == wgpu::BufferBindingType::ReadOnlyStorage;
+      vertexStorage += vertex && entry.buffer.type == wgpu::BufferBindingType::ReadOnlyStorage;
+    };
+    for (const auto& entry : mixed) countEntry(entry);
+    for (size_t i = 0; i + 1 < textures.size(); ++i) countEntry(textures[i]);
+    check(fragmentTextures == 16 && fragmentStorage == 1 && vertexStorage == 0, "Mixed actual resource budget");
   }
 
   const auto uniform = uniform_entry();
