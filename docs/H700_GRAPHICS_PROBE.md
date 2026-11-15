@@ -4,7 +4,7 @@
 
 **Демка собрана в новом ARM64 Docker image; ENV-01/02 прошли 2026-11-14.** Прежний link blocker Bookworm устранён без изменения Dawn/firmware. 43 unit tests, compile/link, ELF/ABI gate и безопасные контейнерные modes — PASS. На RG40XX H / muOS 2601.0 Jacaranda прошли `--help`, CPU self-test, offscreen (2 кадра) и bridge (120 кадров), включая pixel/order и dedicated-context teardown assertions. Пользователь подтвердил видимость квадрантов и маркера; артефактов при кратком наблюдении не заметил. Полная визуальная проверка и возврат меню не подтверждены. Результаты — раздел 8. Подробности окружения и его EOL-ограничения — [ENV-01/02](H700_BUILD_ENVIRONMENT.md).
 
-**Расширение готово к следующей согласованной проверке:** [H700_CONTRACT_PROBE.md](H700_CONTRACT_PROBE.md) — `contract-v2/package`, полный U capability request и validation выбранного GX layout. Compile/link, ABI, 62 helper tests, CPU checks и четыре Null controls бюджета 16 прошли. Null profile 17 не является gate и не объявлен проверенным; builder/Dawn не менялись. **Новый binary на Mali не запускался.** Описанный ниже device pass относится только к прежнему artifact из раздела 6.
+**Расширение проверено на H700 — selected-layout FAIL:** [H700_CONTRACT_PROBE.md](H700_CONTRACT_PROBE.md) — `contract-v2/package`. Подготовка (compile/link, ABI, 62 helper tests, CPU checks и четыре Null controls бюджета 16) прошла. Отдельно разрешённый `capabilities` создал device с зеркальным U request, но Mali выбрал texture fetch (vertex storage buffers = 0), а normal/shadow GX layouts требуют **17 fragment textures при лимите 16**. Общий exit 1, timeout отсутствует; установка удалена. Это конкретный U layout-барьер, не проблема Null; адаптация ещё не согласована. Null profile 17 не проверен, builder/Dawn не менялись. Описанный ниже pixel/order device PASS относится только к прежнему artifact из раздела 6.
 
 Код игры, root CMake, dependency pins и донор не изменялись. Первоначальная подготовка демки не включала deploy/graphics; затем пользователь отдельно предоставил свободную приставку и разрешил тест. Использовалась временная установка в `/tmp`, после теста удалённая. Исходный read-only SSH inventory описан в [runtime/ABI](H700_RUNTIME_ABI.md). Любой следующий запуск требует актуального разрешения на окно; успешный тест не разрешает начать перенос.
 
@@ -26,7 +26,7 @@
 | --- | --- |
 | `--mode offscreen` | SDL2/Mali bootstrap, аппаратный Dawn OpenGLES Compatibility device, WGSL render и CPU-проверка GPU readback |
 | `--mode bridge` | Постоянный presenter EGLImage → native Dawn wrapper → GPU draw → ожидание completion → чтение контрольных pixels и GPU blit/swap |
-| `--mode capabilities` | Новый режим: полный U request/limits/features и validation выбранных GX layouts; окна требует, узор не рисует. На устройстве ещё не выполнялся |
+| `--mode capabilities` | U request/limits/features и validation выбранных GX layouts; требует окно, узор не рисует. На H700: device PASS, оба selected layouts FAIL 17 > 16, exit 1; не shader/pixel/threading test |
 | `--layout-self-test` | Контейнерный Null-only контроль четырёх layouts при бюджете 16; без SDL/EGL/GPU, не доказательство Mali support |
 | `--help`, `--self-test` | Без SDL/EGL/Dawn initialization; второй проверяет CPU pattern/arguments/extensions и U contract policy/counts |
 

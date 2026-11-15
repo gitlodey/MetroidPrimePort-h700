@@ -1,6 +1,6 @@
 # H700 — что осталось между демкой Dawn и renderer игры
 
-**Исследование:** 2026-11-14, после успешного [device test демки](H700_GRAPHICS_PROBE.md). Пользователь разрешил дальнейшее исследование. Выполнены только чтение исходников, сравнение Git и получение первичных Dawn sources по закреплённому ref. Новых сборок, probes, SSH/deploy и изменений production code нет. Приставка выключена.
+**Исходное исследование:** 2026-11-14, после успешного [device test демки](H700_GRAPHICS_PROBE.md). В той сессии выполнены только разрешённое чтение исходников, сравнение Git и получение первичных Dawn sources по закреплённому ref, без новых сборок/probes/SSH. **Последующее обновление:** отдельно разрешённый [capability test H700](H700_CONTRACT_PROBE.md) подтвердил texture-fetch layout mismatch на Mali; результаты отмечены ниже. Production code и dependency pins не менялись.
 
 **Результат:** минимальный interop уже работает; перенос не сводится к замене одного `Present()`. Ниже разделены доказанные несогласованности исходников, непроверенные аппаратные возможности и ещё не выбранные решения. Это материал для согласования, **не утверждённая архитектура и не разрешение реализации**.
 
@@ -8,7 +8,7 @@
 
 - Новая база U: `c872da704adde9a7838492aaa56dac73a32053e4`, `v0.46.0`. Проверено: diff `extern/aurora`, `platform`, `src`, `include` относительно U пуст; tree Aurora у U и исследованного HEAD одинаков — `f20f931e0b052b30c354cc7bbd893bbcd38aa1f7`.
 - Dawn: существующий ref `118436b3f8f68583eb86e811ca605dc41637e8cc`, зеркало `Timdeuces/dawn`, package `v20261029.114630`. Изменения pin или пересборки Dawn нет.
-- Hardware evidence — только предыдущая демка: Mali-G31, EGL 1.4 / GLES 3.2, synthetic RGBA8 target 64×64, drawable 640×480; 2 offscreen / 120 bridge кадров и ограниченное визуальное подтверждение пользователя. Это не запуск U renderer.
+- Предыдущая демка: Mali-G31, EGL 1.4 / GLES 3.2, synthetic RGBA8 target 64×64, drawable 640×480; 2 offscreen / 120 bridge кадров и ограниченное визуальное подтверждение пользователя. Последующий `contract-v2` измерил adapter/device limits/features и создал device с U request; normal/shadow GX layouts отклонены **17 > 16**. Это не запуск U renderer или его shader workload.
 - Источники Dawn получены по commit-pinned raw URLs; локальные копии сохранены только в ignored `build/h700-dawn-contract-review/`. Эти исходники не подменяют cached prebuilt и не доказывают его воспроизводимую сборку.
 
 Ключевые первичные файлы:
@@ -27,7 +27,7 @@ SHA-256 полученных ключевых sources: `DeviceGL.cpp` — `96aa3
 
 ## 2. Настоящий device contract U
 
-Основной код — [webgpu/gpu.cpp](../extern/aurora/lib/webgpu/gpu.cpp):989–1063, 1145–1454. Демка запрашивала только 4096/64 и использовала один uniform на 16 bytes; это существенно меньше контракта игры.
+Основной код — [webgpu/gpu.cpp](../extern/aurora/lib/webgpu/gpu.cpp):989–1063, 1145–1454. Прежняя pattern-демка запрашивала только 4096/64 и использовала один uniform на 16 bytes. Последующий capability harness проверил зеркальный default U request: **device создан**, включены ASTC, texture-component-swizzle и implicit-device-synchronization; Core, BC, dual-source и timestamps adapter не объявил. Полные результаты и отличия harness от U — [отчёт device test](H700_CONTRACT_PROBE.md).
 
 ### Adapter и features
 
@@ -64,7 +64,7 @@ U включает `gl_allow_context_on_multi_threads`, а Release дополн�
 
 ## 3. Подтверждённая несогласованность texture-fetch layout
 
-**Статический вывод высокой уверенности; не hardware failure Mali.** Пока не получен Compatibility vertex-storage limit Mali, неизвестно, выберет ли U этот путь автоматически.
+**Теперь подтверждено на H700, не только статически:** Compatibility vertex storage buffers Mali = **0**, поэтому default U policy выбирает texture fetch, no-compute = 0, lightmap = 0. Adapter и созданный device имеют sampled-texture limit **16**. Normal и shadow-receiver layouts требуют **17** и отклонены validation; общий exit 1 без timeout. Это layout-барьер неизменённого U, не crash драйвера и не доказательство невозможности Dawn.
 
 Texture fetch выбирается при reported vertex storage count < 2 либо `AURORA_VERTEX_FETCH_TEXTURE=1` (`gpu.cpp:1153–1165`). Он создаёт две `R32Uint` textures шириной **4096**, по 16,384 bytes на строку; данные читаются через integer `textureLoad` из vertex и fragment stages ([frame.cpp](../extern/aurora/lib/gfx/frame.cpp):107–144, 822–846).
 
@@ -85,7 +85,7 @@ Texture fetch выбирается при reported vertex storage count < 2 ли
 | Texture / нет | **17** | undefined | **16** |
 | Texture / есть | **18** | 17 | **17** |
 
-Последний столбец — вывод из `ReifyDefaultLimits` при успешном создании device с текущим descriptor, **не измеренные `GetLimits` Mali**.
+Последний столбец — статический вывод из `ReifyDefaultLimits`. На Mali затем измерена именно строка **Texture / нет: 17 требуется, 16 доступно**; остальные profiles этим device run не проверялись.
 
 Dawn суммирует visibility **всех entries explicit pipeline layout**, даже если конкретный shader не читает PBR textures. Простое выключение PBR setting не убирает эти bindings; «попросить 18» не решает adapter с пределом 16.
 
@@ -148,7 +148,7 @@ Dawn суммирует visibility **всех entries explicit pipeline layout**
 
 ### Что меняет Dawn thread toggle
 
-U уже запрашивает `gl_allow_context_on_multi_threads`, которого не было в tiny demo. В pinned Dawn ветка **`GLAllowContextOnMultiThreads && !GLDefer`** создаёт до четырёх shared pipeline contexts сверх основного Dawn context; первый обязателен. Фактически выбранная ветка, число contexts и их работа на Mali демкой не проверены. Один compiler worker U не означает создание только одного дополнительного context. `ScopedMakeCurrent` имеет mutex и восстановление предыдущего EGL state; native `ImplicitDeviceSynchronization` объявляется базовым `PhysicalDevice` и U запрашивает feature при наличии.
+U уже запрашивает `gl_allow_context_on_multi_threads`, которого не было в tiny demo. В pinned Dawn ветка **`GLAllowContextOnMultiThreads && !GLDefer`** создаёт до четырёх shared pipeline contexts сверх основного Dawn context; первый обязателен. Последующий capability test создал device с этим toggle, но фактически выбранная ветка, число contexts и их совместная работа на Mali не проверены. Один compiler worker U не означает создание только одного дополнительного context. `ScopedMakeCurrent` имеет mutex и восстановление предыдущего EGL state; native `ImplicitDeviceSynchronization` объявляется базовым `PhysicalDevice` и U запрашивает feature при наличии.
 
 Это обоснование поддерживаемого механизма, **не проверка его работы на firmware Mali**. Есть также legacy `DeprecatedMakeCurrent`, ошибки которого игнорируются; нельзя объявить toggle доказательством полного отсутствия гонок. Raw EGL presenter restoration из демки сохраняет значение из-за SDL TLS cache.
 
@@ -197,10 +197,10 @@ U уже запрашивает `gl_allow_context_on_multi_threads`, котор�
 | GAP-D | Подтвердить U-like threading и отсутствие цикла ожиданий | Отдельные main presenter, recorder-like resource thread, render worker и compiler; включённый U thread toggle. Сначала context/API smoke case; отдельными сессиями — реальный compile/render overlap, normal/blocking lookup, backpressure и progress во время frame/staging acquisition, FIFO drain и render synchronize. Shutdown с pending frame/compile — отдельный case. Проверить pixels/all joins; не FPS или live-device reimport |
 | GAP-E | Закрыть production ownership/recreation | Сначала выбрать lifetime-вариант из раздела 6. Затем bounded repeated lifecycle/failure test выбранного контракта, включая полный share group. Не начинать с reimport leak в цикле на текущем package |
 
-**Первоначально предлагались GAP-A и статический/validation объём GAP-B; это не разрешает добиваться полноты Null matrix.** GAP-A установит допустимые device contracts и reported условие автоматического выбора fetch; GAP-B проверит соответствующие layouts. Корректность исполнения выбранного shader/resource path останется предметом GAP-C. Это позволит обсуждать конкретную адаптацию, а не гипотетические аппаратные недостатки. GAP-C/D/E следуют только после соответствующих решений; их нельзя слить в «перенести renderer и проверить».
+**Первоначально предлагались GAP-A и статический/validation объём GAP-B; это не разрешает добиваться полноты Null matrix.** Затем GAP-A измерил default U request/limits/features и автоматический выбор texture fetch на Mali; device часть GAP-B воспроизвела отказ выбранных layouts, но **не устранила его**. Следующий предлагаемый шаг — согласовать небольшой статический дизайн локальной специализации resource/layout profile под budget 16 с сохранением retail-функциональности. Исполнение shader/resource path, GAP-C/D/E — только после соответствующих решений; их нельзя слить в «перенести renderer и проверить».
 
 В стороне остаются PF-02 для MusyX/nod/game-facing SDL API, build profile полной игры, input/audio/save-load и итоговая приёмка. Это исследование их не закрывает и не разрешает production-перенос.
 
 ### Последующая подготовка GAP-A/B
 
-Первая попытка расширения остановилась на Null maximum 16; первоначальные восемь cases GAP-B не пройдены. Это признано уходом от цели, не блокером H700. Затем пользователь разрешил закончить демку с новыми вводными: [готовый `contract-v2` package](H700_CONTRACT_PROBE.md) прошёл compile/link, ABI, 62 helper tests, CPU checks и четыре реальных Null controls бюджета 16. Профиль device-budget-17 явно не покрыт, validation не ослаблена. Новый `capabilities` проверяет default U request и **только фактически выбранные** GX layouts на Mali; принудительные альтернативы не запускаются. Dawn/backend/production code не менялись, новый device run ещё не разрешён и не выполнен.
+Первая попытка расширения остановилась на Null maximum 16; первоначальные восемь cases GAP-B не пройдены. Это признано уходом от цели, не блокером H700. Затем пользователь разрешил закончить демку с новыми вводными: [готовый `contract-v2` package](H700_CONTRACT_PROBE.md) прошёл compile/link, ABI, 62 helper tests, CPU checks и четыре реальных Null controls бюджета 16. Профиль device-budget-17 явно не покрыт, validation не ослаблена. Новый `capabilities` проверяет default U request и **только фактически выбранные** GX layouts на Mali; принудительные альтернативы не запускаются. Затем пользователь предоставил приставку: один `capabilities` run создал device и воспроизвёл **17 > 16** для обоих выбранных layouts. Cleanup завершён, firmware hashes неизменны. Dawn/backend/production code не менялись; последующие эксперименты и адаптация не начинались.

@@ -8,22 +8,22 @@
 
 ## Разрешение и границы
 
-Пользователь согласовал подготовку расширения после [статического исследования](H700_DAWN_INTEGRATION_GAPS.md). Эта итерация реализует только отдельный asset-free harness; game/platform sources, Dawn/SDL pins и firmware не меняются. Deploy, SSH и graphics/device run в разрешение **не входят**.
+Пользователь согласовал подготовку расширения после [статического исследования](H700_DAWN_INTEGRATION_GAPS.md). Подготовка включала только отдельный asset-free harness, без deploy/SSH/device run. Затем пользователь явно предоставил приставку для описанного ниже отдельного теста. Game/platform sources, Dawn/SDL pins и firmware не менялись; разрешение на тест не разрешает production-адаптацию.
 
-## Текущий согласованный объём: закончить демку для H700
+## Согласованная подготовка демки для H700 — завершена
 
-Пользователь явно разрешил довести демку с новыми вводными. Цепочка текущего шага: **запуск новой игры на H700 → неизвестен фактический U device/fetch/layout contract на Mali → подготовить один режим его запроса и проверки выбранного layout → по device-результату решить, нужна ли локальная адаптация U → закончить на проверенном пакете, без deploy**.
+Пользователь явно разрешил довести демку с новыми вводными. Цепочка шага подготовки: **запуск новой игры на H700 → неизвестен фактический U device/fetch/layout contract на Mali → подготовить один режим его запроса и проверки выбранного layout → по device-результату решить, нужна ли локальная адаптация U → закончить на проверенном пакете, без deploy**.
 
 - `--mode capabilities` запрашивает default U contract с validation, выводит adapter/requested/final-device limits и features, затем проверяет **только выбранный U fetch/lightmap path**, normal и shadow-receiver layouts, создаваемые U. Принудительных альтернативных profiles нет. Отказ выбранного layout остаётся nonzero failure.
 - `--layout-self-test` — ограниченный контейнерный контроль, не замена Mali: сохраняются четыре реальные Null cases бюджета 16 (storage-positive / texture-negative × normal/shadow). Null profile 17 больше не является release gate. Его прежний отказ сохранён ниже; positive lightmap=17 / negative total=18 при device budget 17 **не объявляются проверенными**. CPU/source assertions для counts 17/18 остаются.
 - В manifest и Null report явно записываются budget 16, четыре случая и границы покрытия. Старый eight-case success marker не принимается за результат новой проверки. Ни validation, ни проверка конкретной причины отрицательного case не ослабляются.
 - Приёмка подготовки: helper tests, input/reference hashes, ARM64 compile/link, прежний ABI/provider gate, CPU self-test, четыре Null validation cases, licenses и итоговый manifest проходят. **Готовность пакета к согласованному device test не означает device PASS нового binary.**
-- Docker image, Dawn/SDL pins и production code остаются прежними. Fresh output сохраняет предыдущие попытки. `capabilities`, offscreen и bridge не запускаются в контейнерных smoke tests; SSH/deploy/device run отдельно не разрешены.
+- Docker image, Dawn/SDL pins и production code остаются прежними. Fresh output сохраняет предыдущие попытки. `capabilities`, offscreen и bridge не запускаются в контейнерных smoke tests; SSH/deploy/device run не входили в подготовку; последующий отдельно разрешённый тест описан ниже.
 - При успешном будущем device request/layout — переходим к решению по интеграции и необходимым shader/resource checks; при отказе фиксируем конкретный U/Mali барьер. Не расширяем Null/Dawn ради полноты собственной матрицы.
 
-**Текущий статус: подготовка завершена, пакет готов к отдельно согласованной проверке на H700.** Новый `capabilities` на приставке **не запускался**; device PASS прежней демки к этому binary не переносится. Исторические восемь cases и остановка ниже не являются текущим acceptance.
+**Текущий статус: подготовка прошла; отдельно разрешённый device test выполнен — выбранные GX layouts не прошли validation (exit 1).** Dawn device с зеркальным U request создан, но выбранный texture-fetch path требует **17 fragment textures при фактическом лимите 16**. Это подтверждённый барьер неизменённого U layout на H700, не crash драйвера и не проблема Null. Исправление не реализовано; до согласования адаптации новые эксперименты остановлены. Device PASS прежней демки не переносится на этот режим. Исторические восемь cases ниже не являются текущим acceptance.
 
-### Проверенные результаты текущего объёма
+### Проверенные результаты подготовки
 
 Из корня репозитория выполнены:
 
@@ -43,7 +43,7 @@ python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe
 | `--help` / CPU `--self-test` | **PASS**, без SDL/EGL/Dawn initialization; policy/undefined-limit/count assertions сохранены |
 | `--layout-self-test` | **4/4 PASS** при effective Null budget 16: два storage-positive и два конкретных texture-budget rejections, normal/shadow |
 | Package | Опубликован после gates/licenses/manifest, все SHA-256 перепроверены; 50 файлов вместе с manifest, `package.partial` отсутствует |
-| Device/graphics run | **Не выполнялся**; режимы capabilities/offscreen/bridge не запускались в контейнере |
+| Device/graphics run при подготовке | Не выполнялся; capabilities/offscreen/bridge не запускались в контейнере. Последующий отдельный тест H700 — ниже |
 
 Null output явно содержит:
 
@@ -66,13 +66,73 @@ Executable требует максимум GLIBC_2.38 / GLIBCXX_3.4.32 / CXXABI_
 
 Для повторения build нужен **другой новый output suffix**, существующий каталог не удалять/перезаписывать. Старые `abi238-final` и failed `contract-v1` сохранены, но для новой capability-проверки используется только `contract-v2`.
 
-### Следующий шаг — отдельно разрешённый device test
+### Отдельно разрешённый device test — выполнен
 
-После разрешения пользователя и проверки актуального SSH/free-screen окна: временный test directory, полная передача package с manifest verification, изолированные HOME/XDG/TMPDIR и core dumps off, loader/CPU smoke checks, затем один запуск `--mode capabilities` с внешним timeout (35 s + 5 s до KILL только process group демки). Не запускать дополнительные graphics modes автоматически.
+Пользователь явно предоставил приставку. Цепочка: **цель H700 → неизвестно, выбирает ли Mali проблемный U layout → один `capabilities` run → при отказе согласовать конкретную адаптацию → остановиться после результата и cleanup**. Verified SSH/preflight подтвердил AArch64, отсутствие игры/демки и совпадение проверенных firmware library hashes с исходным [ABI snapshot](H700_RUNTIME_ABI.md). Перед запуском MemAvailable — **884452 kB**, swap отсутствует; свободно в `/tmp` — **510255104 bytes**. Это разовый снимок, не бюджет игры.
 
-Per-process settings, как в проверенном bootstrap: `LD_LIBRARY_PATH` указывает только на test package, `SDL_VIDEODRIVER=sdl2`, `SDL3SHIM_SDL2_VIDEODRIVER=mali`. `capabilities` может занять/очистить экран, **цветной узор не рисует**; результат — stdout/request/layout diagnostics и exit status. Изменять игру, firmware, clocks или services не требуется.
+В новый уникальный временный каталог `/tmp` передан весь package; все **50 файлов** проверены по manifest/hashes. Использованы изолированные HOME/XDG config/cache/data/state/TMPDIR, `RLIMIT_CORE=0`, отдельная process group. `LD_LIBRARY_PATH` указывал только на test package; per-process `SDL_VIDEODRIVER=sdl2`, `SDL3SHIM_SDL2_VIDEODRIVER=mali`. Внешний timeout — 35 s, затем TERM и через 5 s KILL только собственной process group; ни timeout, ни сигналы не понадобились. Другие graphics modes не запускались.
 
-Успех даст фактические Mali limits, selected fetch/lightmap policy и validation выбранных U layouts. Отказ RequestDevice или выбранного layout должен остаться видимым nonzero результатом: это вход для конкретного решения по порту, не повод выключать validation. После теста — удалить только собственный test directory и записать очищенный результат. Новый запуск сейчас не выполнен и этим документом не авторизован.
+| Команда | Exit | Timeout | Wall time, s |
+| --- | ---: | --- | ---: |
+| `--help` | 0 | нет | 0.052 |
+| `--self-test` | 0 | нет | 0.051 |
+| `--mode capabilities` | **1** | нет | **0.445** |
+
+Bootstrap: **Mali-G31, firmware EGL 1.4 / GLES 3.2**, drawable 640×480. Выбран `U-default-native`: `policy_texture_fetch=1`, `policy_no_compute=0`, `policy_lightmap=0`. Причина texture fetch — reported Compatibility vertex storage buffers **0**, тогда как storage path U требует 2. Compute workload этим не проверен.
+
+Выбранные фактические `GetLimits` (не только requested values):
+
+| Limit | Adapter | Созданный device |
+| --- | ---: | ---: |
+| Texture dimensions 1D / 2D / 3D; layers | 8192 / 8192 / 4096; 256 | 8192 / 8192 / 4096; 256 |
+| Sampled textures / samplers per stage | **16 / 16** | **16 / 16** |
+| Storage buffers per stage | 16 | 8 |
+| Compatibility storage buffers vertex / fragment | **0 / 16** | **0 / 4** |
+| Storage textures per stage; vertex / fragment | 8; 0 / 8 | 4; 0 / 4 |
+| Uniform / storage binding size, bytes | 16384 / 268435456 | 16384 / 268435456 |
+| Max buffer size, bytes | 2147483648 | 2147483648 |
+| Uniform / storage offset alignment, bytes | 16 / 16 | 64 / 16 |
+| Dynamic uniform / storage buffers per layout | 16 / 16 | 8 / 4 |
+| Inter-stage variables | 15 | 15 |
+| Color attachments / bytes per sample | 4 / 64 | 4 / 32 |
+| Compute invocations / workgroup | 128 | 128 |
+| Compute workgroup dimensions X / Y / Z | 128 / 128 / 128 | 128 / 128 / 64 |
+| Compute workgroup storage, bytes | 32768 | 16384 |
+| Compute workgroups per dimension | 65535 | 65535 |
+| Immediate size, bytes | 64 | 64 |
+
+Max buffer size 2 GiB — reported limit, **не выделение памяти** и не допустимый RAM budget игры. Warnings dynamic uniform **72→16** / storage **70→16** — нормализация adapter values, не причина отказа layout.
+
+Adapter объявил 13 features: `texture-compression-etc2`, `texture-compression-astc`, `texture-compression-astc-sliced-3d`, `texture-component-swizzle`, `dawn-internal-usages`, `dawn-native`, `implicit-device-synchronization`, `transient-attachments`, `msaa-render-to-single-sampled`, `dawn-format-capabilities`, `static-samplers`, `shared-fence-egl-sync`, `dawn-allow-undefined-load-store-op`. **CoreFeaturesAndLimits, BC, dual-source blending и timestamp queries в списке отсутствуют.** U policy запросила и device включил три features: ASTC, texture-component swizzle и implicit-device-synchronization.
+
+**RequestDevice прошёл**, включая `gl_allow_context_on_multi_threads`; validation и robustness оставались включены. Это не проверка работы compiler/render workers или concurrent contexts. Отличия harness от U: внешний EGLDisplay / нет `compatibleSurface`, application/env overrides и shader cache.
+
+### Подтверждённый отказ selected U layout
+
+```text
+PASS adapter/device (not a full U capability or game test)
+CASE selected-U-layout
+LAYOUT fetch=texture lightmap=0 shadow=0 fragment_textures=17 effective_budget=16
+EXPECTED_REJECTION The number of sampled textures (17) in the Fragment stage exceeds the maximum per-stage limit (16).
+ - While calling [Device].CreatePipelineLayout([PipelineLayoutDescriptor ""GX Pipeline Layout""]).
+
+CASE selected-U-layout
+LAYOUT fetch=texture lightmap=0 shadow=1 fragment_textures=17 effective_budget=16
+EXPECTED_REJECTION The number of sampled textures (17) in the Fragment stage exceeds the maximum per-stage limit (16).
+ - While calling [Device].CreatePipelineLayout([PipelineLayoutDescriptor ""GX Shadow Receiver Pipeline Layout""]).
+
+FAIL U-selected GX layout exceeds effective device budget; mismatch reproduced, not fixed
+```
+
+`EXPECTED_REJECTION` обозначает распознанную причину, **не успешную приёмку selected layout**: оба варианта отклонены, общий exit **1**. Group 2 без lightmap уже содержит 16 fragment textures (8 GX + environment cube + 5 ambient volumes + BRDF + froxel/shadow); group 0 texture-fetch добавляет ещё одну, видимую Vertex и Fragment. Простое выключение PBR не меняет unconditional layout. Убирать Fragment visibility без разбора shader consumers нельзя; принудительный storage path при reported vertex storage 0 также не подтверждён как обход.
+
+Нужна согласованная **локальная адаптация resource/layout profile U**. Этот результат не доказывает невозможность Dawn на H700 и не требует сам по себе замены firmware, пересборки Dawn или нового backend. Shader/pixels выбранного GX path, многопоточность, recreation, UI/input/audio/saves и FPS этим режимом не проверены. Прежний offscreen/bridge PASS остаётся отдельным историческим результатом.
+
+### Cleanup и следующий шаг
+
+После запуска процессов игры/демки не осталось; проверенные libc/libstdc++/EGL/GLES/SDL2 hashes совпадают с исходным snapshot. Во всех изолированных runtime directories — **0 файлов**. Собственный test directory удалён после проверки manifest marker. Игра, saves, Ports, firmware, настройки, services и clocks не менялись. Визуальная проверка и возврат меню не подтверждались: capabilities узор не рисует.
+
+Raw output сохранён только локально в ignored `build/h700-graphics-probe-contract-v2/device-capabilities.log`; приватный адрес и уникальные session paths в Git не включены. Новых device runs и code changes после отказа нет. Следующий предлагаемый шаг — согласовать небольшой статический дизайн специализации layout с сохранением retail-функциональности; implementation и повторный device test требуют отдельного согласования.
 
 ## Первоначальный объём (история первой попытки, не текущая приёмка)
 

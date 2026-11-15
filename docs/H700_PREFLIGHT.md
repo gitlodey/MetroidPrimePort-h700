@@ -78,7 +78,7 @@ Cached package находится в ignored `build/muos-linux-arm64/_deps/`, д
 
 **Pass:** выбран аппаратный Mali, device создаётся, изображение соответствует ожиданию, нет скрытого software/другого backend и ошибок validation/device loss.
 
-**Результат на устройстве:** offscreen 2 кадра — PASS; Mali-G31, WGSL readback и dedicated-context teardown. Проверена минимальная демка с 4096/64 baseline, не все обязательные requirements U; эта часть PF-03A остаётся открытой.
+**Результат на устройстве:** offscreen 2 кадра — PASS; Mali-G31, WGSL readback и dedicated-context teardown при минимальном 4096/64 baseline. Последующий `capabilities` создал device с зеркальным default U request и измерил limits/features, но выбранные GX layouts отклонены **17 > 16**. U shader/resource workload не проверен; полный PF-03A не закрыт.
 
 **Fail:** установить, где отказ — package/backend, EGL setup или конкретное требование U. Один неудачный request ещё не доказывает невозможность Dawn. До устранения/объяснения барьера PF-03B не запускать.
 
@@ -100,12 +100,12 @@ Cached package находится в ignored `build/muos-linux-arm64/_deps/`, д
 
 В [следующем статическом исследовании](H700_DAWN_INTEGRATION_GAPS.md) установлено:
 
-- texture-fetch pipeline layout требует 17/18 fragment textures при эффективном request budget 16/17; демка это не проверяла, а выбор fetch path на Mali ещё не измерен;
+- texture-fetch pipeline layout требует 17/18 fragment textures при эффективном request budget 16/17. Последующий capability test подтвердил на Mali выбор texture fetch без lightmap (vertex storage buffers = 0) и отказ normal/shadow layouts **17 > 16**;
 - depth-peek no-compute fallback находится за Core gate: это GX API gap без найденного game-facing потребителя, не доказанная поломка retail-визоров;
 - frame packet slots и CPU render-worker barrier не заменяют двусторонний GPU ownership; перенос swap на main требует progress во время блокирующих ожиданий;
 - legacy EGLImage alias не получает публичного per-import cleanup; фиксированные slots либо patched importer — разные ещё не выбранные решения.
 
-Само исследование не разрешало менять renderer/pin или запускать новые probes. По последующему явному разрешению подготовлена [целевая расширенная демка](H700_CONTRACT_PROBE.md): `contract-v2/package` прошёл build/ABI/CPU и четыре Null controls бюджета 16, не пытается завершить матрицу 17 на неподходящем backend. На H700 `capabilities` ещё не запускался; он проверит фактический U request и выбранные layouts. GPU workload, threading и recreation имеют отдельные проверяемые границы. Минимальный device demo pass не означает завершённый полный PF-03 или PF-02.
+Само исследование не разрешало менять renderer/pin или запускать новые probes. По последующему явному разрешению подготовлена [целевая расширенная демка](H700_CONTRACT_PROBE.md): `contract-v2/package` прошёл build/ABI/CPU и четыре Null controls бюджета 16, не пытается завершить матрицу 17 на неподходящем backend. Затем пользователь предоставил приставку: один `capabilities` run прошёл RequestDevice, но завершился exit 1 из-за selected-layout budget mismatch; timeout не было, cleanup выполнен, firmware hashes неизменны. Нужно согласовать локальный resource/layout design, не отключать validation или автоматически менять backend. GPU workload, threading и recreation имеют отдельные границы. Ни прежний demo PASS, ни новый успешный RequestDevice не означают завершённый полный PF-03 или PF-02.
 
 ## PF-04. Выбор подхода и переход к подробному плану
 
@@ -118,4 +118,5 @@ Cached package находится в ignored `build/muos-linux-arm64/_deps/`, д
 - **Источник Dawn:** предоставлен пользователем; exact ref найден в `Timdeuces/dawn`, дополнительный архив сейчас не требуется. Оставшиеся статические вопросы разбираются по найденным исходникам.
 - **Подготовка демки и новый builder:** разрешены; причина и границы изменения зафиксированы в ENV-01/02. ENV-01/02 прошли в объёме отдельной демки; это не утверждение полной совместимости игры. Для device test пакет временно размещался только в `/tmp` и затем удалён, без установки в Ports.
 - **Device demo:** пользователь предоставил свободную приставку и разрешил проверку; [сценарий и результаты](H700_GRAPHICS_PROBE.md) записаны. Пользователь видел квадранты и маркер, артефактов при кратком наблюдении не заметил; после закрытия выключил приставку. Полная визуальная проверка и возврат меню не подтверждены; следующий device test требует отдельного согласования.
+- **Capability test:** по отдельному разрешению выполнен, [layout failure 17 > 16 и cleanup](H700_CONTRACT_PROBE.md) записаны. Следующий предлагаемый шаг — согласовать статический дизайн локальной адаптации layout; новых device runs или production changes не начинали.
 - **Не требуется:** передавать образ игры, saves, пароли в документацию или принимать техническое решение о backend без результатов проверки.

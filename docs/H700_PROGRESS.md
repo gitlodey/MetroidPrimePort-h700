@@ -2,7 +2,7 @@
 
 **Цель:** новая база игры работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. Оптимизация к 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** подготовка плана; изолированная Dawn/EGLImage демка прошла программные проверки на реальной приставке. Пользователь видел квадранты и маркер; артефактов при кратком наблюдении не заметил. Возврат меню не проверен: после закрытия демки приставка выключена. Завершён следующий [статический разбор требований, потоков и lifetime](H700_DAWN_INTEGRATION_GAPS.md); план реализации ещё не утверждён, game/platform code не менялся.
+**Текущий этап:** подготовка плана. Прежняя Dawn/EGLImage демка прошла bounded pixel/order/teardown проверки на H700. Последующий отдельно разрешённый `capabilities` test создал device с U request, но **оба выбранных GX layouts отклонены: 17 fragment textures при лимите 16**. До согласования адаптации новые эксперименты остановлены; план реализации не утверждён, game/platform code не менялся.
 
 ## Готово
 
@@ -12,22 +12,23 @@
 - **ENV-01/02:** [отдельный ARM64 builder](H700_BUILD_ENVIRONMENT.md) с подходящим ABI; **43/43 tests**, compile/link, metadata gate и container smoke tests — PASS. EOL-компромисс документирован; старый image сохранён.
 - **Device demo:** по отдельному разрешению на RG40XX H прошли loader/CPU checks, Dawn offscreen **2 кадра** и EGLImage bridge **120 кадров**; exit 0, pixels/order и dedicated-context teardown assertions — PASS. [Точные результаты и ограничения](H700_GRAPHICS_PROBE.md).
 - Тестовая установка в `/tmp` удалена, процессов демки не осталось. Проверенные firmware libraries не изменились; игра и сохранения не затрагивались.
-- После демки статически установлен texture-fetch layout budget mismatch U (17/18 textures против 16/17), уточнены границы depth/optional fallbacks и схема потоков. Применимость fetch path к Mali ещё не измерена; это не hardware failure. [Находки, варианты и предлагаемые проверки GAP-A…E](H700_DAWN_INTEGRATION_GAPS.md).
+- После демки выполнен [статический разбор](H700_DAWN_INTEGRATION_GAPS.md): texture-fetch layout mismatch U, границы depth/optional fallbacks, потоки и lifetime.
+- **Новый device test `contract-v2`:** default U policy действительно выбирает texture fetch (Compatibility vertex storage buffers = 0), no-compute = 0, lightmap = 0. RequestDevice — PASS; normal/shadow GX layouts — **FAIL 17 > 16**, общий exit 1 без timeout. [Artifact, limits/features, точные diagnostics и cleanup](H700_CONTRACT_PROBE.md). Временная установка удалена, firmware hashes неизменны; новых запусков после отказа нет.
 
 ## Обязательный ориентир текущей работы
 
 **До любого действия/исследования/гипотезы — цель → конкретный вопрос H700 → минимальная проверка → решение по исходам → условие остановки.** Полнота вспомогательной матрицы не цель. Каноническое правило — [H700_WORKFLOW.md](H700_WORKFLOW.md), entry points — [AGENTS.md](../AGENTS.md) и [CLAUDE.md](../CLAUDE.md).
 
-**Расширенная демка готова к согласованному тесту на H700:** пакет `build/h700-graphics-probe-contract-v2/package/` собран; 62 helper tests, compile/link, ABI, CPU checks и четыре Null controls бюджета 16 — PASS, hashes/licenses/manifest проверены. По явному разрешению пользователя приёмка привязана к целевому пути: `capabilities` проверяет выбранный U layout, не все альтернативы. Профиль Null 17 не является gate и не объявлен проверенным; Dawn/окружение не менялись. [Команды, artifact и границы](H700_CONTRACT_PROBE.md). Новых device runs нет.
+**Подготовка расширенной демки прошла, selected-layout device gate — нет.** 62 helper tests, compile/link, ABI, CPU checks и четыре Null controls бюджета 16 — PASS. Отдельно разрешённый H700 run выявил реальную несовместимость неизменённого U layout, не проблему Null. Null profile 17 не является gate и не объявлен проверенным; Dawn/окружение не менялись.
 
 ## Осталось до плана реализации
 
-- Полный набор graphics limits/features U и PF-02 по game-facing SDL/MusyX/nod ещё не проверены. Подробная визуальная проверка и возврат меню остаются отдельными непроверенными пунктами.
+- Limits/features и U RequestDevice измерены в harness; selected layout требует адаптации. Shader/resource workload, threading/recreation и PF-02 по game-facing SDL/MusyX/nod ещё не проверены. Подробная визуальная проверка и возврат меню также не подтверждены.
 - Согласовать способ интеграции; заранее решить production lifetime/recreation и threading/sync.
 - Определить build profile полной игры, безопасную установку и приёмку; утвердить итерации по 1–2 часа.
 
-**Реальное состояние:** доказанного аппаратного препятствия запуску на H700 не найдено. Actual U device/layout path, lifetime и многопоточная интеграция ещё требуют целевых решений. Полная игра и 30 FPS не подтверждены; Null limit не входит в список блокеров порта.
+**Реальное состояние:** подтверждён конкретный layout-барьер **неизменённого U** на H700; это не доказательство невозможности Dawn или необходимости менять firmware/backend. Полная игра и 30 FPS не подтверждены. Lifetime и многопоточная интеграция требуют отдельных решений; Null limit не входит в список блокеров порта.
 
-**Следующий шаг:** один согласованный запуск нового `--mode capabilities` на H700: фактический U request, selected fetch/lightmap и GX layouts. По результату — решение о конкретной адаптации, не завершение Null matrix. Production code не менялся.
+**Следующий предлагаемый шаг:** небольшой статический дизайн локальной специализации resource/layout profile под измеренный budget 16 с сохранением retail-функциональности. Не менять visibility вслепую и не форсировать storage path при vertex storage 0.
 
-**Нужно от пользователя для следующего шага:** отдельное разрешение и свободное окно для device test; подготовка пакета завершена без SSH/deploy. Прошлый device PASS относится к старой демке, новый `capabilities` ещё не проверен на Mali.
+**Нужно от пользователя:** согласовать этот следующий шаг; production-реализация и новые device tests пока не разрешены. Разрешённый тест завершён и очищен, повторять его для того же вопроса не требуется.
