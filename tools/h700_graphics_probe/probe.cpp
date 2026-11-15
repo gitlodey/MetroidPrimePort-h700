@@ -1,4 +1,5 @@
 #include "pattern.hpp"
+#include "contract.hpp"
 
 #include <SDL3/SDL.h>
 #include <EGL/egl.h>
@@ -12,11 +13,13 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <dlfcn.h>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,6 +55,7 @@ struct Options {
   unsigned frames = 0;
   bool help = false;
   bool self_test = false;
+  bool layout_self_test = false;
 };
 
 Options options(int argc, char** argv) {
@@ -60,6 +64,7 @@ Options options(int argc, char** argv) {
     std::string_view arg(argv[i]);
     if (arg == "--help" && argc == 2) out.help = true;
     else if (arg == "--self-test" && argc == 2) out.self_test = true;
+    else if (arg == "--layout-self-test" && argc == 2) out.layout_self_test = true;
     else if (arg == "--mode" && i + 1 < argc && out.mode.empty()) out.mode = argv[++i];
     else if (arg == "--frames" && i + 1 < argc && out.frames == 0) {
       std::string_view value(argv[++i]);
@@ -69,21 +74,25 @@ Options options(int argc, char** argv) {
               "--frames must be an integer from 2 to 120");
     } else throw std::runtime_error("Unknown, duplicated or incomplete argument");
   }
-  if (out.help || out.self_test) return out;
-  require(out.mode == "offscreen" || out.mode == "bridge",
-          "Choose --mode offscreen or --mode bridge explicitly; both initialize SDL video");
-  if (!out.frames) out.frames = out.mode == "bridge" ? 30 : 2;
+  if (out.help || out.self_test || out.layout_self_test) return out;
+  require(out.mode == "offscreen" || out.mode == "bridge" || out.mode == "capabilities",
+          "Choose --mode offscreen, bridge or capabilities explicitly; all initialize SDL video");
+  if (out.mode == "capabilities") require(!out.frames, "--frames is not valid with capabilities");
+  else if (!out.frames) out.frames = out.mode == "bridge" ? 30 : 2;
   return out;
 }
 
 void help() {
-  std::cout << "Usage: h700_graphics_probe --help | --self-test\n"
+  std::cout << "Usage: h700_graphics_probe --help | --self-test | --layout-self-test\n"
                "       h700_graphics_probe --mode offscreen|bridge [--frames 2..120]\n"
+               "       h700_graphics_probe --mode capabilities\n"
                "--help/--self-test never initialize SDL/EGL/Dawn.\n"
-               "BOTH graphics modes create a 640x480 SDL2/Mali window and can occupy the screen.\n"
+               "--layout-self-test uses only Dawn Null validation, no SDL/EGL/GPU.\n"
+               "ALL three device modes create a 640x480 SDL2/Mali window and can occupy the screen.\n"
                "No game/assets/settings/saves/network; no clocks or firmware changes.\n"
                "Run graphics modes only in an agreed free device session, with an external timeout.\n"
                "Offscreen: WGSL pattern + GPU readback. Bridge: one persistent EGLImage, serial access.\n"
+               "Capabilities: U device request, complete limits/features, scoped GX layout validation.\n"
                "Not a game renderer test, threading stress test or FPS benchmark.\n";
 }
 
@@ -111,7 +120,17 @@ void self_test() {
   rejected = false;
   try { (void)options(1, valid); } catch (const std::exception&) { rejected = true; }
   require(rejected, "no accidental graphics startup");
-  std::cout << "PASS self-test (CPU-only pattern, extension and argument checks; no SDL/GPU)\n";
+  char capabilities[] = "capabilities", layout[] = "--layout-self-test";
+  char* caps[] = {name, mode, capabilities};
+  require(options(3, caps).mode == "capabilities" && options(3, caps).frames == 0, "capabilities options");
+  char* layouts[] = {name, layout};
+  require(options(2, layouts).layout_self_test, "explicit Null-only CLI");
+  char* invalid_caps[] = {name, mode, capabilities, count, two};
+  rejected = false;
+  try { (void)options(5, invalid_caps); } catch (const std::exception&) { rejected = true; }
+  require(rejected, "capabilities rejects frame count");
+  contract::self_test();
+  std::cout << "PASS self-test (CPU-only pattern, options and U contract policy/layout checks; no SDL/EGL/Dawn)\n";
 }
 
 struct Diagnostics {
@@ -266,6 +285,67 @@ struct Platform {
   ~Platform() { (void)cleanup(); }
 };
 
+enum class CoreMode { Pattern, Contract, NullValidation };
+
+template <class T>
+void report_limit(std::string_view scope, const char* name, T value) {
+  std::cout << "LIMIT " << scope << ' ' << name << '=';
+  if (value == std::numeric_limits<T>::max()) std::cout << "undefined";
+  else std::cout << value;
+  std::cout << '\n';
+}
+
+void report_limits(std::string_view scope, const wgpu::Limits& limits,
+                   const wgpu::CompatibilityModeLimits& compatibility) {
+#define REPORT_LIMIT(name) report_limit(scope, #name, limits.name)
+  REPORT_LIMIT(maxTextureDimension1D);
+  REPORT_LIMIT(maxTextureDimension2D);
+  REPORT_LIMIT(maxTextureDimension3D);
+  REPORT_LIMIT(maxTextureArrayLayers);
+  REPORT_LIMIT(maxBindGroups);
+  REPORT_LIMIT(maxBindGroupsPlusVertexBuffers);
+  REPORT_LIMIT(maxBindingsPerBindGroup);
+  REPORT_LIMIT(maxDynamicUniformBuffersPerPipelineLayout);
+  REPORT_LIMIT(maxDynamicStorageBuffersPerPipelineLayout);
+  REPORT_LIMIT(maxSampledTexturesPerShaderStage);
+  REPORT_LIMIT(maxSamplersPerShaderStage);
+  REPORT_LIMIT(maxStorageBuffersPerShaderStage);
+  REPORT_LIMIT(maxStorageTexturesPerShaderStage);
+  REPORT_LIMIT(maxUniformBuffersPerShaderStage);
+  REPORT_LIMIT(maxUniformBufferBindingSize);
+  REPORT_LIMIT(maxStorageBufferBindingSize);
+  REPORT_LIMIT(minUniformBufferOffsetAlignment);
+  REPORT_LIMIT(minStorageBufferOffsetAlignment);
+  REPORT_LIMIT(maxVertexBuffers);
+  REPORT_LIMIT(maxBufferSize);
+  REPORT_LIMIT(maxVertexAttributes);
+  REPORT_LIMIT(maxVertexBufferArrayStride);
+  REPORT_LIMIT(maxInterStageShaderVariables);
+  REPORT_LIMIT(maxColorAttachments);
+  REPORT_LIMIT(maxColorAttachmentBytesPerSample);
+  REPORT_LIMIT(maxComputeWorkgroupStorageSize);
+  REPORT_LIMIT(maxComputeInvocationsPerWorkgroup);
+  REPORT_LIMIT(maxComputeWorkgroupSizeX);
+  REPORT_LIMIT(maxComputeWorkgroupSizeY);
+  REPORT_LIMIT(maxComputeWorkgroupSizeZ);
+  REPORT_LIMIT(maxComputeWorkgroupsPerDimension);
+  REPORT_LIMIT(maxImmediateSize);
+#undef REPORT_LIMIT
+  report_limit(scope, "maxStorageBuffersInVertexStage", compatibility.maxStorageBuffersInVertexStage);
+  report_limit(scope, "maxStorageBuffersInFragmentStage", compatibility.maxStorageBuffersInFragmentStage);
+  report_limit(scope, "maxStorageTexturesInVertexStage", compatibility.maxStorageTexturesInVertexStage);
+  report_limit(scope, "maxStorageTexturesInFragmentStage", compatibility.maxStorageTexturesInFragmentStage);
+}
+
+void report_features(std::string_view scope, std::span<const wgpu::FeatureName> features) {
+  std::cout << "FEATURE_SET " << scope << " count=" << features.size() << '\n';
+  for (auto feature : features) {
+    const auto* info = dawn::native::GetFeatureInfo(feature);
+    std::cout << "FEATURE " << scope << " id=" << static_cast<uint32_t>(feature)
+              << " name=" << (info ? info->name : "unknown") << '\n';
+  }
+}
+
 struct Core {
   std::shared_ptr<Diagnostics> diagnostics = std::make_shared<Diagnostics>();
   wgpu::Instance instance;
@@ -273,6 +353,9 @@ struct Core {
   wgpu::Device device;
   wgpu::Queue queue;
   EGLContext observed_context = EGL_NO_CONTEXT;
+  contract::Policy policy;
+  wgpu::Limits effective_limits{};
+  wgpu::CompatibilityModeLimits effective_compatibility{wgpu::CompatibilityModeLimits::Init{}};
 
   void wait(wgpu::Future future) {
     wgpu::FutureWaitInfo info{future, false};
@@ -295,9 +378,15 @@ struct Core {
             "Submitted GPU work did not complete successfully");
   }
 
-  void init() {
-
+  void init(CoreMode mode = CoreMode::Pattern) {
+    const bool null_backend = mode == CoreMode::NullValidation;
+    const bool full_contract = mode == CoreMode::Contract;
+    const bool extended = null_backend || full_contract;
+    const char* unsafe[] = {"allow_unsafe_apis"};
+    wgpu::DawnTogglesDescriptor instance_toggles{wgpu::DawnTogglesDescriptor::Init{
+        .enabledToggleCount = 1, .enabledToggles = unsafe}};
     dawn::native::DawnInstanceDescriptor native;
+    native.nextInChain = extended ? &instance_toggles : nullptr;
     native.backendValidationLevel = dawn::native::BackendValidationLevel::Full;
     const wgpu::InstanceFeatureName features[] = {wgpu::InstanceFeatureName::TimedWaitAny};
     wgpu::InstanceDescriptor descriptor{};
@@ -308,11 +397,12 @@ struct Core {
     require(bool(instance), "Cannot create Dawn instance with TimedWaitAny");
     dawn::native::opengl::RequestAdapterOptionsGetGLProc egl_options;
     egl_options.getProc = Platform::resolve;
-    egl_options.display = Platform::active->display;
+    egl_options.display = null_backend ? nullptr : Platform::active->display;
     wgpu::RequestAdapterOptions opts{};
-    opts.nextInChain = &egl_options;
+    opts.nextInChain = null_backend ? nullptr : &egl_options;
     opts.featureLevel = wgpu::FeatureLevel::Compatibility;
-    opts.backendType = wgpu::BackendType::OpenGLES;
+    opts.backendType = null_backend ? wgpu::BackendType::Null : wgpu::BackendType::OpenGLES;
+    if (full_contract) opts.powerPreference = wgpu::PowerPreference::HighPerformance;
     struct AdapterState { wgpu::Adapter value; bool ok = false; };
     auto adapter_state = std::make_shared<AdapterState>();
     auto future = instance.RequestAdapter(&opts, wgpu::CallbackMode::WaitAnyOnly,
@@ -323,28 +413,82 @@ struct Core {
       });
     wait(future);
     adapter = std::move(adapter_state->value);
-    require(adapter_state->ok && bool(adapter), "Cannot obtain hardware OpenGLES Compatibility adapter");
+    require(adapter_state->ok && bool(adapter), null_backend ? "Cannot obtain explicit Null Compatibility adapter"
+                                                            : "Cannot obtain hardware OpenGLES Compatibility adapter");
     wgpu::AdapterInfo info{};
     require(adapter.GetInfo(&info) == wgpu::Status::Success, "Adapter identity query failed");
     std::cout << "ADAPTER device=" << text(info.device) << " description=" << text(info.description) << '\n';
-    require(info.backendType == wgpu::BackendType::OpenGLES && info.adapterType != wgpu::AdapterType::CPU,
-            "Unexpected backend or software adapter");
-    require(text(info.device).find("Mali") != std::string::npos ||
-                text(info.description).find("Mali") != std::string::npos,
-            "Dawn adapter identity does not identify Mali");
+    if (null_backend) {
+      require(info.backendType == wgpu::BackendType::Null, "Null self-test must not fall back to a hardware backend");
+      std::cout << "BACKEND Null (validation only; no SDL/EGL/GPU)\n";
+    } else {
+      require(info.backendType == wgpu::BackendType::OpenGLES && info.adapterType != wgpu::AdapterType::CPU,
+              "Unexpected backend or software adapter");
+      require(text(info.device).find("Mali") != std::string::npos ||
+                  text(info.description).find("Mali") != std::string::npos,
+              "Dawn adapter identity does not identify Mali");
+    }
     wgpu::Limits supported{};
+    wgpu::CompatibilityModeLimits supported_compatibility{wgpu::CompatibilityModeLimits::Init{}};
+    if (extended) supported.nextInChain = &supported_compatibility;
     require(adapter.GetLimits(&supported) == wgpu::Status::Success, "Adapter limits query failed");
     std::cout << "LIMITS maxTextureDimension2D=" << supported.maxTextureDimension2D
               << " maxImmediateSize=" << supported.maxImmediateSize
               << " maxComputeInvocationsPerWorkgroup=" << supported.maxComputeInvocationsPerWorkgroup << '\n';
-    require(supported.maxTextureDimension2D != wgpu::kLimitU32Undefined &&
-                supported.maxTextureDimension2D >= 4096 &&
-                supported.maxImmediateSize != wgpu::kLimitU32Undefined && supported.maxImmediateSize >= 64,
-            "Adapter found, but U's 4096 texture / 64-byte immediates baseline is unavailable");
+    if (!extended) {
+      require(supported.maxTextureDimension2D != wgpu::kLimitU32Undefined &&
+                  supported.maxTextureDimension2D >= 4096 &&
+                  supported.maxImmediateSize != wgpu::kLimitU32Undefined && supported.maxImmediateSize >= 64,
+              "Adapter found, but the pattern probe's 4096 texture / 64-byte baseline is unavailable");
+    }
     wgpu::Limits required{};
     required.maxTextureDimension2D = 4096;
     required.maxImmediateSize = 64;
+    wgpu::CompatibilityModeLimits requested_compatibility{wgpu::CompatibilityModeLimits::Init{}};
+    std::vector<wgpu::FeatureName> requested_features;
+    if (extended) {
+      wgpu::SupportedFeatures available;
+      adapter.GetFeatures(&available);
+      report_limits("adapter", supported, supported_compatibility);
+      report_features("adapter", {available.features, available.featureCount});
+      if (full_contract) {
+        policy = contract::choose_policy(supported, supported_compatibility);
+        required = contract::required_limits(supported, policy);
+        requested_compatibility = contract::required_compatibility(policy);
+        requested_features = contract::required_features({available.features, available.featureCount});
+        std::cout << "PROFILE U-default-native policy_texture_fetch=" << policy.texture_fetch
+                  << " policy_no_compute=" << policy.no_compute << " policy_lightmap=" << policy.lightmap << '\n';
+        std::cout << "DIFFERENCES external EGLDisplay/no compatibleSurface; no application/env overrides or cache; "
+                     "validation and robustness remain ON; no shader/pixel/threading/recreation test\n";
+      } else {
+        // A control for scoped validation, not a simulation of unqueried Mali limits.
+        constexpr uint32_t budget = 16;
+        policy = {.texture_fetch = false, .no_compute = false, .lightmap = false};
+        requested_compatibility = contract::required_compatibility(policy);
+        required.maxSampledTexturesPerShaderStage = budget;
+        std::cout << "PROFILE Null-synthetic-budget=" << budget << " (NOT Mali or full U request)\n";
+      }
+      required.nextInChain = &requested_compatibility;
+      report_limits("requested", required, requested_compatibility);
+      report_features("requested", requested_features);
+    }
+    const char* enable[] = {"use_user_defined_labels_in_backend", "disable_symbol_renaming",
+                            "enable_immediate_error_handling", "gl_allow_context_on_multi_threads"};
+    const char* disable[] = {"skip_validation", "disable_robustness", "timestamp_quantization",
+                             "use_spirv_reconvergence_mode"};
+    wgpu::DawnTogglesDescriptor device_toggles{wgpu::DawnTogglesDescriptor::Init{
+        .enabledToggleCount = full_contract ? std::size(enable) : 0,
+        .enabledToggles = enable,
+        .disabledToggleCount = std::size(disable),
+        .disabledToggles = disable}};
+    if (extended) {
+      for (const char* toggle : disable) std::cout << "TOGGLE disabled " << toggle << '\n';
+      if (full_contract) for (const char* toggle : enable) std::cout << "TOGGLE enabled " << toggle << '\n';
+    }
     wgpu::DeviceDescriptor desc{};
+    desc.nextInChain = extended ? &device_toggles : nullptr;
+    desc.requiredFeatureCount = requested_features.size();
+    desc.requiredFeatures = requested_features.data();
     desc.requiredLimits = &required;
     auto diag = diagnostics;
     desc.SetUncapturedErrorCallback(
@@ -369,9 +513,27 @@ struct Core {
       });
     wait(future);
     device = std::move(state->value);
-    require(state->ok && bool(device), "Cannot create probe device with the selected baseline limits");
+    require(state->ok && bool(device), "Cannot create device with the requested contract; see DEVICE diagnostics");
     queue = device.GetQueue();
     require(bool(queue), "Cannot obtain device queue");
+    if (extended) {
+      effective_limits.nextInChain = &effective_compatibility;
+      require(device.GetLimits(&effective_limits) == wgpu::Status::Success, "Final device limits query failed");
+      wgpu::SupportedFeatures enabled;
+      device.GetFeatures(&enabled);
+      report_limits("device", effective_limits, effective_compatibility);
+      report_features("device", {enabled.features, enabled.featureCount});
+      if (null_backend) {
+        require(!device.HasFeature(wgpu::FeatureName::CoreFeaturesAndLimits), "Null test must use Compatibility device");
+        require(effective_limits.maxSampledTexturesPerShaderStage == 16,
+                "Null device did not preserve the requested texture budget");
+        require(effective_compatibility.maxStorageBuffersInVertexStage >= 2 &&
+                    effective_compatibility.maxStorageBuffersInVertexStage != wgpu::kLimitU32Undefined &&
+                    effective_compatibility.maxStorageBuffersInFragmentStage >= 1 &&
+                    effective_compatibility.maxStorageBuffersInFragmentStage != wgpu::kLimitU32Undefined,
+                "Null device cannot validate the positive storage-fetch control");
+      }
+    }
     std::cout << "PASS adapter/device (not a full U capability or game test)\n";
   }
 
@@ -394,6 +556,92 @@ struct Core {
   }
   ~Core() { cleanup(); }
 };
+
+// Expected failures are scoped: an arbitrary validation error is not a passing negative test.
+bool check_gx_layout(Core& core, bool texture_fetch, bool lightmap, bool shadow) {
+  const auto count = contract::fragment_texture_count(texture_fetch, lightmap);
+  const auto budget = core.effective_limits.maxSampledTexturesPerShaderStage;
+  require(budget != wgpu::kLimitU32Undefined, "Device did not report its effective texture budget");
+  const bool expected_rejection = count > budget;
+  struct Result {
+    bool called = false;
+    wgpu::PopErrorScopeStatus status{};
+    wgpu::ErrorType type{};
+    std::string message;
+  };
+  auto result = std::make_shared<Result>();
+  core.device.PushErrorScope(wgpu::ErrorFilter::Validation);
+  auto layout = contract::gx_layout(core.device, texture_fetch, lightmap, shadow);
+  auto future = core.device.PopErrorScope(wgpu::CallbackMode::WaitAnyOnly,
+      [result](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type, wgpu::StringView message) {
+        result->called = true;
+        result->status = status;
+        result->type = type;
+        result->message = text(message);
+      });
+  core.wait(future);
+  require(result->called && result->status == wgpu::PopErrorScopeStatus::Success, "Error-scope callback failed");
+  std::cout << "LAYOUT fetch=" << (texture_fetch ? "texture" : "storage")
+            << " lightmap=" << lightmap << " shadow=" << shadow << " fragment_textures=" << count
+            << " effective_budget=" << budget << '\n';
+  if (expected_rejection) {
+    auto message = result->message;
+    std::transform(message.begin(), message.end(), message.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    require(result->type == wgpu::ErrorType::Validation &&
+                message.find("sampled textures") != std::string::npos &&
+                message.find("fragment") != std::string::npos &&
+                message.find(std::to_string(count)) != std::string::npos &&
+                message.find(std::to_string(budget)) != std::string::npos,
+            "Expected the sampled-texture fragment-budget rejection, got: " + result->message);
+    std::cout << "EXPECTED_REJECTION " << result->message << '\n';
+    return false;
+  }
+  require(result->type == wgpu::ErrorType::NoError && bool(layout),
+          "GX layout unexpectedly failed validation: " + result->message);
+  std::cout << "PASS layout validation (no shaders/resources/pixels tested)\n";
+  return true;
+}
+
+void layout_self_test() {
+  contract::self_test();
+  unsigned cases = 0;
+  Core core;
+  core.init(CoreMode::NullValidation);
+  for (bool shadow : {false, true}) {
+    require(check_gx_layout(core, false, false, shadow), "Positive storage control failed");
+    ++cases;
+    require(!check_gx_layout(core, true, false, shadow), "Negative texture case unexpectedly passed");
+    ++cases;
+  }
+  core.cleanup();
+  require(core.diagnostics->errors.load() == 0, "Error during Null teardown");
+  require(cases == 4, "Null validation case count changed unexpectedly");
+  std::cout << "COVERAGE Null budget=16 only; device-budget-17/lightmap cases and Mali remain unvalidated\n";
+  std::cout << "PASS layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)\n";
+}
+
+void run_capabilities() {
+  std::cout << "START mode=capabilities (SDL window; not a shader, pixel, threading or FPS test)\n";
+  Platform platform;
+  platform.init();
+  bool selected_valid = true;
+  {
+    Core core;
+    core.init(CoreMode::Contract);
+    for (bool shadow : {false, true}) {
+      std::cout << "CASE selected-U-layout\n";
+      selected_valid = check_gx_layout(core, core.policy.texture_fetch, core.policy.lightmap, shadow) && selected_valid;
+
+    }
+    core.cleanup();
+    require(core.diagnostics->errors.load() == 0, "Error during U-contract device teardown");
+  }
+  require(platform.make_current(), "Cannot restore presenter after capability query");
+  require(platform.cleanup(), "SDL/EGL capability-mode cleanup failed");
+  require(selected_valid, "U-selected GX layout exceeds effective device budget; mismatch reproduced, not fixed");
+  std::cout << "PASS capabilities request/layout (NOT shader/pixel/threading/recreation/game validation)\n";
+}
 
 struct Scene {
   wgpu::Texture texture;
@@ -621,6 +869,8 @@ int main(int argc, char** argv) {
     auto opts = options(argc, argv);
     if (opts.help) help();
     else if (opts.self_test) self_test();
+    else if (opts.layout_self_test) layout_self_test();
+    else if (opts.mode == "capabilities") run_capabilities();
     else run_graphics(opts);
     return 0;
   } catch (const std::exception& error) {

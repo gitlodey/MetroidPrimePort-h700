@@ -4,7 +4,7 @@
 
 **Демка собрана в новом ARM64 Docker image; ENV-01/02 прошли 2026-11-14.** Прежний link blocker Bookworm устранён без изменения Dawn/firmware. 43 unit tests, compile/link, ELF/ABI gate и безопасные контейнерные modes — PASS. На RG40XX H / muOS 2601.0 Jacaranda прошли `--help`, CPU self-test, offscreen (2 кадра) и bridge (120 кадров), включая pixel/order и dedicated-context teardown assertions. Пользователь подтвердил видимость квадрантов и маркера; артефактов при кратком наблюдении не заметил. Полная визуальная проверка и возврат меню не подтверждены. Результаты — раздел 8. Подробности окружения и его EOL-ограничения — [ENV-01/02](H700_BUILD_ENVIRONMENT.md).
 
-**Локальное расширение GAP-A/B осталось незавершённым:** [частичный результат и урок](H700_CONTRACT_PROBE.md) — Null profile 17 не пройден, новый package не опубликован. Это ограничение вспомогательной матрицы, **не блокер H700**; среду ради неё не расширяем. Перед любой следующей проверкой нужен [goal gate](H700_WORKFLOW.md), не попытка закончить все придуманные cases. Описанный ниже device pass относится только к прежнему artifact из раздела 6.
+**Расширение готово к следующей согласованной проверке:** [H700_CONTRACT_PROBE.md](H700_CONTRACT_PROBE.md) — `contract-v2/package`, полный U capability request и validation выбранного GX layout. Compile/link, ABI, 62 helper tests, CPU checks и четыре Null controls бюджета 16 прошли. Null profile 17 не является gate и не объявлен проверенным; builder/Dawn не менялись. **Новый binary на Mali не запускался.** Описанный ниже device pass относится только к прежнему artifact из раздела 6.
 
 Код игры, root CMake, dependency pins и донор не изменялись. Первоначальная подготовка демки не включала deploy/graphics; затем пользователь отдельно предоставил свободную приставку и разрешил тест. Использовалась временная установка в `/tmp`, после теста удалённая. Исходный read-only SSH inventory описан в [runtime/ABI](H700_RUNTIME_ABI.md). Любой следующий запуск требует актуального разрешения на окно; успешный тест не разрешает начать перенос.
 
@@ -12,7 +12,8 @@
 
 Исходники — [tools/h700_graphics_probe/](../tools/h700_graphics_probe/):
 
-- `probe.cpp` — два явных графических режима; без `--mode` графика не запускается.
+- `probe.cpp` — явные device modes offscreen, bridge и capabilities; без `--mode` SDL video не запускается. `--layout-self-test` использует только Null backend.
+- `contract.hpp/.cpp` — зеркало default U request и GX layouts; CPU policy assertions, без исправления game code.
 - `pattern.hpp` — ожидаемые pixels и синтетический WGSL shader: четыре цветных квадранта и меняющийся белый/пурпурный маркер.
 - `CMakeLists.txt` — изолированная Linux ARM64 сборка, без подключения game sources.
 - `build.py` — offline Docker build, проверка inputs, отдельный output, ELF/ABI gate и asset-free staging.
@@ -25,11 +26,13 @@
 | --- | --- |
 | `--mode offscreen` | SDL2/Mali bootstrap, аппаратный Dawn OpenGLES Compatibility device, WGSL render и CPU-проверка GPU readback |
 | `--mode bridge` | Постоянный presenter EGLImage → native Dawn wrapper → GPU draw → ожидание completion → чтение контрольных pixels и GPU blit/swap |
-| `--help`, `--self-test` | Без SDL/EGL/Dawn initialization; второй проверяет CPU pattern/arguments/extension token logic |
+| `--mode capabilities` | Новый режим: полный U request/limits/features и validation выбранных GX layouts; окна требует, узор не рисует. На устройстве ещё не выполнялся |
+| `--layout-self-test` | Контейнерный Null-only контроль четырёх layouts при бюджете 16; без SDL/EGL/GPU, не доказательство Mali support |
+| `--help`, `--self-test` | Без SDL/EGL/Dawn initialization; второй проверяет CPU pattern/arguments/extensions и U contract policy/counts |
 
-**Оба графических режима создают SDL video window и могут занять экран**, включая offscreen: окно нужно для проверенного firmware bootstrap. Нельзя считать offscreen пассивным inventory.
+**Все три device modes создают SDL video window и могут занять экран**, включая capabilities и offscreen: окно нужно для проверенного firmware bootstrap. Нельзя считать offscreen пассивным inventory.
 
-Выбор adapter ограничен OpenGLES/Mali, проверяются 4096 texture dimension и 64-byte immediates baseline, ошибки validation/device loss не отключаются. Эти два limits не заменяют проверку полного набора требований U. Фильтрация по Mali-G31 намеренно ограничивает поддерживаемое устройство.
+Выбор hardware adapter ограничен OpenGLES/Mali; offscreen/bridge проверяют 4096 texture dimension и 64-byte immediates baseline, capabilities использует зеркальный default U request. Ошибки validation/device loss не отключаются. Эти два limits не заменяют проверку полного набора требований U. Фильтрация по Mali-G31 намеренно ограничивает поддерживаемое устройство.
 
 ## 2. Границы эксперимента и lifetime
 
@@ -57,7 +60,7 @@ python3 -B tools/h700_graphics_probe/build.py --check-inputs
 python3 -B tools/h700_graphics_probe/test_build.py
 ```
 
-Успешно проверенный вызов build helper (image предварительно создаётся по [инструкции окружения](H700_BUILD_ENVIRONMENT.md)):
+Исторически проверенный вызов для первого device artifact (нынешнее расширение собирается по [H700_CONTRACT_PROBE.md](H700_CONTRACT_PROBE.md); image предварительно создаётся по [инструкции окружения](H700_BUILD_ENVIRONMENT.md)):
 
 ```sh
 python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe-abi238-final --jobs 2

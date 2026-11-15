@@ -1,5 +1,6 @@
 """Host-only unit tests: python3 -B tools/h700_graphics_probe/test_build.py."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -22,6 +23,17 @@ Machine:                           AArch64
 Name: GLIBC_2.17 Name: GLIBC_2.38
 Name: GLIBCXX_3.4.9 Name: GLIBCXX_3.4.32 Name: CXXABI_1.3.14
 """
+
+
+def contract_reference_fixture(root):
+    hashes = {}
+    for rel in build.CONTRACT_REFERENCE_SHA256:
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = f"reviewed U fixture: {rel}\n".encode()
+        path.write_bytes(content)
+        hashes[rel] = hashlib.sha256(content).hexdigest()
+    return hashes
 
 
 class BuildTests(unittest.TestCase):
@@ -87,7 +99,8 @@ class BuildTests(unittest.TestCase):
 
     def test_missing_archive_is_not_downloaded(self):
         for rel in (build.PROBE / "CMakeLists.txt", build.PROBE / "build.py", build.PROBE / "probe.cpp",
-                    build.PROBE / "pattern.hpp", Path("tools/collect_licenses.sh"), Path("LICENSE"),
+                    build.PROBE / "pattern.hpp", *(build.PROBE / name for name in build.CONTRACT_INPUTS),
+                    Path("tools/collect_licenses.sh"), Path("LICENSE"),
                     Path("NOTICE"), Path("packaging/licenses/dawn.txt"), build.SNAPSHOT,
                     *(build.PROBE / name for name in build.ENVIRONMENT_INPUTS)):
             path = self.root / rel
@@ -201,13 +214,19 @@ class BuildTests(unittest.TestCase):
     def test_source_hashes_are_relative_and_detect_changes(self):
         for rel in (build.PROBE / "probe.cpp", build.PROBE / "pattern.hpp", build.PROBE / "CMakeLists.txt",
                     build.PROBE / "build.py", Path("tools/collect_licenses.sh"), build.SNAPSHOT,
-                    *(build.PROBE / name for name in build.ENVIRONMENT_INPUTS)):
+                    *(build.PROBE / name for name in (*build.CONTRACT_INPUTS, *build.ENVIRONMENT_INPUTS)),
+                    *(Path(rel) for rel in build.CONTRACT_REFERENCE_SHA256)):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("first")
         first = build.source_hashes(self.root)
-        (self.root / build.PROBE / "pattern.hpp").write_text("second")
-        self.assertNotEqual(first, build.source_hashes(self.root))
+        for rel in (build.PROBE / "pattern.hpp", *(build.PROBE / name for name in build.CONTRACT_INPUTS),
+                    *(Path(rel) for rel in build.CONTRACT_REFERENCE_SHA256)):
+            with self.subTest(path=rel):
+                (self.root / rel).write_text("second")
+                self.assertNotEqual(first, build.source_hashes(self.root))
+                (self.root / rel).write_text("first")
+        self.assertTrue(set(build.CONTRACT_REFERENCE_SHA256).issubset(first))
         self.assertNotIn(str(self.root), json.dumps(first))
 
     def test_command_runner_uses_timeout_and_checks_exit_status(self):
@@ -217,6 +236,13 @@ class BuildTests(unittest.TestCase):
                 build.run(["fake"], timeout=7)
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
         self.assertNotIn("shell", run.call_args.kwargs)
+
+    def test_command_runner_can_separate_smoke_stdout_and_stderr(self):
+        result = build.subprocess.CompletedProcess(["fake"], 0, stdout="stdout", stderr="stderr")
+        with patch.object(build.subprocess, "run", return_value=result) as run:
+            self.assertEqual(build.run(["fake"], separate_stderr=True), ("stdout", "stderr"))
+        self.assertEqual(run.call_args.kwargs["stdout"], build.subprocess.PIPE)
+        self.assertEqual(run.call_args.kwargs["stderr"], build.subprocess.PIPE)
 
     def test_wrong_docker_arch_refused_before_creating_output(self):
         with patch.object(build, "__file__", str(self.root / build.PROBE / "build.py")), \
@@ -241,6 +267,321 @@ class BuildTests(unittest.TestCase):
         for flag in ("--network=none", "--read-only", "--pull=never", image, f"{self.root}:/src:ro"):
             self.assertIn(flag, command)
         self.assertIn(f"{self.root / 'build/h700-graphics-probe'}:/out:rw", command)
+
+
+class ContractReferenceTests(unittest.TestCase):
+    setUp = BuildTests.setUp
+
+    def inputs_fixture(self):
+        paths = [build.PROBE / name for name in ("CMakeLists.txt", "build.py", "probe.cpp", "pattern.hpp",
+                                                *build.CONTRACT_INPUTS, *build.ENVIRONMENT_INPUTS)]
+        paths += [build.SNAPSHOT, Path("tools/collect_licenses.sh"), Path("LICENSE"), Path("NOTICE"),
+                  Path("packaging/licenses/dawn.txt"),
+                  build.DEPS / f"sdl-subbuild/sdl-populate-prefix/src/{build.SDL_PIN}.tar.gz",
+                  build.DEPS / "dawn_prebuilt-subbuild/dawn_prebuilt-populate-prefix/src/dawn-linux-aarch64.tar.gz",
+                  build.DEPS / "sdl-src/src/video/sdl2/SDL_sdl2video.c",
+                  build.DEPS / "dawn_prebuilt-src/lib/cmake/Dawn/DawnConfig.cmake"]
+        for rel in paths:
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture")
+        stamp = self.root / build.DEPS / "sdl-subbuild/sdl-populate-prefix/src/sdl-populate-stamp/sdl-populate-urlinfo.txt"
+        stamp.parent.mkdir()
+        stamp.write_text(f"https://github.com/bmdhacks/SDL/archive/{build.SDL_PIN}.tar.gz")
+        return contract_reference_fixture(self.root)
+
+    def test_reference_matches_exact_reviewed_bytes(self):
+        expected = contract_reference_fixture(self.root)
+        with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected):
+            self.assertEqual(build.verify_contract_reference(self.root), expected)
+        self.assertNotIn(str(self.root), json.dumps(expected))
+
+    def test_each_reference_drift_requires_mirror_review(self):
+        expected = contract_reference_fixture(self.root)
+        with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected):
+            for rel in expected:
+                with self.subTest(path=rel):
+                    original = (self.root / rel).read_bytes()
+                    (self.root / rel).write_bytes(original + b"changed\n")
+                    with self.assertRaisesRegex(ValueError, "Contract reference drift:.*update the contract.*after review") as error:
+                        build.verify_contract_reference(self.root)
+                    self.assertIn(rel, str(error.exception))
+                    self.assertIn("do not edit production sources", str(error.exception))
+                    (self.root / rel).write_bytes(original)
+
+    def test_each_missing_reference_is_actionable(self):
+        expected = contract_reference_fixture(self.root)
+        with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected):
+            for rel in expected:
+                with self.subTest(path=rel):
+                    original = (self.root / rel).read_bytes()
+                    (self.root / rel).unlink()
+                    with self.assertRaisesRegex(ValueError, "Missing contract reference:.*restore the reviewed U source"):
+                        build.verify_contract_reference(self.root)
+                    (self.root / rel).write_bytes(original)
+
+    def test_reference_cannot_escape_project(self):
+        expected = contract_reference_fixture(self.root)
+        rel = next(iter(expected))
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory) / "reference.cpp"
+            outside.write_bytes((self.root / rel).read_bytes())
+            (self.root / rel).unlink()
+            (self.root / rel).symlink_to(outside)
+            with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected), \
+                 self.assertRaisesRegex(ValueError, "Contract reference escapes project"):
+                build.verify_contract_reference(self.root)
+
+    def test_real_check_inputs_checks_reference_after_both_archives(self):
+        expected = self.inputs_fixture()
+        events = []
+        verify = build.verify_contract_reference
+
+        def archive(*args):
+            events.append("archive")
+            return {"archive_sha256": args[2]}
+
+        def reference(root):
+            events.append("reference")
+            return verify(root)
+
+        with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected), \
+             patch.object(build, "verify_archive", side_effect=archive), \
+             patch.object(build, "verify_contract_reference", side_effect=reference):
+            result = build.check_inputs(self.root)
+        self.assertEqual(events, ["archive", "archive", "reference"])
+        self.assertEqual(result["contract_reference_sha256"], expected)
+        self.assertEqual(result["sdl"]["archive_sha256"], build.SDL_SHA)
+        self.assertEqual(result["dawn"]["archive_sha256"], build.DAWN_SHA)
+
+    def test_archive_failure_precedes_reference_check(self):
+        self.inputs_fixture()
+        for results in ([ValueError("archive rejected")], [{}, ValueError("archive rejected")]):
+            with self.subTest(archive=len(results)), \
+                 patch.object(build, "verify_archive", side_effect=results), \
+                 patch.object(build, "verify_contract_reference") as reference, \
+                 self.assertRaisesRegex(ValueError, "archive rejected"):
+                build.check_inputs(self.root)
+            reference.assert_not_called()
+
+    def test_real_check_inputs_rejects_reference_drift(self):
+        expected = self.inputs_fixture()
+        (self.root / next(iter(expected))).write_text("drift")
+        with patch.object(build, "CONTRACT_REFERENCE_SHA256", expected), \
+             patch.object(build, "verify_archive", return_value={}), \
+             self.assertRaisesRegex(ValueError, "Contract reference drift"):
+            build.check_inputs(self.root)
+
+    def test_contract_files_are_required_inputs(self):
+        self.inputs_fixture()
+        for name in build.CONTRACT_INPUTS:
+            path = self.root / build.PROBE / name
+            original = path.read_bytes()
+            path.unlink()
+            with self.subTest(name=name), patch.object(build, "verify_archive") as archive, \
+                 self.assertRaisesRegex(ValueError, "Missing input:.*" + name):
+                build.check_inputs(self.root)
+            archive.assert_not_called()
+            path.write_bytes(original)
+
+    def test_real_check_inputs_cli_is_readonly_and_never_runs_commands(self):
+        expected = self.inputs_fixture()
+        before = {str(p.relative_to(self.root)): p.read_bytes() if p.is_file() else None
+                  for p in self.root.rglob("*")}
+        stdout = io.StringIO()
+        with patch.object(build, "__file__", str(self.root / build.PROBE / "build.py")), \
+             patch.object(build, "CONTRACT_REFERENCE_SHA256", expected), \
+             patch.object(build, "verify_archive", return_value={}), \
+             patch.object(build, "run") as run, contextlib.redirect_stdout(stdout):
+            self.assertEqual(build.main(["--check-inputs"]), 0)
+        run.assert_not_called()
+        self.assertEqual(json.loads(stdout.getvalue())["contract_reference_sha256"], expected)
+        after = {str(p.relative_to(self.root)): p.read_bytes() if p.is_file() else None
+                 for p in self.root.rglob("*")}
+        self.assertEqual(before, after)
+
+
+class SmokeTests(unittest.TestCase):
+    setUp = BuildTests.setUp
+
+    def smoke_fixture(self):
+        package = self.root / "package.partial"
+        (package / "metadata").mkdir(parents=True)
+        return package, ["ELF fixture"], {"LD_LIBRARY_PATH": str(package)}
+
+    def test_only_safe_modes_run_and_preserve_null_output(self):
+        package, reports, env = self.smoke_fixture()
+        output = "budget16 normal/shadow controls; budget17 remains unvalidated\n" + build.LAYOUT_SELF_TEST_SUCCESS + "\n"
+        with patch.object(build, "run", side_effect=[("Usage\n", ""), ("PASS self-test (CPU-only)\n", ""),
+                                                    (output, "Null diagnostic\n")]) as run:
+            build.smoke_tests(package, self.root, reports, env)
+        self.assertEqual([call.args[0] for call in run.call_args_list],
+                         [[package / "h700_graphics_probe", mode]
+                          for mode in ("--help", "--self-test", "--layout-self-test")])
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs, {"timeout": 30, "env": env, "separate_stderr": True})
+        report = (self.root / "elf-report.txt").read_text()
+        self.assertIn("ELF fixture", report)
+        self.assertIn("--layout-self-test (Dawn Null validation only; no SDL/EGL/GPU)", report)
+        self.assertIn(output, report)
+        self.assertIn("Null diagnostic", report)
+        layout_report = (package / "metadata/layout-self-test.txt").read_text()
+        self.assertTrue(layout_report.startswith(output))
+        self.assertIn("Null diagnostic", layout_report)
+
+    def test_layout_zero_exit_without_exact_final_four_case_budget16_marker_is_rejected(self):
+        package, reports, env = self.smoke_fixture()
+        marker = build.LAYOUT_SELF_TEST_SUCCESS
+        for output in ("", "Usage\n", "PASS layout-self-test\n", marker.replace("cases=4", "cases=8"),
+                       marker.replace("budget=16", "budget=17"),
+                       "PASS layout-self-test cases=8 (Dawn Null validation only; no SDL/EGL/GPU)",
+                       marker.replace("Dawn Null", "OpenGLES"), "prefix " + marker, marker + " extra", marker + " ",
+                       marker + "\nFAIL later check\n"):
+            with self.subTest(output=output), \
+                 patch.object(build, "run", side_effect=[("Usage", ""), ("PASS self-test (CPU-only)", ""), (output, "")]), \
+                 self.assertRaisesRegex(ValueError, "final four-case budget-16 success marker"):
+                build.smoke_tests(package, self.root, reports, env)
+            self.assertEqual((package / "metadata/layout-self-test.txt").read_text(), output)
+            self.assertIn(output, (self.root / "elf-report.txt").read_text())
+
+    def test_cpu_zero_exit_without_pass_marker_is_rejected(self):
+        package, reports, env = self.smoke_fixture()
+        with patch.object(build, "run", side_effect=[("Usage", ""), ("early exit", "")]) as run, \
+             self.assertRaisesRegex(ValueError, "CPU self-test exited without"):
+            build.smoke_tests(package, self.root, reports, env)
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("early exit", (self.root / "elf-report.txt").read_text())
+
+    def test_stderr_success_marker_cannot_substitute_for_stdout(self):
+        package, reports, env = self.smoke_fixture()
+        for mode in ("--self-test", "--layout-self-test"):
+            outputs = [("Usage", "")]
+            if mode == "--layout-self-test":
+                outputs.append(("PASS self-test (CPU-only)", ""))
+            outputs.append(("early exit\n", build.LAYOUT_SELF_TEST_SUCCESS if mode == "--layout-self-test"
+                            else "PASS self-test (CPU-only)"))
+            with self.subTest(mode=mode), patch.object(build, "run", side_effect=outputs), \
+                 self.assertRaisesRegex(ValueError, "success marker"):
+                build.smoke_tests(package, self.root, reports, env)
+            self.assertIn("stderr", (self.root / "elf-report.txt").read_text())
+
+    def test_layout_nonzero_exit_is_not_accepted_even_with_success_marker(self):
+        package, reports, env = self.smoke_fixture()
+        result = build.subprocess.CompletedProcess(["probe"], 1, stdout=build.LAYOUT_SELF_TEST_SUCCESS)
+        with patch.object(build.subprocess, "run", side_effect=[
+                build.subprocess.CompletedProcess(["probe"], 0, stdout="Usage"),
+                build.subprocess.CompletedProcess(["probe"], 0, stdout="PASS self-test (CPU-only)"), result]), \
+             self.assertRaisesRegex(ValueError, "failed \\(1\\)"):
+            build.smoke_tests(package, self.root, reports, env)
+        self.assertIn(build.LAYOUT_SELF_TEST_SUCCESS, (self.root / "elf-report.txt").read_text())
+        self.assertIn("FAILED", (self.root / "elf-report.txt").read_text())
+
+
+class ContainerBuildTests(unittest.TestCase):
+    setUp = BuildTests.setUp
+
+    def container_fixture(self):
+        expected = ContractReferenceTests.inputs_fixture(self)
+        out = self.root / "build/h700-graphics-probe-fixture"
+        work = out / "build"
+        work.mkdir(parents=True)
+        (out / build.MARKER).write_text("h700-graphics-probe-v1\n")
+        for name in ("probe", "sdl"):
+            (work / name).write_text("artifact fixture")
+        (work / "artifacts.json").write_text(json.dumps({"executable": str(work / "probe"), "sdl": str(work / "sdl")}))
+        (self.root / build.SNAPSHOT).write_text("{}")
+        installed = self.root / "installed-verifier.py"
+        installed.write_bytes((self.root / build.PROBE / "verify_environment.py").read_bytes())
+        image_report = self.root / "image-abi.json"
+        image_report.write_text('{"architecture": "aarch64"}')
+        packages = self.root / "packages.tsv"
+        packages.write_text("package\tversion\n")
+        paths = {"/src": self.root, "/out": out, "/usr/local/lib/h700/verify_environment.py": installed,
+                 "/opt/h700-toolchain/abi.json": image_report, "/opt/h700-toolchain/packages.tsv": packages}
+        return out, expected, paths
+
+    def mock_container_build(self, drift=None, layout_output=None):
+        out, expected, paths = self.container_fixture()
+        layout_output = build.LAYOUT_SELF_TEST_SUCCESS + "\n" if layout_output is None else layout_output
+
+        def command(argv, **kwargs):
+            tool = str(argv[0])
+            if tool == "python3":
+                return '{"architecture": "aarch64"}'
+            if tool == "cmake" and "--version" not in argv:
+                return "configured/built fixture"
+            if tool == "readelf":
+                return ELF
+            if tool == "ldd":
+                return "libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6\n"
+            if tool == str(out / "package.partial/h700_graphics_probe"):
+                return ({"--help": "Usage\n", "--self-test": "PASS self-test (CPU-only)\n",
+                         "--layout-self-test": layout_output}[argv[1]], "")
+            if tool == "bash":
+                if drift:
+                    (self.root / drift).write_text("changed during build")
+                return "licenses collected fixture"
+            if argv[1:] == ["--version"]:
+                return "tool version fixture\n"
+            self.fail(f"Unexpected command: {argv}")
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.object(build, "Path", side_effect=lambda p: paths.get(str(p), Path(p))))
+            stack.enter_context(patch.object(build, "__file__", str(self.root / build.PROBE / "build.py")))
+            stack.enter_context(patch.object(build, "CONTRACT_REFERENCE_SHA256", expected))
+            stack.enter_context(patch.object(build, "verify_archive", return_value={}))
+            stack.enter_context(patch.object(build, "firmware_gate", return_value={}))
+            stack.enter_context(patch.object(build.subprocess, "run", side_effect=AssertionError("No real commands allowed")))
+            run = stack.enter_context(patch.object(build, "run", side_effect=command))
+            args = build.argparse.Namespace(image_id="sha256:" + "a" * 64, jobs=2)
+            build.container_build(args)
+        return out, expected, run
+
+    def test_manifest_records_reference_sources_and_null_validation_scope(self):
+        out, expected, run = self.mock_container_build()
+        package = out / "package"
+        self.assertFalse((out / "package.partial").exists())
+        manifest = json.loads((package / "manifest.json").read_text())
+        self.assertEqual(manifest["contract_reference_sha256"], expected)
+        self.assertEqual(manifest["dependencies"]["contract_reference_sha256"], expected)
+        coverage = manifest["layout_validation_scope"]
+        self.assertEqual(coverage["backend"], "Null")
+        self.assertEqual(coverage["cases"], 4)
+        self.assertEqual(coverage["effective_sampled_texture_budget"], 16)
+        self.assertIn("device-budget-17/lightmap layouts", coverage["not_validated"])
+        self.assertIn("Mali request/layout", coverage["not_validated"])
+        self.assertEqual({rel: manifest["sources_sha256"][rel] for rel in expected}, expected)
+        for name in build.CONTRACT_INPUTS:
+            self.assertEqual(manifest["sources_sha256"][(build.PROBE / name).as_posix()],
+                             build.sha256(self.root / build.PROBE / name))
+        self.assertEqual(manifest["files_sha256"]["metadata/layout-self-test.txt"],
+                         build.sha256(package / "metadata/layout-self-test.txt"))
+        for scope in ("compiler/link/ABI", "Dawn Null layout validation only", "no SDL/EGL/GPU initialization",
+                      "no new firmware runtime validation"):
+            self.assertIn(scope, manifest["validation"])
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertFalse(any("--mode" in command for command in commands))
+        self.assertIn("--layout-self-test", [str(arg) for command in commands for arg in command])
+
+    def test_midbuild_reference_drift_prevents_publication(self):
+        with self.assertRaisesRegex(ValueError, "sources changed during build"):
+            self.mock_container_build(drift=next(iter(build.CONTRACT_REFERENCE_SHA256)))
+        out = self.root / "build/h700-graphics-probe-fixture"
+        self.assertFalse((out / "package").exists())
+        self.assertFalse((out / "package.partial/manifest.json").exists())
+
+    def test_midbuild_contract_drift_prevents_publication(self):
+        with self.assertRaisesRegex(ValueError, "sources changed during build"):
+            self.mock_container_build(drift=build.PROBE / "contract.cpp")
+        self.assertFalse((self.root / "build/h700-graphics-probe-fixture/package").exists())
+
+    def test_layout_early_exit_prevents_manifest_and_publication(self):
+        with self.assertRaisesRegex(ValueError, "final four-case budget-16 success marker"):
+            self.mock_container_build(layout_output="early exit\n")
+        out = self.root / "build/h700-graphics-probe-fixture"
+        self.assertFalse((out / "package").exists())
+        self.assertFalse((out / "package.partial/manifest.json").exists())
+        self.assertIn("early exit", (out / "elf-report.txt").read_text())
 
 
 def elf_fixture(definitions=(), needs=None, exports=(), imports=(), needed=()):

@@ -201,6 +201,6 @@ U уже запрашивает `gl_allow_context_on_multi_threads`, котор�
 
 В стороне остаются PF-02 для MusyX/nod/game-facing SDL API, build profile полной игры, input/audio/save-load и итоговая приёмка. Это исследование их не закрывает и не разрешает production-перенос.
 
-### Последующая подготовка GAP-A/B: частичный результат
+### Последующая подготовка GAP-A/B
 
-Пользователь разрешил подготовить расширение отдельной демки. [Реализация и текущая остановка](H700_CONTRACT_PROBE.md): compile/link, ABI, CPU/helper tests и четыре Null cases для budget 16 прошли, но Null backend закреплённого package сообщает maximum 16 и не создаёт device profile 17. Первоначальные восемь cases GAP-B не пройдены. Требование закрыть profile 17 на Null признано уходом от цели, не блокером H700; новый Dawn/backend ради этой матрицы не готовится. Сначала нужна минимальная проверка применимости к фактическому Mali path по goal gate. Валидация не отключалась, package не опубликован, новых device runs и production fixes нет.
+Первая попытка расширения остановилась на Null maximum 16; первоначальные восемь cases GAP-B не пройдены. Это признано уходом от цели, не блокером H700. Затем пользователь разрешил закончить демку с новыми вводными: [готовый `contract-v2` package](H700_CONTRACT_PROBE.md) прошёл compile/link, ABI, 62 helper tests, CPU checks и четыре реальных Null controls бюджета 16. Профиль device-budget-17 явно не покрыт, validation не ослаблена. Новый `capabilities` проверяет default U request и **только фактически выбранные** GX layouts на Mali; принудительные альтернативы не запускаются. Dawn/backend/production code не менялись, новый device run ещё не разрешён и не выполнен.

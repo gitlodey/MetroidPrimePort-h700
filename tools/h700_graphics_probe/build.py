@@ -29,6 +29,22 @@ LIMITS = {"GLIBC": "2.38", "GLIBCXX": "3.4.32", "CXXABI": "1.3.14"}
 MARKER = ".h700-graphics-probe"
 SNAPSHOT = Path("docs/H700_RUNTIME_ABI.json")
 ENVIRONMENT_INPUTS = ("verify_environment.py", "Dockerfile.abi238", ".dockerignore")
+CONTRACT_INPUTS = ("contract.hpp", "contract.cpp")
+# Exact U bytes mirrored by contract.cpp; changes require review of the mirror.
+CONTRACT_REFERENCE_SHA256 = {
+    "extern/aurora/lib/webgpu/gpu.cpp": "bccac03231852388acb82fb69317646f2a8112bec805fbce436f837309df80b7",
+    "extern/aurora/lib/gfx/frame.cpp": "af429b9f8757c1ad170ac84814d70aea2d8a84206a08afec7bb837d901f04ab0",
+    "extern/aurora/lib/gx/gx.cpp": "259afb0bdc5a7db0e2e5ffd3505b184021958d8788f02eb5d547d37ee7b8ec2a",
+    "extern/aurora/lib/gx/gx.hpp": "2b61a2b2d152470eeefd866ea420e8e64a0a4b54afd420eb0a843e51e60f276c",
+    "extern/aurora/lib/gfx/probe.hpp": "9317c81e6b21438b0a1d37e4147feee60592b6dc7b4a97d1985f531480a05376",
+}
+LAYOUT_SELF_TEST_SUCCESS = "PASS layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)"
+LAYOUT_VALIDATION_SCOPE = {
+    "backend": "Null", "effective_sampled_texture_budget": 16, "cases": 4,
+    "positive": "U storage-fetch normal/shadow layouts without lightmap",
+    "negative": "U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
+    "not_validated": ["device-budget-17/lightmap layouts", "Mali request/layout", "shaders/pixels/threading/recreation"],
+}
 ABI_LIMITATIONS = [
     "Firmware snapshot covers version nodes and only five selected exports, not every imported symbol",
     "Other imports are gated by provider/version nodes only; actual device loader validation is pending",
@@ -82,8 +98,24 @@ def verify_archive(archive, tree, expected, prefix=""):
             "tree_sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()}
 
 
+def verify_contract_reference(root):
+    hashes = {}
+    for rel, expected in CONTRACT_REFERENCE_SHA256.items():
+        path = root / rel
+        require(path.is_file(), f"Missing contract reference: {rel}; restore the reviewed U source")
+        require(path.resolve().is_relative_to(root.resolve()), f"Contract reference escapes project: {rel}")
+        actual = sha256(path)
+        require(actual == expected,
+                f"Contract reference drift: {rel} (expected {expected}, got {actual}); "
+                "review the U changes, update the contract.hpp/.cpp mirror and reference hashes after review; "
+                "do not edit production sources to bypass this check")
+        hashes[rel] = actual
+    return hashes
+
+
 def check_inputs(root):
-    required = [PROBE / name for name in ("CMakeLists.txt", "build.py", "probe.cpp", "pattern.hpp", *ENVIRONMENT_INPUTS)]
+    required = [PROBE / name for name in ("CMakeLists.txt", "build.py", "probe.cpp", "pattern.hpp",
+                                         *CONTRACT_INPUTS, *ENVIRONMENT_INPUTS)]
     required.append(SNAPSHOT)
     required += [Path(p) for p in ("tools/collect_licenses.sh", "LICENSE", "NOTICE",
                                   "packaging/licenses/dawn.txt")]
@@ -98,11 +130,13 @@ def check_inputs(root):
         require((root / rel).resolve().is_relative_to(root.resolve()), f"Input escapes project: {rel}")
     require(f"https://github.com/bmdhacks/SDL/archive/{SDL_PIN}.tar.gz" in (root / stamp).read_text(),
             "SDL source stamp does not identify the expected fork (stamp is advisory)")
-    return {"sdl": {"claimed_ref": SDL_PIN,
+    provenance = {"sdl": {"claimed_ref": SDL_PIN,
                     "provenance": "Observed cached archive digest and exact tree match; stamp/ref not independently authenticated",
                     **verify_archive(root / sdl_archive, root / DEPS / "sdl-src", SDL_SHA, f"SDL-{SDL_PIN}")},
             "dawn": {"version": "v20261029.114630", "ref": "118436b3f8f68583eb86e811ca605dc41637e8cc",
                      **verify_archive(root / dawn_archive, root / DEPS / "dawn_prebuilt-src", DAWN_SHA)}}
+    provenance["contract_reference_sha256"] = verify_contract_reference(root)
+    return provenance
 
 
 def output_path(root, value, fresh=True):
@@ -170,16 +204,19 @@ def check_ldd(text):
     require(not re.search(r"not found|version .* not found", text, re.IGNORECASE), "Container ldd has unresolved dependencies")
 
 
-def run(command, timeout=60, env=None):
+def run(command, timeout=60, env=None, separate_stderr=False):
     result = subprocess.run([str(x) for x in command], text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=timeout, env=env)
-    require(result.returncode == 0, f"{Path(str(command[0])).name} failed ({result.returncode}):\n{result.stdout}")
-    return result.stdout
+                            stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT, timeout=timeout, env=env)
+    error_output = result.stdout + ((result.stderr or "") if separate_stderr else "")
+    require(result.returncode == 0, f"{Path(str(command[0])).name} failed ({result.returncode}):\n{error_output}")
+    return (result.stdout, result.stderr or "") if separate_stderr else result.stdout
 
 
 def source_hashes(root):
-    paths = [PROBE / name for name in ("probe.cpp", "pattern.hpp", "CMakeLists.txt", "build.py", *ENVIRONMENT_INPUTS)]
+    paths = [PROBE / name for name in ("probe.cpp", "pattern.hpp", "CMakeLists.txt", "build.py",
+                                      *CONTRACT_INPUTS, *ENVIRONMENT_INPUTS)]
     paths.extend((Path("tools/collect_licenses.sh"), SNAPSHOT))
+    paths.extend(Path(rel) for rel in CONTRACT_REFERENCE_SHA256)
     return {path.as_posix(): sha256(root / path) for path in paths}
 
 
@@ -188,6 +225,29 @@ def publish_package(package):
     require((package / "manifest.json").is_file(), "Cannot publish a stage without its final manifest")
     require(not target.exists(), "Final package already exists; nothing overwritten")
     package.rename(target)
+
+
+def smoke_tests(package, out, reports, env):
+    for mode in ("--help", "--self-test", "--layout-self-test"):
+        scope = "Dawn Null validation only; no SDL/EGL/GPU" if mode == "--layout-self-test" else "no SDL initialization"
+        try:
+            text, stderr = run([package / "h700_graphics_probe", mode], timeout=30, env=env, separate_stderr=True)
+        except ValueError as error:
+            reports.append(f"=== {mode} ({scope}) FAILED ===\n{error}")
+            (out / "elf-report.txt").write_text("\n".join(reports))
+            raise
+        output = text + (f"\n=== {mode} stderr ===\n" + stderr if stderr else "")
+        reports.append(f"=== {mode} ({scope}) ===\n" + output)
+        (out / "elf-report.txt").write_text("\n".join(reports))
+        lines = text.rstrip("\r\n").splitlines()
+        if mode == "--self-test":
+            require(any(line.startswith("PASS self-test ") for line in lines),
+                    "CPU self-test exited without its PASS self-test success marker")
+        if mode == "--layout-self-test":
+            (package / "metadata/layout-self-test.txt").write_text(output)
+            require(bool(lines) and lines[-1] == LAYOUT_SELF_TEST_SUCCESS,
+                    "Dawn Null layout-self-test exited without its final four-case budget-16 success marker: " +
+                    LAYOUT_SELF_TEST_SUCCESS)
 
 
 def container_build(args):
@@ -233,11 +293,8 @@ def container_build(args):
     env = dict(os.environ, LD_LIBRARY_PATH=str(package))
     ldd = run(["ldd", package / "h700_graphics_probe"], env=env)
     check_ldd(ldd)
-    for mode in ("--help", "--self-test"):
-        reports.append(f"=== {mode} (no SDL initialization) ===\n" +
-                       run([package / "h700_graphics_probe", mode], timeout=30, env=env))
     reports.append("=== Container ldd ONLY; firmware and SDL2 dlopen NOT validated ===\n" + ldd)
-    (out / "elf-report.txt").write_text("\n".join(reports))
+    smoke_tests(package, out, reports, env)
     run(["bash", root / "tools/collect_licenses.sh", root / "build/muos-linux-arm64", package / "licenses"], timeout=120)
     require(source_hashes(root) == sources, "Probe sources changed during build; use a fresh output and retry")
     versions = {tool: run([tool, "--version"]).splitlines()[0]
@@ -245,9 +302,12 @@ def container_build(args):
     manifest = {"image_id": args.image_id, "image_tag": IMAGE, "platform": "linux/arm64", "dependencies": provenance,
                 "build_environment": toolchain, "firmware_checks": firmware_checks,
                 "firmware_snapshot_sha256": sha256(root / SNAPSHOT), "abi_limitations": ABI_LIMITATIONS,
-                "tools": versions, "sources_sha256": sources, "jobs": args.jobs,
+                "tools": versions, "sources_sha256": sources,
+                "contract_reference_sha256": provenance["contract_reference_sha256"],
+                "layout_validation_scope": LAYOUT_VALIDATION_SCOPE, "jobs": args.jobs,
                 "build_type": "Release", "cpu": "cortex-a53", "abi_limits": LIMITS, "abi": abi,
-                "validation": "Container compile/link/help/self-test/ldd only; no firmware runtime validation",
+                "validation": "Container compiler/link/ABI/help/CPU self-test/ldd and Dawn Null layout validation only; "
+                              "no SDL/EGL/GPU initialization in smoke tests; no new firmware runtime validation",
                 "files_sha256": {p.relative_to(package).as_posix(): sha256(p)
                                  for p in sorted(package.rglob("*")) if p.is_file()}}
     (package / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

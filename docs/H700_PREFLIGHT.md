@@ -105,7 +105,7 @@ Cached package находится в ignored `build/muos-linux-arm64/_deps/`, д
 - frame packet slots и CPU render-worker barrier не заменяют двусторонний GPU ownership; перенос swap на main требует progress во время блокирующих ожиданий;
 - legacy EGLImage alias не получает публичного per-import cleanup; фиксированные slots либо patched importer — разные ещё не выбранные решения.
 
-Исследование не меняет renderer/pin и не разрешает новые probes. Предлагается сначала отдельно согласовать GAP-A (точный U device request/features/limits) и GAP-B (GX layout validation); GPU workload, threading и recreation имеют отдельные проверяемые границы. Минимальный device demo pass не означает завершённый полный PF-03 или PF-02.
+Само исследование не разрешало менять renderer/pin или запускать новые probes. По последующему явному разрешению подготовлена [целевая расширенная демка](H700_CONTRACT_PROBE.md): `contract-v2/package` прошёл build/ABI/CPU и четыре Null controls бюджета 16, не пытается завершить матрицу 17 на неподходящем backend. На H700 `capabilities` ещё не запускался; он проверит фактический U request и выбранные layouts. GPU workload, threading и recreation имеют отдельные проверяемые границы. Минимальный device demo pass не означает завершённый полный PF-03 или PF-02.
 
 ## PF-04. Выбор подхода и переход к подробному плану
 
