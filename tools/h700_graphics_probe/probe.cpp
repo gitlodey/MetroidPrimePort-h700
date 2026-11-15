@@ -688,6 +688,7 @@ void mixed_layout_self_test() {
     check_mixed_layout(core, shadow);
     ++cases;
   }
+  mixed::validate_shaders(core.device, [&core](wgpu::Future future) { core.wait(future); });
   core.cleanup();
   require(core.diagnostics->errors.load() == 0 && cases == 4, "Mixed Null teardown/case count failed");
   std::cout << "COVERAGE mixed layouts budget=16 only; no shader/pixel/Mali execution\n";

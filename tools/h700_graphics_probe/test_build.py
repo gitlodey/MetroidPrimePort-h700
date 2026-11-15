@@ -458,7 +458,8 @@ class SmokeTests(unittest.TestCase):
     def test_only_safe_modes_run_and_preserve_null_output(self):
         package, reports, env = self.smoke_fixture()
         output = "budget16 normal/shadow controls; budget17 remains unvalidated\n" + build.LAYOUT_SELF_TEST_SUCCESS + "\n"
-        mixed_output = "mixed normal/shadow controls; no GPU workload\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n"
+        mixed_output = ("mixed normal/shadow controls; no GPU workload\n" + build.MIXED_SHADER_SELF_TEST_SUCCESS +
+                                "\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n")
         with patch.object(build, "run", side_effect=[("Usage\n", ""), ("PASS self-test (CPU-only)\n", ""),
                                                     (output, "Null diagnostic\n"),
                                                     (mixed_output, "Mixed Null diagnostic\n")]) as run:
@@ -517,6 +518,20 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual((package / "metadata/mixed-layout-self-test.txt").read_text(), output)
             self.assertEqual((package / "metadata/layout-self-test.txt").read_text(), build.LAYOUT_SELF_TEST_SUCCESS)
             self.assertIn(output, (self.root / "elf-report.txt").read_text())
+
+    def test_mixed_requires_exact_shader_marker_once_on_stdout(self):
+        package, reports, env = self.smoke_fixture()
+        marker = build.MIXED_SHADER_SELF_TEST_SUCCESS
+        for shader_output, stderr in (("", ""), ("", marker), (marker.replace("pipelines=2", "pipelines=1"), ""),
+                                       ("prefix " + marker, ""), (marker + " extra", ""),
+                                       (marker + "\n" + marker, "")):
+            output = shader_output + "\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS
+            with self.subTest(output=output, stderr=stderr), patch.object(build, "run", side_effect=[
+                    ("Usage", ""), ("PASS self-test (CPU-only)", ""),
+                    (build.LAYOUT_SELF_TEST_SUCCESS, ""), (output, stderr)]), \
+                 self.assertRaisesRegex(ValueError, "two-pipeline shader validation success marker"):
+                build.smoke_tests(package, self.root, reports, env)
+            self.assertIn(output, (package / "metadata/mixed-layout-self-test.txt").read_text())
 
     def test_cpu_zero_exit_without_pass_marker_is_rejected(self):
         package, reports, env = self.smoke_fixture()
@@ -597,7 +612,8 @@ class ContainerBuildTests(unittest.TestCase):
     def mock_container_build(self, drift=None, layout_output=None, mixed_result=None):
         out, expected, paths = self.container_fixture()
         layout_output = build.LAYOUT_SELF_TEST_SUCCESS + "\n" if layout_output is None else layout_output
-        mixed_result = (build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n", "") if mixed_result is None else mixed_result
+        mixed_result = ((build.MIXED_SHADER_SELF_TEST_SUCCESS + "\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n", "")
+                                if mixed_result is None else mixed_result)
 
         def command(argv, **kwargs):
             tool = str(argv[0])
@@ -665,7 +681,8 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertFalse(any("mixed-fetch" in command for command in commands))
 
     def test_manifest_records_separate_mixed_report_hash_and_truthful_coverage(self):
-        mixed_output = "mixed controls detail\n" + build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n"
+        mixed_output = ("mixed controls detail\n" + build.MIXED_SHADER_SELF_TEST_SUCCESS + "\n" +
+                                build.MIXED_LAYOUT_SELF_TEST_SUCCESS + "\n")
         mixed_stderr = "mixed Null diagnostic\n"
         out, _, _ = self.mock_container_build(mixed_result=(mixed_output, mixed_stderr))
         package = out / "package"
@@ -674,6 +691,7 @@ class ContainerBuildTests(unittest.TestCase):
             "backend": "Null", "effective_sampled_texture_budget": 16, "cases": 4,
             "positive": "Mixed normal/shadow layouts: vertex texture fetch, 16 fragment textures + 1 fragment SSBO; no vertex SSBO",
             "negative": "Original U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
+            "shader_validation": {"pipelines": 2, "scope": "WGSL/render pipeline validation only; no GPU execution"},
             "not_validated": ["GPU shader/pixel/resource-update workload", "Mali request/layout/execution",
                               "threading", "recreation", "game integration"],
         })
@@ -713,7 +731,7 @@ class ContainerBuildTests(unittest.TestCase):
 
     def test_mixed_failure_prevents_manifest_and_publication(self):
         marker = build.MIXED_LAYOUT_SELF_TEST_SUCCESS
-        results = [("early exit\n", ""), (build.LAYOUT_SELF_TEST_SUCCESS, ""),
+        results = [("early exit\n", ""), (build.LAYOUT_SELF_TEST_SUCCESS, ""), (marker, ""),
                    (marker.replace("cases=4", "cases=8"), ""), (marker.replace("budget=16", "budget=17"), ""),
                    ("early exit\n", marker), ValueError("probe failed (1):\n" + marker)]
         for result in results:

@@ -33,9 +33,9 @@
 
 ## Текущий статус
 
-**Подготовка прошла; отдельно разрешённый H700 run выполнен с частичным результатом, overall FAIL.** Device и оба mixed layouts созданы, но `CreateRenderPipeline` отклонил синтетический shader демки из-за неподдерживаемой в Compatibility mode flat interpolation sampling `First`. До mixed draws/readbacks дело не дошло; buffer execution не подтверждено. Это дефект совместимости тестового shader, не доказанный отказ fragment SSBO. Production sources не менялись; повторного запуска/исправления после этого результата нет.
+**Исправленный `mixed-v2` package готов к отдельно согласованному повторному H700 run.** Shader явно использует `flat, either`; оба render pipelines прошли Null Compatibility validation без GPU execution. Последний hardware run относится к `mixed-v1`: device и layouts прошли, pipeline setup остановлен sampling `First` до workload draw. История отказа сохранена ниже; pixels/updates/growth на Mali всё ещё не подтверждены. Production sources и зависимости не менялись, новых обращений к приставке нет.
 
-Из корня репозитория выполнены:
+При подготовке **mixed-v1** из корня репозитория выполнены:
 
 ```sh
 python3 -B tools/h700_graphics_probe/test_build.py
@@ -59,7 +59,7 @@ python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe
 
 Реализация: [contract.hpp/.cpp](../tools/h700_graphics_probe/contract.hpp) — исходный U mirror и отдельная proposed mixed schema; [mixed.cpp](../tools/h700_graphics_probe/mixed.cpp) — ограниченная нагрузка и CPU oracle; [probe.cpp](../tools/h700_graphics_probe/probe.cpp) — explicit CLI, request/diagnostics/cleanup; [build.py](../tools/h700_graphics_probe/build.py) — safe modes/metadata/integrity. В исходной selected-U проверке отказ 17 > 16 по-прежнему остаётся overall failure.
 
-### Проверенный artifact
+### Проверенный artifact `mixed-v1` (история первого device run)
 
 `build/h700-graphics-probe-mixed-v1/package/`
 
@@ -132,7 +132,39 @@ FAIL Mixed setup: The interpolation sampling (First) of the vertex output at loc
 
 Расчётный resource budget теперь подтверждён real-device layout validation. Но совместное shader execution texture/SSBO, pixels и buffer growth **ещё не доказаны**. Основания менять firmware/Dawn, переходить к варианту 1 или объявлять вариант 3 рабочим по этому отказу нет.
 
-Следующий предлагаемый шаг — точечная compatibility-правка передачи контрольной суммы в shader демки с сохранением oracle/всех 8 cases и validation; затем новый artifact/build gates и отдельно согласованный повторный device run. Не менять production shader, не ослаблять проверки и не расширять backend matrix. Исправление и повторный запуск в этой сессии не выполнялись.
+Следующий предлагаемый шаг — точечная compatibility-правка передачи контрольной суммы в shader демки с сохранением oracle/всех 8 cases и validation; затем новый artifact/build gates и отдельно согласованный повторный device run. Не менять production shader, не ослаблять проверки и не расширять backend matrix. В device-сессии `mixed-v1` исправление и повторный запуск не выполнялись; последующая разрешённая правка описана ниже.
+
+### Согласованная точечная правка после `mixed-v1`
+
+Пользователь разрешил исправить shader демки. Goal gate: H700 run остановлен до проверки mixed reads → заменить неявный `flat/First` на явный `@interpolate(flat, either)` → сохранить целочисленную контрольную сумму, oracle, все 8 draws и validation → собрать новый `mixed-v2` package и остановиться без SSH/device run. Все вершины рассчитывают одинаковую signature, поэтому выбор любой из них сохраняет ожидаемые pixels.
+
+Основание — `ValidateInterStageMatching` в [RenderPipeline.cpp закреплённого Dawn](https://github.com/Timdeuces/dawn/blob/118436b3f8f68583eb86e811ca605dc41637e8cc/src/dawn/native/RenderPipeline.cpp): Compatibility запрещает sampling `First`, но не `Either`. Источник проверен 2026-11-15. Чтобы регрессия проверялась до device run, существующий `--mixed-layout-self-test` дополнительно создаёт **те же два shader/render pipelines на Null Compatibility** без создания test textures/buffers, draw или GPU execution; отдельный marker и manifest coverage отличают это от четырёх layout controls. Builder/pins/production code и приёмка Mali workload не меняются. Прежний artifact и failed device log сохраняются.
+
+**Правка выполнена и подготовка нового package прошла.** `signature` остаётся `u32`, меняется только interpolation sampling. Логика источников данных, 64-byte immediates, dynamic uniforms, независимый CPU oracle, все 8 draws / 32768 expected pixels и точное сравнение RGBA не менялись. Одна функция создания pipelines используется и device workload, и Null regression check — проверяется фактический WGSL, не отдельный упрощённый shader.
+
+Выполнены:
+
+```sh
+python3 -B tools/h700_graphics_probe/test_build.py
+python3 -B tools/h700_graphics_probe/build.py --check-inputs
+python3 -B tools/h700_graphics_probe/build.py --output build/h700-graphics-probe-mixed-v2 --jobs 2
+```
+
+- **71/71 helper tests — PASS**; добавлен gate точного единственного stdout shader-validation marker, missing/wrong-count/duplicate/stderr-only markers не принимаются. Старые publication/nonzero/drift failures сохранены.
+- Inputs/8 U source guards, ARM64 compile/link, ELF/ABI/provider gate, container ldd, CPU self-test — **PASS**.
+- Оба прежних layout self-tests — **4/4 + 4/4 PASS** при бюджете 16. Дополнительно **2/2 настоящих mixed shader/render pipelines** приняты на Null **без CoreFeaturesAndLimits**, то есть с Compatibility validation; GPU work не исполнялся.
+- Metadata содержит `PASS mixed shader-validation pipelines=2 (Dawn Null; no GPU execution)`, manifest отдельно записывает `shader_validation` и непроверенное Mali execution.
+- Все artifact/source hashes повторно проверены; **51 package file**, licenses/manifest, `package.partial` отсутствует. Старый failed package/log `mixed-v1` сохранён.
+
+Новый artifact: `build/h700-graphics-probe-mixed-v2/package/`.
+
+| Файл | Размер, bytes | SHA-256 |
+| --- | ---: | --- |
+| `h700_graphics_probe` | 13668784 | `c86934d2f1722305271b3368282f008187a1476c7aecc0086899573cf5faa07d` |
+| `libSDL3.so.0` | 2771560 | `ffb36e54c7c25f17f788f74550fcfd7da7136a66fa1e24771497b0a18f134e70` |
+| `manifest.json` | 22287 | `eec8da8a124bd5b36b64ee52ecfb82cb706dd25cd92871c91ee679498522ab68` |
+
+Builder/pins и ABI maxima прежние: GLIBC_2.38 / GLIBCXX_3.4.32 / CXXABI_1.3.13 для executable. Firmware/runtime библиотеки не упаковываются. Новый package **не device-validated**; прежние Mali layout PASS относятся к `mixed-v1`, а не доказательству успешного исполнения исправленного workload. Повторный device run требует отдельного разрешения.
 
 ### Cleanup
 

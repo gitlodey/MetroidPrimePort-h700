@@ -50,10 +50,12 @@ LAYOUT_VALIDATION_SCOPE = {
     "not_validated": ["device-budget-17/lightmap layouts", "Mali request/layout", "shaders/pixels/threading/recreation"],
 }
 MIXED_LAYOUT_SELF_TEST_SUCCESS = "PASS mixed-layout-self-test cases=4 budget=16 (Dawn Null validation only; no SDL/EGL/GPU)"
+MIXED_SHADER_SELF_TEST_SUCCESS = "PASS mixed shader-validation pipelines=2 (Dawn Null; no GPU execution)"
 MIXED_LAYOUT_VALIDATION_SCOPE = {
     "backend": "Null", "effective_sampled_texture_budget": 16, "cases": 4,
     "positive": "Mixed normal/shadow layouts: vertex texture fetch, 16 fragment textures + 1 fragment SSBO; no vertex SSBO",
     "negative": "Original U texture-fetch normal/shadow layouts exceed fragment budget (17 > 16)",
+    "shader_validation": {"pipelines": 2, "scope": "WGSL/render pipeline validation only; no GPU execution"},
     "not_validated": ["GPU shader/pixel/resource-update workload", "Mali request/layout/execution",
                       "threading", "recreation", "game integration"],
 }
@@ -266,6 +268,8 @@ def smoke_tests(package, out, reports, env):
             require(bool(lines) and lines[-1] == MIXED_LAYOUT_SELF_TEST_SUCCESS,
                     "Dawn Null mixed-layout-self-test exited without its final four-case budget-16 success marker: " +
                     MIXED_LAYOUT_SELF_TEST_SUCCESS)
+            require(lines.count(MIXED_SHADER_SELF_TEST_SUCCESS) == 1,
+                    "Dawn Null mixed self-test exited without its exact two-pipeline shader validation success marker")
 
 
 def container_build(args):

@@ -234,7 +234,8 @@ fn vertex_word(index: u32) -> u32 {
 }
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
-  @location(0) @interpolate(flat) signature: u32,
+  // Every vertex computes the same checksum; Compatibility permits either vertex.
+  @location(0) @interpolate(flat, either) signature: u32,
 };
 @vertex fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
   let x = bitcast<f32>(textureLoad(vertex_positions, vec2<i32>(i32(index * 2u), 0), 0).x);
@@ -311,7 +312,7 @@ struct Variant {
   wgpu::Sampler filtering;
   wgpu::Sampler last_sampler;
 
-  void init(const wgpu::Device& device, const wgpu::Queue& queue, const wgpu::Buffer& uniforms, bool shadow) {
+  void init_pipeline(const wgpu::Device& device, bool shadow) {
     layouts = contract::mixed_layout(device, shadow);
     const auto code = shader_source(shadow);
     wgpu::ShaderSourceWGSL source{};
@@ -339,7 +340,10 @@ struct Variant {
     render.multisample.count = 1;
     pipeline = device.CreateRenderPipeline(&render);
     require(bool(shader) && bool(pipeline), "Mixed shader/pipeline creation failed");
+  }
 
+  void init(const wgpu::Device& device, const wgpu::Queue& queue, const wgpu::Buffer& uniforms, bool shadow) {
+    init_pipeline(device, shadow);
     wgpu::BindGroupEntry uniform_entry{};
     uniform_entry.binding = 0;
     uniform_entry.buffer = uniforms;
@@ -479,6 +483,18 @@ void must_reject(F&& work) {
 }
 
 } // namespace
+
+void validate_shaders(const wgpu::Device& device, const std::function<void(wgpu::Future)>& wait) {
+  require(!device.HasFeature(wgpu::FeatureName::CoreFeaturesAndLimits),
+          "Mixed shader regression requires Compatibility validation");
+  for (bool shadow : {false, true}) {
+    validated(device, wait, shadow ? "Mixed shadow shader validation" : "Mixed normal shader validation", [&] {
+      Variant variant;
+      variant.init_pipeline(device, shadow);
+    });
+  }
+  std::cout << "PASS mixed shader-validation pipelines=2 (Dawn Null; no GPU execution)\n";
+}
 
 void self_test() {
   require(kDraws == 8 && uint64_t(kDraws) * kWidth * kHeight == 32768, "Mixed bounded coverage");
