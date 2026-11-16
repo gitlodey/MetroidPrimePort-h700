@@ -2,7 +2,7 @@
 
 Адаптация нативного порта **Metroid Prime** для **ANBERNIC RG40XX H под muOS 2601.0 Jacaranda**. Это нативная C/C++-игра на основе декомпиляции, не запуск через эмулятор.
 
-> **Статус: IG-01…IG-13 LOCAL PASS; последний корректный IG-14 manual run PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил видимый запуск. Один run прошёл120+2frames/pixels/threading/teardown; три других manual runs incomplete из-за отсутствия actual overlap — не4/4PASS. Ограничения screenshots/повторяемости сохранены в [device report](docs/H700_INTEGRATION_GATE.md), [плане](docs/H700_INTEGRATION_PLAN.md) и [прогрессе](docs/H700_PROGRESS.md). **Полная игра и FPS не подтверждены. [План полной игры утверждён](docs/H700_GAME_PLAN.md) ([короткая версия](docs/H700_GAME_SUMMARY.md)); GM-01 root configure LOCAL PASS, compile/link — следующий шаг. Device-окна отдельно согласуются.**
+> **Статус: IG-01…IG-13 LOCAL PASS; последний корректный IG-14 manual run PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил видимый запуск. Один run прошёл120+2frames/pixels/threading/teardown; три других manual runs incomplete из-за отсутствия actual overlap — не4/4PASS. Ограничения screenshots/повторяемости сохранены в [device report](docs/H700_INTEGRATION_GATE.md), [плане](docs/H700_INTEGRATION_PLAN.md) и [прогрессе](docs/H700_PROGRESS.md). **Полная игра и FPS не подтверждены. [План полной игры утверждён](docs/H700_GAME_PLAN.md) ([короткая версия](docs/H700_GAME_SUMMARY.md)); GM-01/02 root configure и первая full compile/link LOCAL PASS; runtime profile/lifecycle ещё впереди. Device-окна отдельно согласуются.**
 
 ## Цель H700
 
@@ -55,7 +55,7 @@
 
 ## Сборка и запуск на приставке
 
-**Готовой инструкции сборки/установки полной игры для H700 пока нет.** Есть проверенные builder/helpers, профиль и отдельный Ports launcher интеграционной сцены, но они не являются game package. Команды из донорского журнала не должны выдаваться за рабочие команды новой версии; root game configure уже проверен; compile/link и full-game package — следующие шаги [утверждённого плана](docs/H700_GAME_PLAN.md).
+**Готовой инструкции сборки/установки полной игры для H700 пока нет.** Есть проверенные builder/helpers, профиль и отдельный Ports launcher интеграционной сцены, но они не являются game package. Команды из донорского журнала не должны выдаваться за рабочие команды новой версии; root game configure/compile/link и no-init `--version` уже проверены; retail runtime profile/lifecycle и full-game package — следующие шаги [утверждённого плана](docs/H700_GAME_PLAN.md).
 
 **Вывод изображения на H700 уже решён и проверен в старом порте:** R36S-коммит создал механизм, H700-коммит довёл этот вариант до запуска на нашей muOS. Путь: **SDL3-over-SDL2 → firmware SDL2 `mali` → EGL/GLES**. В этом checkout выбран и реализован постоянный путь новой отрисовки Dawn к тому же display stack; integration package прошёл bounded manual run на Mali и стал видимым через корректно назначенный PortMaster; первый SSH-run поверх меню не подтвердил видимость, а ограничения повторных наблюдений приведены в gate report. Это не полная сборка игры; стабильные 30 FPS остаются отдельной целью.
 

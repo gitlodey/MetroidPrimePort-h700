@@ -1,4 +1,4 @@
-"""GM-01 profile tests; existing bootstrap tests cover archive/output safety."""
+"""Game profile tests; existing bootstrap tests cover archive/output safety."""
 import argparse
 import contextlib
 import io
@@ -21,7 +21,8 @@ class GameBuildTests(unittest.TestCase):
         self.assertEqual(build.bootstrap.build_command(2, build.GAME),
                          ["cmake", "--build", "/out/build", "--target",
                           "metroid_prime_port", "--parallel", "2"])
-        self.assertFalse(build.GAME.help_check)
+        self.assertTrue(build.GAME.help_check)
+        self.assertEqual(build.GAME.check_argument, "--version")
         self.assertNotEqual(build.GAME.marker, build.bootstrap.MARKER)
 
     def test_game_uses_same_exact_image_and_docker_isolation(self):
@@ -39,12 +40,11 @@ class GameBuildTests(unittest.TestCase):
     def test_entry_reuses_bootstrap_without_a_second_manifest(self):
         with mock.patch.object(build.bootstrap, "main", return_value=0) as main:
             self.assertEqual(build.main(["--check-inputs"]), 0)
-        main.assert_called_once_with(["--check-inputs"], profile=build.GAME,
-                                     configure_only_required=True)
+        main.assert_called_once_with(["--check-inputs"], profile=build.GAME)
         self.assertFalse((Path(__file__).parent / "inputs.json").exists())
 
-    def test_compile_and_demo_package_refused_before_side_effects(self):
-        for args in ([], ["--package", "--configure-only"]):
+    def test_demo_package_refused_before_side_effects(self):
+        for args in (["--package"], ["--package", "--configure-only"]):
             with self.subTest(args=args), \
                  mock.patch.object(build.bootstrap, "check_inputs", side_effect=AssertionError("no staging")), \
                  mock.patch.object(build.bootstrap.subprocess, "run", side_effect=AssertionError("no Docker")), \

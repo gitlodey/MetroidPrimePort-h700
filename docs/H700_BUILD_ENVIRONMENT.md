@@ -124,6 +124,6 @@ Package находится в `build/h700-graphics-probe-abi238-final/package/`;
 
 ## Расширение разрешения на full-game correctness RC
 
-2026-11-16 пользователь утвердил D1…D11 [плана полной игры](H700_GAME_PLAN.md). Тот же exact image разрешён для configure/build/tests GM-01…GM-17, включая повторный fresh build RC. Исходные EOL-риски и pins остаются прежними; это явное расширение области разрешения, не переход на поддерживаемый builder и не автоматическое разрешение менять image/dependencies. GM-01 fresh root configure и integration-configure regression прошли; full compile/link и device compatibility этим не подтверждены.
+2026-11-16 пользователь утвердил D1…D11 [плана полной игры](H700_GAME_PLAN.md). Тот же exact image разрешён для configure/build/tests GM-01…GM-17, включая повторный fresh build RC. Исходные EOL-риски и pins остаются прежними; это явное расширение области разрешения, не переход на поддерживаемый builder и не автоматическое разрешение менять image/dependencies. GM-01 fresh root configure и integration-configure regression прошли; GM-02 fresh full compile/link и no-init `--version` также PASS на том же image без compatibility fixes. Device compatibility и полноценная firmware ABI closure этим не подтверждены.
 
 Текущий статус — [H700_PROGRESS.md](H700_PROGRESS.md).

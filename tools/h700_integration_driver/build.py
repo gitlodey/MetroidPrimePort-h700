@@ -35,6 +35,7 @@ class BuildProfile:
     marker: str = MARKER
     prefix: str = "h700-integration-driver"
     help_check: bool = True
+    check_argument: str = "--help"
 
 
 INTEGRATION = BuildProfile()
@@ -257,7 +258,7 @@ def docker_command(root, out, name, args, profile=INTEGRATION):
     return command
 
 
-def inspect_artifacts(out, commands, help_check=True):
+def inspect_artifacts(out, commands, help_check=True, check_argument="--help"):
     # CMake's file(GENERATE) must supply these two actual target paths.
     artifacts = json.loads((out / "build/artifacts.json").read_text())
     reports = {}
@@ -279,7 +280,9 @@ def inspect_artifacts(out, commands, help_check=True):
     write_json(out / "elf-metadata.json", {"artifacts": reports,
                "limitations": "ELF metadata only; not a firmware ABI or device runtime PASS"})
     if help_check:
-        commands.run("help", [artifacts["executable"], "--help"], 30)
+        require(check_argument in ("--help", "--version"), "Unsupported no-init check")
+        label = "version" if check_argument == "--version" else "help"
+        commands.run(label, [artifacts["executable"], check_argument], 30)
 
 
 def container_build(args, profile=INTEGRATION):
@@ -309,7 +312,8 @@ def container_build(args, profile=INTEGRATION):
             import package as staging
             command[command.index("--parallel"):command.index("--parallel")] = staging.CPU_TARGETS
         commands.run("build", command, 1800)
-        inspect_artifacts(out, commands, help_check=profile.help_check and not args.package)
+        inspect_artifacts(out, commands, help_check=profile.help_check and not args.package,
+                          check_argument=profile.check_argument)
         if args.package:
             commands.run("cpu-tests", ["ctest", "--test-dir", "/out/build", "-R", staging.CPU_FILTER,
                                       "--output-on-failure", "--timeout", "10"], 180)
@@ -321,7 +325,7 @@ def container_build(args, profile=INTEGRATION):
                "device_validated": False, "image_id": IMAGE_ID, "target": profile.target})
 
 
-def main(argv=None, profile=INTEGRATION, configure_only_required=False):
+def main(argv=None, profile=INTEGRATION):
     parser = argparse.ArgumentParser(description=f"Offline {profile.target} build; no deployment or graphics execution.")
     parser.add_argument("--check-inputs", action="store_true", help="Read-only archive hash check; no Docker")
     parser.add_argument("--output", default=f"build/{profile.prefix}", help="NEW project/build/... directory")
@@ -332,8 +336,7 @@ def main(argv=None, profile=INTEGRATION, configure_only_required=False):
     args = parser.parse_args(argv)
     try:
         require(not args.package or profile == INTEGRATION, "--package is only available for the integration driver")
-        require(not configure_only_required or args.configure_only or args.check_inputs,
-                "This step requires --configure-only; full-game compile/link belongs to GM-02")
+
         require(not args.package or not (args.configure_only or args.check_inputs), "--package requires a complete fresh build")
         if args.check_inputs:
             require(not args.container, "--container cannot be combined with --check-inputs")

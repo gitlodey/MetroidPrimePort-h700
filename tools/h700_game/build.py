@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""GM-01: configure the real game offline using the existing H700 build helper.
+"""Configure/build the real game offline using the existing H700 build helper.
 
-No device access. Requires --configure-only until the separate GM-02 build step.
+No device access or GPU execution. The only executable check is no-init --version.
 The integration manifest remains the single source of the 14 pinned inputs.
 """
 import importlib.util
@@ -18,11 +18,11 @@ SPEC.loader.exec_module(bootstrap)
 GAME = bootstrap.BuildProfile(
     source="/src", cache="/src/cmake/h700/GameInitialCache.cmake",
     script="/src/tools/h700_game/build.py", target="metroid_prime_port",
-    marker=".h700-game", prefix="h700-game", help_check=False)
+    marker=".h700-game", prefix="h700-game", check_argument="--version")
 
 
 def main(argv=None):
-    return bootstrap.main(argv, profile=GAME, configure_only_required=True)
+    return bootstrap.main(argv, profile=GAME)
 
 
 if __name__ == "__main__":

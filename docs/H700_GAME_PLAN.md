@@ -345,7 +345,7 @@ Reset и normal exit выполняются на main safe-point:
 
 Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
 
-**Статус после согласования: локальная реализация разрешена, GM-01 configure LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
+**Статус после согласования: локальная реализация разрешена, GM-01 configure и GM-02 compile/link LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
 
 ## 11. Проверка черновика до утверждения
 
@@ -372,4 +372,23 @@ python3 -B -m unittest discover -s tools/h700_game -p 'test_build.py' -v
 - Compile database:1592 entries, в том числе642 `mp_game` units и настоящий `src/MetroidPrime/main.cpp`; MusyX включён. Все game units сохраняют signed-char/no-strict-aliasing/wrap flags. Embedded resources/bundled deps ON, stub/smoke/tests/TLS OFF по approved profile. Это сгенерированные команды, **не выполненная компиляция**.
 - `providers.txt`: SDL3 source `/out/inputs/sdl`, zlib-ng source, zstd static source; Dawn и nod — staged static archives. Game target/artifact — `metroid_prime_port`, не driver. Локальные private absolute paths в versioned report не включены.
 - 5/5 новых profile tests PASS на host;10/10 существующих bootstrap tests PASS на host. Полный integration-helper suite **30/30 PASS в утверждённом Linux image**, включая package/launcher safety. На macOS тот же полный suite имел4 failures/errors и1 skip: отсутствует prerequisite `setsid`; Linux-only launcher fixture не адаптировали и tests не ослабляли. Integration fresh configure также PASS.
-- Independent read-only code review: blockers не обнаружены. Общий slice cache/pins/image не изменены; production runtime ещё не затронут. Next: GM-02 compile/link; этот результат не ABI/runtime/device PASS.
+- Independent read-only code review: blockers не обнаружены. Общий slice cache/pins/image не изменены; production runtime ещё не затронут. Этот результат не ABI/runtime/device PASS; последующий compile/link зафиксирован отдельно ниже.
+
+### GM-02 — LOCAL PASS: первая полная compile/link
+
+Game wrapper разрешает полный build через тот же helper. Единственная post-build executable check — **`--version`**: `platform/main.cpp` возвращается до settings/game/graphics init; обычный game запуск и `--help` не выполнялись. Integration driver сохраняет прежний `--help`, package mode не изменён. C++/CMake compatibility fixes не потребовались, manifests/pins/image неизменны.
+
+```sh
+python3 -B tools/h700_game/build.py --output build/h700-game-gm02 --jobs 2
+```
+
+Fresh offline configure18.172s, compile/link494.098s, все команды exit0. `metroid_prime_port --version`: `Metroid Prime native port 0.46.0 (source-snapshot)`, exit0 за0.035s. Строка `source-snapshot` не является доказательством embedded Git revision; source/provenance manifest RC ещё предстоит в GM-16/17.
+
+| Artifact | Bytes на диске (не RSS) | SHA256 |
+| --- | --- | --- |
+| unstripped `metroid_prime_port` | 228548416 | `e85b356f16e0637b88bab2fb6727861cb62913ae4be66d223aa6988da914549e` |
+| matched `libSDL3.so.0.5.0` | 7263800 | `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b` |
+
+Actual executable и SDL — ELF64/AArch64, loader `ld-linux-aarch64.so.1`; `NEEDED` game: firmware EGL/GLES, SDL3, libc/libm/libstdc++/libgcc и loader. Полные imports/version nodes/hashes/command timings — ignored `build/h700-game-gm02/{elf-metadata.json,commands.json,result.json}`. Это **ELF metadata, не полный firmware ABI gate**, не package/deploy/device PASS.
+
+Проверки:10/10bootstrap +5/5game-profile tests на host;30/30integration helper +5/5game-profile tests в exact Linux image. Independent read-only review без blockers; diff/link/документальные проверки выполнены. Следующий шаг GM-03: deterministic H700 retail runtime profile. Пока бинарник сохраняет существующие game defaults и неполную game lifecycle интеграцию; запускать его на приставке преждевременно.
