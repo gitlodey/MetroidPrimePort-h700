@@ -3,6 +3,8 @@
 #include "types.hpp"
 
 #include <functional>
+#include <string>
+#include <string_view>
 
 namespace aurora::gfx::clear {
 struct PipelineConfig;
@@ -25,6 +27,11 @@ struct PipelineConfig;
 } // namespace aurora::rmlui
 
 namespace aurora::gfx {
+
+namespace detail {
+// The production database namespace, independent of the frontend's cache directory.
+std::string pipeline_cache_path(std::string_view cachePath);
+}
 
 enum class ShaderType : uint8_t {
   Clear = 0,

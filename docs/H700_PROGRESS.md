@@ -2,9 +2,11 @@
 
 **Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-04 PASS, следующий шаг IG-05.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
+**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-05 PASS, следующий шаг IG-06.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
 
 ## Что готово
+
+- **IG-05:** настоящий stage-aware GX generator в одном WGSL module, mixed production cache отдельно от старого. **5 generator/cache +6 resource tests PASS**; non-H7002tests/6baseline hashes и core/GX compile PASS. Mali WGSL/execution ещё не проверены. [Результат](H700_INTEGRATION_PLAN.md#ig-05--pass-2026-11-16).
 
 - **IG-04:** постоянный mixed group0 (две vertex-only R32Uint mirrors + fragment-only текущий storageBuffer), normal/shadow group2 по16 textures без lightmap; mixed RequestDevice и отдельная проверка granted limits для реальных размеров U. **6/6 CPU/source tests, actual H700 compile/link/CLI и non-H700 core/GX compile — PASS.** WGSL/cache ещё прежние до IG-05; graphics execution закрыт. [Результат и hooks](H700_INTEGRATION_PLAN.md#ig-04--pass-2026-11-16).
 
@@ -31,7 +33,7 @@
 
 ## Следующий шаг и согласование
 
-Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-05 после commit/push IG-04. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
+Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-06 после commit/push IG-05. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
 
 **В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
 

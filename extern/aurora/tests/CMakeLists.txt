@@ -95,6 +95,23 @@ target_link_libraries(os_time_tests PRIVATE fmt::fmt gtest gtest_main)
 gtest_discover_tests(os_time_tests)
 
 if (AURORA_ENABLE_GX)
+  # Actual GX source generator, CPU only: no Aurora/SDL/WebGPU initialization.
+  add_executable(h700_shader_generator_tests h700_shader_generator_test.cpp)
+  target_include_directories(h700_shader_generator_tests PRIVATE ../include ../lib)
+  target_compile_definitions(h700_shader_generator_tests PRIVATE AURORA TARGET_PC
+    $<$<BOOL:${AURORA_H700}>:AURORA_H700>
+    H700_SHADER_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../lib")
+  if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED OR CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(h700_shader_generator_tests PRIVATE
+      "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi,aurora::mtx,aurora::os>")
+  else ()
+    target_link_libraries(h700_shader_generator_tests PRIVATE
+      aurora::core aurora::gx aurora::vi aurora::mtx aurora::os)
+  endif ()
+  target_link_libraries(h700_shader_generator_tests PRIVATE gtest_main absl::btree absl::flat_hash_map)
+  aurora_copy_runtime_dlls(h700_shader_generator_tests)
+  gtest_discover_tests(h700_shader_generator_tests PROPERTIES TIMEOUT 10)
+
   # GX FIFO round-trip tests
   # Compile GX sources directly to avoid pulling in the full renderer/WebGPU runtime
   add_executable(gx_fifo_tests

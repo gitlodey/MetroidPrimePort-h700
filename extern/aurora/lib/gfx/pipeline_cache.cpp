@@ -741,8 +741,14 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
   return hash;
 }
 
+std::string detail::pipeline_cache_path(std::string_view cachePath) {
+  // Keep the old database intact: its shader/layout contract is not mixed-fetch.
+  constexpr auto name = g_mixedFetch ? "pipeline_cache.h700-mixed-v1.db" : "pipeline_cache.db";
+  return io::fs_path_to_string(io::fs_path_from_string(cachePath) / name);
+}
+
 static std::string pipeline_cache_path() {
-  return io::fs_path_to_string(io::fs_path_from_string(g_config.cachePath) / "pipeline_cache.db");
+  return detail::pipeline_cache_path(g_config.cachePath);
 }
 
 static void note_pipeline_cache_corrupt() {
@@ -836,7 +842,9 @@ static sqlite3* open_pipeline_cache_seed_db(const std::string& path) {
 }
 
 static void seed_pipeline_cache() {
-  if (g_config.pipelineCacheNoSeed || g_pipelineCacheBroken || g_pipelineCacheDb == nullptr ||
+  // Existing bundled/embedded seeds have no resource-profile identity. Never import
+  // their unprofiled records into the mixed database, even outside the driver.
+  if (g_mixedFetch || g_config.pipelineCacheNoSeed || g_pipelineCacheBroken || g_pipelineCacheDb == nullptr ||
       g_pipelineCacheUpsertStmt == nullptr) {
     return;
   }
