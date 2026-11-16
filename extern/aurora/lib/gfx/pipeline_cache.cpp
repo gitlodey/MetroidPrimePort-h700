@@ -3,6 +3,10 @@
 #include "clear.hpp"
 #include "fx_pipelines.hpp"
 #include "resources.hpp"
+#ifdef AURORA_H700
+#include "pipeline_wait.hpp"
+#include "../h700/presentation.hpp"
+#endif
 #include "hash.hpp"
 #include "../gx/pipeline.hpp"
 #include "../io.hpp"
@@ -88,6 +92,19 @@ static std::vector<std::thread> g_pipelineThreads;
 static std::atomic_bool g_pipelineThreadEnd = false;
 static std::condition_variable g_pipelineQueueCv;
 static std::condition_variable g_pipelineReadyCv;
+#ifdef AURORA_H700
+static detail::PipelineWorkControl g_pipelineWork;
+static std::atomic_size_t g_livePipelineThreads{0};
+static std::atomic_bool g_pipelineCacheWriterExited{true};
+static std::atomic_bool g_pipelineThreadsJoined{true};
+
+static void pipeline_wait_failed(const char* reason) {
+  if (auto state = h700::presentation_state()) state->fail(reason);
+  render_worker::notify_failure();
+  g_pipelineReadyCv.notify_all();
+  g_pipelineQueueCv.notify_all();
+}
+#endif
 static absl::flat_hash_map<PipelineRef, CachedPipeline> g_pipelines;
 static std::deque<PendingPipeline> g_pipelineQueue;
 static std::deque<PendingPipeline> g_backgroundPipelineQueue;
@@ -410,9 +427,15 @@ static void enqueue_pipeline_cache_write(PipelineCacheWrite write) {
   if (g_pipelineCacheBroken || g_pipelineCacheDb == nullptr) {
     return;
   }
+#ifdef AURORA_H700
+  if (!g_pipelineWork.background_open()) return;
+#endif
 
   {
     std::lock_guard lock{g_pipelineCacheWriterMutex};
+#ifdef AURORA_H700
+    if (g_pipelineCacheWriterStop || !g_pipelineWork.background_open()) return;
+#endif
     g_pipelineCacheWriteQueue.emplace_back(std::move(write));
   }
   g_pipelineCacheWriterCv.notify_one();
@@ -505,15 +528,19 @@ static wgpu::RenderPipeline create_pipeline_timed(PipelineRef hash, NewPipelineC
   return pipeline;
 }
 
-static void notify_pipeline_ready(bool queued) {
-  ++createdPipelines;
+static void notify_pipeline_ready(bool queued, bool succeeded = true) {
+  if (succeeded) ++createdPipelines;
   if (queued && --queuedPipelines == 0 && g_gpuCachePrunePending.exchange(false, std::memory_order_acq_rel)) {
     Log.info("pipeline cache: {} pipelines ready {} ms after startup", static_cast<uint32_t>(createdPipelines),
              std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                                    g_pipelineLoadStart)
                  .count());
     // Prune GPU cache entries after fully loading the pipeline cache.
+#ifdef AURORA_H700
+    if (succeeded && render_worker::wait_healthy()) webgpu::cache_prune();
+#else
     webgpu::cache_prune();
+#endif
   }
   g_pipelineReadyCv.notify_all();
 }
@@ -544,6 +571,9 @@ static void apply_pipeline_drop() {
 // for the writer thread. A GLOBAL use also pins the pipeline. Takes g_pipelineMutex for a pin, so
 // never call it with that held.
 static void record_pipeline_use(PipelineRef hash) {
+#ifdef AURORA_H700
+  if (!g_pipelineWork.background_open()) return;
+#endif
   if (g_pipelineCacheBroken || g_pipelineCacheDb == nullptr) {
     return;
   }
@@ -565,6 +595,9 @@ static void record_pipeline_use(PipelineRef hash) {
   }
   {
     std::lock_guard lock{g_pipelineCacheWriterMutex};
+#ifdef AURORA_H700
+    if (g_pipelineCacheWriterStop || !g_pipelineWork.background_open()) return;
+#endif
     g_pipelineUseQueue.emplace_back(context, hash);
   }
   g_pipelineCacheWriterCv.notify_one();
@@ -590,6 +623,12 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
                                       std::optional<uint32_t> firstFrameUsedOverride = std::nullopt,
                                       bool renderThread = false) {
   ZoneScoped;
+#ifdef AURORA_H700
+  // Normal/Blocking lookups are continuations of already accepted frames, not new roots.
+  if (g_pipelineThreadsJoined.load(std::memory_order_acquire)) return 0;
+  if (priority == PipelinePriority::Background ? !g_pipelineWork.background_open()
+                                               : !g_pipelineWork.continuation_open()) return 0;
+#endif
 
   // The pipeline drop and g_lastPipelineRef belong to the thread that records draws.
   if (!renderThread && g_dropPipelines.exchange(false, std::memory_order_acq_rel)) {
@@ -598,9 +637,12 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
   const PipelineRef hash = xxh3_hash(config, static_cast<HashType>(type));
   const bool blocking = priority == PipelinePriority::Blocking;
   const uint32_t frameNow = g_pipelineFrame.load(std::memory_order_relaxed);
+#ifndef AURORA_H700
   if (!blocking && !renderThread && hash == g_lastPipelineRef && g_lastPipelineStampFrame == frameNow) {
     return g_lastPipelineRef;
   }
+#endif
+  // H700 must observe every demand/promotion: an optional seed memo can be cancelled in Draining.
   if (!renderThread) {
     g_lastPipelineRef = hash;
     g_lastPipelineStampFrame = frameNow;
@@ -618,6 +660,10 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
   std::optional<PipelineCacheWrite> cacheWrite;
   {
     std::scoped_lock guard{g_pipelineMutex};
+#ifdef AURORA_H700
+    if (priority == PipelinePriority::Background ? !g_pipelineWork.background_open()
+                                                 : !g_pipelineWork.continuation_open()) return 0;
+#endif
     auto pipelineIt = g_pipelines.find(hash);
     if (pipelineIt != g_pipelines.end()) {
       pipelineReady = true;
@@ -719,7 +765,21 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
   if (blocking && !pipelineReady) {
     const auto waitStart = std::chrono::steady_clock::now();
     std::unique_lock lock{g_pipelineMutex};
+#ifdef AURORA_H700
+    const auto outcome = detail::wait_pipeline(lock, g_pipelineReadyCv, [=] {
+      if (const auto it = g_pipelines.find(hash); it != g_pipelines.end())
+        return it->second.pipeline ? detail::PipelineWaitOutcome::Ready : detail::PipelineWaitOutcome::Failed;
+      if (g_pipelineThreadEnd || !g_pendingPipelines.contains(hash)) return detail::PipelineWaitOutcome::Cancelled;
+      return detail::PipelineWaitOutcome::Pending;
+    });
+    if (outcome != detail::PipelineWaitOutcome::Ready) {
+      lock.unlock();
+      pipeline_wait_failed("Blocking pipeline lookup failed/cancelled before readiness");
+      return 0;
+    }
+#else
     g_pipelineReadyCv.wait(lock, [=] { return g_pipelines.contains(hash) || g_pipelineThreadEnd; });
+#endif
     // A blocking lookup (particles, water, UI) stalls the draw thread for the whole compile.
     const auto waitMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - waitStart).count();
@@ -738,6 +798,9 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
     enqueue_pipeline_cache_write(std::move(*cacheWrite));
   }
 
+#ifdef AURORA_H700
+  if (!render_worker::wait_healthy()) return 0;
+#endif
   return hash;
 }
 
@@ -1262,6 +1325,11 @@ static bool write_pipeline_cache_record(const PipelineCacheWrite& write) {
 static size_t prefetch_pipeline_context(uint64_t context, bool withShared, bool& ok);
 
 static void pipeline_cache_writer() {
+#ifdef AURORA_H700
+  struct ExitAck {
+    ~ExitAck() { g_pipelineCacheWriterExited.store(true, std::memory_order_release); }
+  } exitAck;
+#endif
 #ifdef TRACY_ENABLE
   tracy::SetThreadName("Pipeline cache writer thread");
 #endif
@@ -1273,10 +1341,24 @@ static void pipeline_cache_writer() {
     bool stopping = false;
     {
       std::unique_lock lock{g_pipelineCacheWriterMutex};
+#ifdef AURORA_H700
+      g_pipelineCacheWriterCv.wait_for(lock, std::chrono::milliseconds{1}, [] {
+        return g_pipelineCacheWriterStop || !g_pipelineCacheWriteQueue.empty() || !g_pipelineUseQueue.empty() ||
+               !g_pipelinePrefetchQueue.empty();
+      });
+      // Optional persistence/prefetch is root work; it must not prolong normal drain.
+      if (!g_pipelineWork.background_open()) {
+        g_pipelineCacheWriteQueue.clear();
+        g_pipelineUseQueue.clear();
+        g_pipelinePrefetchQueue.clear();
+        return;
+      }
+#else
       g_pipelineCacheWriterCv.wait(lock, [] {
         return g_pipelineCacheWriterStop || !g_pipelineCacheWriteQueue.empty() || !g_pipelineUseQueue.empty() ||
                !g_pipelinePrefetchQueue.empty();
       });
+#endif
       stopping = g_pipelineCacheWriterStop;
       if (stopping && g_pipelineCacheWriteQueue.empty() && g_pipelineUseQueue.empty()) {
         return;
@@ -1295,12 +1377,18 @@ static void pipeline_cache_writer() {
       } else {
         // Rows before uses, so a prefetch's join already sees a new pipeline's row.
         for (const auto& write : batch) {
+#ifdef AURORA_H700
+          if (!g_pipelineWork.background_open()) break;
+#endif
           if (!write_pipeline_cache_record(write)) {
             writeFailed = true;
             break;
           }
         }
         for (size_t i = 0; !writeFailed && i < uses.size(); ++i) {
+#ifdef AURORA_H700
+          if (!g_pipelineWork.background_open()) break;
+#endif
           writeFailed = !write_pipeline_use_record(uses[i].first, uses[i].second);
         }
 
@@ -1312,6 +1400,9 @@ static void pipeline_cache_writer() {
 
     // Prefetches only read and queue Background builds; nothing waits on them.
     for (size_t i = 0; !writeFailed && !stopping && i < prefetches.size(); ++i) {
+#ifdef AURORA_H700
+      if (!g_pipelineWork.background_open()) break;
+#endif
       bool ok = true;
       const size_t queued = prefetch_pipeline_context(prefetches[i], i == 0, ok);
       writeFailed = !ok;
@@ -1327,6 +1418,12 @@ static void pipeline_cache_writer() {
 }
 
 static void pipeline_worker() {
+#ifdef AURORA_H700
+  struct ExitAck {
+    bool threaded = g_hasPipelineThread;
+    ~ExitAck() { if (threaded) g_livePipelineThreads.fetch_sub(1, std::memory_order_acq_rel); }
+  } exitAck;
+#endif
 #ifdef TRACY_ENABLE
   tracy::SetThreadName("Pipeline compilation thread");
 #endif
@@ -1337,21 +1434,46 @@ static void pipeline_worker() {
       std::unique_lock lock{g_pipelineMutex};
       if (g_hasPipelineThread) {
         // Several workers share the queues, so check them again under the lock every time.
+#ifdef AURORA_H700
+        // Timed terminal/root observation also covers a callback that only sets IG-07 flags.
+        g_pipelineQueueCv.wait_for(lock, std::chrono::milliseconds{1}, [] {
+          return !g_pipelineQueue.empty() || (!g_backgroundPipelinesPaused && !g_backgroundPipelineQueue.empty()) ||
+                 g_pipelineThreadEnd;
+        });
+#else
         g_pipelineQueueCv.wait(lock, [] {
           return !g_pipelineQueue.empty() || (!g_backgroundPipelinesPaused && !g_backgroundPipelineQueue.empty()) ||
                  g_pipelineThreadEnd;
         });
+#endif
       } else if (g_pipelineQueue.empty() && (g_backgroundPipelinesPaused || g_backgroundPipelineQueue.empty())) {
         return;
       }
       if (g_pipelineThreadEnd) {
         break;
       }
+#ifdef AURORA_H700
+      if (!render_worker::wait_healthy()) break;
+      if (!g_pipelineWork.background_open()) {
+        for (const auto& item : g_backgroundPipelineQueue) {
+          g_pendingPipelines.erase(item.hash);
+          --queuedPipelines;
+        }
+        g_backgroundPipelineQueue.clear();
+        g_pipelineReadyCv.notify_all();
+      }
+      if (g_pipelineQueue.empty() && (g_backgroundPipelinesPaused || g_backgroundPipelineQueue.empty())) continue;
+      g_pipelineWork.started();
+#endif
       auto& source = !g_pipelineQueue.empty() ? g_pipelineQueue : g_backgroundPipelineQueue;
       pending = std::move(source.front());
       source.pop_front();
     }
     auto result = create_pipeline_timed(pending.hash, std::move(pending.create));
+#ifdef AURORA_H700
+    const bool succeeded = result && render_worker::wait_healthy();
+    if (!succeeded) pipeline_wait_failed("Independent compiler returned a failed pipeline");
+#endif
     {
       std::lock_guard lock{g_pipelineMutex};
       g_pipelines.try_emplace(pending.hash, CachedPipeline{
@@ -1363,7 +1485,15 @@ static void pipeline_worker() {
     if (!g_hasPipelineThread) {
       ++g_pipelinesPerFrame;
     }
+#ifdef AURORA_H700
+    notify_pipeline_ready(true, succeeded);
+    // Keep captures and active ownership through the actual driver call and cache-prune work.
+    pending.create = {};
+    g_pipelineWork.returned();
+    g_pipelineReadyCv.notify_all();
+#else
     notify_pipeline_ready(true);
+#endif
   }
 }
 
@@ -1413,6 +1543,9 @@ struct CachedRowStats {
 template <typename PipelineConfig, typename CreateFn>
 static void queue_cached_config(ShaderType type, const PipelineConfig& config, const CreateFn& create,
                                 uint32_t firstFrameUsed, const CachedRowOptions& opts, CachedRowStats& stats) {
+#ifdef AURORA_H700
+  if (!g_pipelineWork.background_open()) return;
+#endif
   const PipelineRef hash = xxh3_hash(config, static_cast<HashType>(type));
   {
     std::scoped_lock guard{g_pipelineMutex};
@@ -1552,6 +1685,9 @@ static void queue_cached_row_any(int type, uint32_t configVersion, const uint8_t
 static bool load_rows(sqlite3_stmt* stmt, const CachedRowOptions& opts, CachedRowStats& stats) {
   int ret;
   while ((ret = sqlite3_step(stmt)) == SQLITE_ROW) {
+#ifdef AURORA_H700
+    if (!g_pipelineWork.background_open()) { ret = SQLITE_DONE; break; }
+#endif
     const int type = sqlite3_column_int(stmt, 0);
     const auto configVersion = static_cast<uint32_t>(sqlite3_column_int64(stmt, 1));
     const auto* configBlob = static_cast<const uint8_t*>(sqlite3_column_blob(stmt, 2));
@@ -1704,6 +1840,9 @@ static void start_pipeline_cache_writer() {
   }
 
   g_pipelineCacheWriterStop = false;
+#ifdef AURORA_H700
+  g_pipelineCacheWriterExited.store(false, std::memory_order_release);
+#endif
   g_pipelineCacheWriterThread = std::thread(pipeline_cache_writer);
 }
 
@@ -1714,6 +1853,12 @@ static void stop_pipeline_cache_writer() {
       g_pipelineCacheWriterStop = true;
     }
     g_pipelineCacheWriterCv.notify_one();
+#ifdef AURORA_H700
+    while (!g_pipelineCacheWriterExited.load(std::memory_order_acquire)) {
+      (void)render_worker::progress_wait();
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+#endif
     g_pipelineCacheWriterThread.join();
   } else {
     g_pipelineCacheWriterStop = false;
@@ -1738,13 +1883,18 @@ PipelineRef find_pipeline(ShaderType type, const gx::PipelineConfig& config, New
 }
 
 bool touch_pipeline(PipelineRef ref) {
+#ifdef AURORA_H700
+  if (g_pipelineThreadsJoined.load(std::memory_order_acquire) || !g_pipelineWork.continuation_open()) return false;
+#endif
   if (g_dropPipelines.exchange(false, std::memory_order_acq_rel)) {
     apply_pipeline_drop();
   }
   const uint32_t frameNow = g_pipelineFrame.load(std::memory_order_relaxed);
+#ifndef AURORA_H700
   if (ref == g_lastPipelineRef && g_lastPipelineStampFrame == frameNow) {
     return true;
   }
+#endif
   {
     std::scoped_lock guard{g_pipelineMutex};
     if (const auto it = g_pipelines.find(ref); it != g_pipelines.end()) {
@@ -1790,6 +1940,14 @@ PipelineRef find_pipeline(ShaderType type, const rmlui::PipelineConfig& config, 
 #endif
 
 void initialize_pipeline_cache() {
+#ifdef AURORA_H700
+  if (!g_pipelineThreadsJoined.load(std::memory_order_acquire) || g_pipelineWork.active() != 0) {
+    pipeline_wait_failed("Pipeline cache reinitialization before compiler/writer joins");
+    return;
+  }
+  g_pipelineWork.reset();
+  g_pipelineThreadsJoined.store(false, std::memory_order_release);
+#endif
   g_pipelineCacheBroken = false;
   g_compileCount.store(0, std::memory_order_relaxed);
   g_compileTotalMs.store(0, std::memory_order_relaxed);
@@ -1813,6 +1971,9 @@ void initialize_pipeline_cache() {
     g_hasPipelineThread = true;
     const size_t threads = pipeline_thread_count();
     for (size_t i = 0; i < threads; ++i) {
+#ifdef AURORA_H700
+      g_livePipelineThreads.fetch_add(1, std::memory_order_acq_rel);
+#endif
       g_pipelineThreads.emplace_back(pipeline_worker);
     }
     Log.info("pipeline cache: {} compile thread(s)", threads);
@@ -1828,11 +1989,64 @@ void initialize_pipeline_cache() {
   }
 }
 
+#ifdef AURORA_H700
+void begin_pipeline_cache_draining() {
+  g_pipelineWork.begin_draining();
+  {
+    std::lock_guard lock{g_pipelineMutex};
+    for (const auto& pending : g_backgroundPipelineQueue) {
+      g_pendingPipelines.erase(pending.hash);
+      --queuedPipelines;
+    }
+    g_backgroundPipelineQueue.clear();
+  }
+  g_pipelineQueueCv.notify_all();
+  g_pipelineReadyCv.notify_all();
+  g_pipelineCacheWriterCv.notify_all();
+}
+
+bool drain_pipeline_cache() {
+  begin_pipeline_cache_draining();
+  std::unique_lock lock{g_pipelineMutex};
+  g_pipelineWork.close_continuations(); // caller has finished accepted FIFO/render producers
+  g_pipelineQueueCv.notify_all();
+  const auto outcome = detail::wait_pipeline(lock, g_pipelineReadyCv, [] {
+    if (g_pipelineQueue.empty() && g_pipelineWork.active() == 0) return detail::PipelineWaitOutcome::Ready;
+    if (g_pipelineThreadEnd) return detail::PipelineWaitOutcome::Cancelled;
+    return detail::PipelineWaitOutcome::Pending;
+  });
+  lock.unlock();
+  if (outcome != detail::PipelineWaitOutcome::Ready) {
+    pipeline_wait_failed("Pipeline drain failed; active compiler ownership retained until actual return/join");
+    return false;
+  }
+  return true;
+}
+
+size_t active_pipeline_compiles() noexcept { return g_pipelineWork.active(); }
+
+bool pipeline_cache_threads_joined() noexcept {
+  return g_pipelineThreadsJoined.load(std::memory_order_acquire);
+}
+#endif
+
 void shutdown_pipeline_cache() {
+#ifdef AURORA_H700
+  // This legacy void entry point cannot permit its caller to release device resources early.
+  // IG-11 can observe a failed drain separately, but still must settle actual thread ownership.
+  (void)drain_pipeline_cache();
+#endif
   if (g_hasPipelineThread) {
     g_pipelineThreadEnd = true;
     g_pipelineQueueCv.notify_all();
     g_pipelineReadyCv.notify_all();
+#ifdef AURORA_H700
+    while (g_livePipelineThreads.load(std::memory_order_acquire) != 0) {
+      // Failure wakes waiters, not a driver call. Never clear holders/detach to escape this wait.
+      (void)render_worker::progress_wait();
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+#endif
     for (auto& thread : g_pipelineThreads) {
       thread.join();
     }
@@ -1841,6 +2055,9 @@ void shutdown_pipeline_cache() {
   g_hasPipelineThread = false;
 
   stop_pipeline_cache_writer();
+#ifdef AURORA_H700
+  g_pipelineThreadsJoined.store(true, std::memory_order_release);
+#endif
   pipeline_cache_abort();
   g_pipelineCacheBroken = false;
   g_pipelinesPerFrame = 0;
@@ -1954,6 +2171,10 @@ void note_skipped_draw() { g_skippedDraws.fetch_add(1, std::memory_order_relaxed
 uint64_t skipped_draw_count() { return g_skippedDraws.load(std::memory_order_relaxed); }
 
 bool get_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline) {
+#ifdef AURORA_H700
+  pipeline = {};
+  if (g_pipelineThreadsJoined.load(std::memory_order_acquire) || !g_pipelineWork.continuation_open()) return false;
+#endif
   std::lock_guard guard{g_pipelineMutex};
   const auto it = g_pipelines.find(ref);
   // A failed build stays cached as a null pipeline so it isn't retried every draw; report it as
@@ -1997,12 +2218,18 @@ void aurora_pipeline_prefetch(uint64_t context) {
   if (!aurora::g_config.pipelineCacheLazy || g_pipelineCacheBroken || g_pipelineCacheDb == nullptr || !g_hasPipelineThread) {
     return;
   }
+#ifdef AURORA_H700
+  if (!g_pipelineWork.background_open()) return;
+#endif
   const uint32_t frame = g_pipelineFrame.load(std::memory_order_relaxed);
   {
     std::lock_guard lock{g_pipelineCacheWriterMutex};
     if (g_pipelineCacheWriterStop) {
       return;
     }
+#ifdef AURORA_H700
+    if (!g_pipelineWork.background_open()) return;
+#endif
     const auto [it, inserted] = g_prefetchFrames.try_emplace(context, frame);
     if (!inserted) {
       if (frame - it->second < PrefetchRepeatFrames) {

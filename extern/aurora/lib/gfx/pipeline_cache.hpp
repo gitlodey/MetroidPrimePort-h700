@@ -51,6 +51,14 @@ using NewPipelineCallback = std::function<wgpu::RenderPipeline()>;
 
 void initialize_pipeline_cache();
 void shutdown_pipeline_cache();
+#ifdef AURORA_H700
+// IG-11: close roots first, but keep accepted FIFO/render continuations open until their
+// producers finish. Only then call drain (closes compiler continuations). False is not quiescence.
+void begin_pipeline_cache_draining();
+bool drain_pipeline_cache();
+size_t active_pipeline_compiles() noexcept;
+bool pipeline_cache_threads_joined() noexcept; // actual joins, not a cancelled waiter/empty queue
+#endif
 void begin_pipeline_frame();
 // Forgets every built and queued pipeline; the next lookup rebuilds them (shader reload).
 void drop_pipelines();
