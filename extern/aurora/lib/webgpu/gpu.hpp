@@ -73,6 +73,12 @@ extern bool g_dualSourceBlendingSupported;
 
 bool initialize(AuroraBackend backend, bool allowCpu);
 void shutdown();
+// H700 readiness is independent of a WGPU window surface.
+bool presentation_ready() noexcept;
+#ifdef AURORA_H700
+// After external quiescence/holder retirement only. Final context proof precedes exports.
+bool release_h700_device();
+#endif
 void release_surface() noexcept;
 bool refresh_surface(bool recreate = true);
 // True when the live surface is bound to a native window that no longer matches

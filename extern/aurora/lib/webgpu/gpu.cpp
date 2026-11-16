@@ -29,6 +29,9 @@
 #include "../internal.hpp"
 #include "../window.hpp"
 #include "gpu_prof.hpp"
+#ifdef AURORA_H700
+#include "../h700/presentation.hpp"
+#endif
 
 #ifdef WEBGPU_DAWN
 #include "../dawn/TracyPlatform.hpp"
@@ -960,7 +963,40 @@ bool surface_window_changed() {
 
 static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu);
 
+#ifdef AURORA_H700
+static void release_h700_init_holders() {
+  // Bootstrap has not entered gfx::initialize or admitted jobs/maps. EFB publication
+  // runs inline before the render worker starts, so no queued targets remain to drain.
+  g_initialized = false;
+  gpu_prof::shutdown();
+  g_CopyBindGroup = {};
+  g_CopyPipeline = {};
+  g_CopyPremultipliedAlphaPipeline = {};
+  g_CopyBindGroupLayout = {};
+  g_ResamplePipeline = {};
+  g_ResampleBindGroupLayout = {};
+  g_ResampleUniformBuffer = {};
+  g_resampledFrameBuffer = {};
+  g_workerTargets = {};
+  g_frameBuffer = {};
+  g_frameBufferResolved = {};
+  release_scene_hdr_target();
+  g_depthBuffer = {};
+}
+#endif
+
 bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+#ifdef AURORA_H700
+  // No backend/CPU retry: even a failed import may already have allocated a native alias.
+  if (auroraBackend != BACKEND_OPENGLES || allowCpu || !h700::begin_dawn()) return false;
+  if (initialize_once(auroraBackend, false)) return true;
+  if (auto state = h700::presentation_state()) state->fail("H700 device bootstrap failed");
+  // Release every bootstrap holder before Destroy/final release, without invoking
+  // whole-gfx shutdown before gfx initialization. IG-11 owns normal runtime quiescence.
+  release_h700_init_holders();
+  if (!release_h700_device()) Log.error("H700 partial init release incomplete; exports/window retained");
+  return false;
+#else
   if (initialize_once(auroraBackend, allowCpu)) {
     return true;
   }
@@ -983,6 +1019,7 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
     return initialize(auroraBackend, allowCpu);
   }
   return false;
+#endif
 }
 
 static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
@@ -1030,9 +1067,11 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
   g_dawnInstance->EnableBackendValidation(backend != WGPUBackendType::D3D12);
 #endif
 
+#ifndef AURORA_H700
   if (!create_surface()) {
     return false;
   }
+#endif
   {
     // MP_GPU_POWER=low asks for the integrated GPU on a machine that also has a discrete one.
     const char* power = std::getenv("MP_GPU_POWER");
@@ -1052,18 +1091,42 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
       Log.info("MP_GL_VERSION=3.3: forcing an OpenGL 3.3 core context");
     }
 #endif
+#ifdef AURORA_H700
+    dawn::native::opengl::RequestAdapterOptionsGetGLProc externalEGL;
+    externalEGL.getProc = h700::resolve;
+    externalEGL.display = h700::external_display();
+#endif
     const wgpu::RequestAdapterOptions options{
-#ifdef WEBGPU_DAWN
+#ifdef AURORA_H700
+        .nextInChain = &externalEGL,
+#elif defined(WEBGPU_DAWN)
         .nextInChain = forceGL33 ? &adapterTogglesDescriptor : nullptr,
 #endif
         .featureLevel = wgpu::FeatureLevel::Compatibility,
         .powerPreference = lowPower ? wgpu::PowerPreference::LowPower : wgpu::PowerPreference::HighPerformance,
         .backendType = backend,
+#ifndef AURORA_H700
         .compatibleSurface = g_surface,
+#endif
     };
     Log.info("Requesting adapter\n  Feature level: {}\n  Power preference: {}\n  Backend: {}\n  Compatible surface: {}",
              magic_enum::enum_name(options.featureLevel), magic_enum::enum_name(options.powerPreference),
              magic_enum::enum_name(options.backendType), static_cast<bool>(options.compatibleSurface));
+#ifdef AURORA_H700
+    struct AdapterResult { wgpu::Adapter adapter; bool success = false; };
+    auto result = std::make_shared<AdapterResult>();
+    const auto future = g_instance.RequestAdapter(
+        &options, wgpu::CallbackMode::WaitAnyOnly,
+        [result](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
+          result->success = status == wgpu::RequestAdapterStatus::Success;
+          result->adapter = std::move(adapter);
+          if (!result->success) Log.error("H700 adapter request failed: {}", message);
+        });
+    if (g_instance.WaitAny(future, 5000000000) != wgpu::WaitStatus::Success || !result->success || !result->adapter) {
+      return false;
+    }
+    g_adapter = std::move(result->adapter);
+#else
     bool requestAdapterCallbackCompleted = false;
     wgpu::RequestAdapterStatus requestAdapterStatus = wgpu::RequestAdapterStatus::CallbackCancelled;
     std::string requestAdapterMessage;
@@ -1099,8 +1162,22 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
       }
       return false;
     }
+#endif
   }
+#ifdef AURORA_H700
+  const auto identifiesMali = [](wgpu::StringView value) {
+    return !value.IsUndefined() && std::string_view(value).find("Mali") != std::string_view::npos;
+  };
+  if (g_adapter.GetInfo(&g_adapterInfo) != wgpu::Status::Success ||
+      g_adapterInfo.backendType != wgpu::BackendType::OpenGLES ||
+      g_adapterInfo.adapterType == wgpu::AdapterType::CPU ||
+      (!identifiesMali(g_adapterInfo.device) && !identifiesMali(g_adapterInfo.description))) {
+    Log.error("H700 requires a hardware OpenGLES Compatibility adapter");
+    return false;
+  }
+#else
   g_adapter.GetInfo(&g_adapterInfo);
+#endif
   auto adapterName = g_adapterInfo.device;
   if (adapterName.IsUndefined()) {
     adapterName = wgpu::StringView("Unknown");
@@ -1452,6 +1529,32 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
         .requiredFeatures = requiredFeatures.data(),
         .requiredLimits = &requiredLimits,
     });
+#ifdef AURORA_H700
+    auto state = h700::presentation_state();
+    deviceDescriptor.SetUncapturedErrorCallback(
+        [](const wgpu::Device&, wgpu::ErrorType type, wgpu::StringView message, h700::PresentationState* state) {
+          state->fail(fmt::format("WebGPU error {}: {}", underlying(type), message));
+        }, state.get());
+    deviceDescriptor.SetDeviceLostCallback(
+        wgpu::CallbackMode::AllowSpontaneous,
+        [state](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
+          if (reason == wgpu::DeviceLostReason::Destroyed && state->snapshot().phase != h700::PresentationPhase::Running) return;
+          state->fail(fmt::format("H700 device lost: {}", message));
+        });
+    struct DeviceResult { wgpu::Device device; bool success = false; };
+    auto result = std::make_shared<DeviceResult>();
+    const auto future = g_adapter.RequestDevice(
+        &deviceDescriptor, wgpu::CallbackMode::WaitAnyOnly,
+        [result](wgpu::RequestDeviceStatus status, wgpu::Device device, wgpu::StringView message) {
+          result->success = status == wgpu::RequestDeviceStatus::Success;
+          result->device = std::move(device);
+          if (!result->success) Log.error("H700 device request failed: {}", message);
+        });
+    if (g_instance.WaitAny(future, 5000000000) != wgpu::WaitStatus::Success || !result->success || !result->device) {
+      return false;
+    }
+    g_device = std::move(result->device);
+#else
     deviceDescriptor.SetUncapturedErrorCallback(
         [](const wgpu::Device& device, wgpu::ErrorType type, wgpu::StringView message) {
           if (g_initialized) {
@@ -1486,10 +1589,16 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     if (!g_device) {
       return false;
     }
+#endif
     g_device.SetLoggingCallback(wgpu_log);
   }
   g_queue = g_device.GetQueue();
 
+#ifdef AURORA_H700
+  if (!h700::import_slots(g_device)) return false;
+  const auto surfaceFormat = h700::NativeFormat;
+  const auto presentMode = wgpu::PresentMode::Fifo; // metadata only; SDL/EGL owns presentation
+#else
   const wgpu::Status status = g_surface.GetCapabilities(g_adapter, &g_surfaceCapabilities);
   if (status != wgpu::Status::Success) {
     Log.error("Failed to get surface capabilities: {}", magic_enum::enum_name(status));
@@ -1518,6 +1627,7 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
   Log.info("Surface capabilities\n  Formats:{}\n  Present modes:{}", surfaceFormats, surfacePresentModes);
   Log.info("Using surface format {}, present mode {}", magic_enum::enum_name(surfaceFormat),
            magic_enum::enum_name(presentMode));
+#endif
   const auto size = window::get_window_size();
   g_graphicsConfig = GraphicsConfig{
       .surfaceConfiguration =
@@ -1536,9 +1646,39 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
   create_resample_pipeline();
   gpu_prof::initialize();
   resize_swapchain(size.fb_width, size.fb_height, size.native_fb_width, size.native_fb_height, true);
+#ifdef AURORA_H700
+  // A callback during pipeline/profiler/EFB creation can fail the generation even
+  // when the calls returned handles (or resize skipped because imports became unready).
+  const auto state = h700::presentation_state();
+  if (!state || state->snapshot().phase != h700::PresentationPhase::Running || !h700::imports_ready()) return false;
+#endif
   g_initialized = true;
   return true;
 }
+
+bool presentation_ready() noexcept {
+#ifdef AURORA_H700
+  return g_initialized.load(std::memory_order_acquire) && h700::imports_ready();
+#else
+  return bool(g_surface);
+#endif
+}
+
+#ifdef AURORA_H700
+bool release_h700_device() {
+  if (!h700::release_dawn_imports()) return false;
+  if (!h700::unbind_current_dawn()) return false;
+  g_queue = {};
+  if (g_device) g_device.Destroy();
+  g_device = {};
+  g_adapterInfo = {};
+  g_adapter = {};
+  g_instance = {};
+  // Destroy/lifecycle processing may have made the context current again on this thread.
+  if (!h700::unbind_current_dawn()) return false;
+  return h700::acknowledge_dawn_release();
+}
+#endif
 
 void shutdown() {
   g_initialized = false;
@@ -1560,9 +1700,13 @@ void shutdown() {
   g_queue = {};
   g_surface = {};
   window::set_surface_held(false);
+#ifdef AURORA_H700
+  if (!release_h700_device()) Log.error("H700 Dawn release incomplete; native exports must remain alive");
+#else
   g_device = {};
   g_adapter = {};
   g_instance = {};
+#endif
   cache_shutdown();
 }
 
@@ -1584,7 +1728,12 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
                                       bool force) {
   using clock = std::chrono::steady_clock;
   g_resizeCachesMs = g_resizeTargetsMs = 0.0;
+#ifdef AURORA_H700
+  if (!h700::imports_ready() || nativeWidth != h700::NativeWidth || nativeHeight != h700::NativeHeight) return;
+  if (!g_device || width == 0 || height == 0) {
+#else
   if (!g_surface || !g_device || width == 0 || height == 0 || nativeHeight == 0 || nativeWidth == 0) {
+#endif
     return;
   }
   const bool surfaceChanged = g_graphicsConfig.surfaceConfiguration.width != nativeWidth ||
@@ -1613,10 +1762,12 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   if (force || surfaceChanged) {
     g_graphicsConfig.surfaceConfiguration.width = nativeWidth;
     g_graphicsConfig.surfaceConfiguration.height = nativeHeight;
+#ifndef AURORA_H700
     auto surfaceConfiguration = g_graphicsConfig.surfaceConfiguration;
     surfaceConfiguration.device = g_device;
     window::SurfaceLock surfaceLock;
     g_surface.Configure(&surfaceConfiguration);
+#endif
   }
   g_frameBuffer = create_render_texture(width, height, true);
   g_frameBufferResolved = create_render_texture(width, height, false);
@@ -1629,6 +1780,10 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
 }
 
 bool refresh_surface(bool recreate) {
+#ifdef AURORA_H700
+  // Native SDL surfaces/storage are fixed for this generation. EFB resize is independent.
+  return presentation_ready() && window::is_presentable();
+#else
   gfx::gpu_synchronize();
   if (!g_instance || !g_device || window::is_surface_changing()) {
     return false;
@@ -1658,6 +1813,7 @@ bool refresh_surface(bool recreate) {
     resize_swapchain_internal(width, height, nativeWidth, nativeHeight, true);
   }
   return true;
+#endif
 }
 
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight, bool force) {
@@ -1722,7 +1878,9 @@ void set_quality(uint32_t msaaSamples, uint16_t anisotropy) {
 
 void aurora_enable_vsync(const bool enabled) {
   aurora::webgpu::g_vsyncEnabled.store(enabled, std::memory_order_release);
+#ifndef AURORA_H700
   aurora::webgpu::g_graphicsConfig.surfaceConfiguration.presentMode =
       aurora::webgpu::select_present_mode(aurora::webgpu::g_surfaceCapabilities);
+#endif
   aurora::window::push_custom_event(aurora::window::CustomEvent::RefreshSurface);
 }

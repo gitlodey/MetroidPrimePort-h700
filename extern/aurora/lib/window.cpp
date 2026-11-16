@@ -3,6 +3,9 @@
 #ifdef AURORA_ENABLE_GX
 #include "imgui.hpp"
 #include "webgpu/gpu.hpp"
+#ifdef AURORA_H700
+#include "h700/presentation.hpp"
+#endif
 #endif
 #include "input.hpp"
 #include "internal.hpp"
@@ -356,6 +359,33 @@ const AuroraEvent* poll_events() {
 }
 
 bool create_window(AuroraBackend backend) {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (backend != BACKEND_OPENGLES || g_window != nullptr) {
+    Log.error("H700 requires a single hardware OpenGLES window");
+    return false;
+  }
+  if (!SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES) ||
+      !SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3) ||
+      !SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0) || !SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1)) {
+    Log.error("H700 GL attributes: {}", SDL_GetError());
+    return false;
+  }
+  const auto props = SDL_CreateProperties();
+  if (!props) return false;
+  const bool ok = SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, g_config.appName) &&
+                  SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, h700::NativeWidth) &&
+                  SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, h700::NativeHeight) &&
+                  SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN, true) &&
+                  SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_EXTERNAL_GRAPHICS_CONTEXT_BOOLEAN, true);
+  if (ok) g_window = SDL_CreateWindowWithProperties(props);
+  SDL_DestroyProperties(props);
+  if (!g_window) return false;
+  if (!h700::initialize_presenter(g_window)) {
+    destroy_window();
+    return false;
+  }
+  return true;
+#else
   SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #if TARGET_OS_IOS || TARGET_OS_TV
   flags |= SDL_WINDOW_FULLSCREEN;
@@ -418,6 +448,7 @@ bool create_window(AuroraBackend backend) {
   SDL_SetWindowMinimumSize(g_window, 640, 480);
   set_window_icon();
   return true;
+#endif
 }
 
 bool create_renderer() {
@@ -437,7 +468,19 @@ bool create_renderer() {
   return true;
 }
 
+bool can_destroy_window() {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  return h700::prepare_window_destruction();
+#else
+  return true;
+#endif
+}
+
 void destroy_window() {
+  if (!can_destroy_window()) {
+    Log.error("Window retained: H700 graphics generation has not been released");
+    return;
+  }
   if (g_renderer != nullptr) {
     SDL_DestroyRenderer(g_renderer);
     g_renderer = nullptr;
@@ -455,6 +498,9 @@ void show_window() {
 }
 
 bool initialize() {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (!h700::prepare_sdl()) return false;
+#endif
   /* We don't want to initialize anything input related here, otherwise the add events will get lost to the void */
   TRY(SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight"), "Error setting {}: {}", SDL_HINT_ORIENTATIONS,
       SDL_GetError());
@@ -490,9 +536,16 @@ bool initialize_event_watch() {
 
 void shutdown() {
   SDL_RemoveEventWatch(lifecycle_event_watch, nullptr);
+  if (!can_destroy_window()) {
+    Log.error("SDL retained: H700 teardown incomplete");
+    return;
+  }
   destroy_window();
   TRY_WARN(SDL_EnableScreenSaver(), "Error enabling screensaver: {}", SDL_GetError());
   SDL_Quit();
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (!h700::finish_shutdown()) Log.error("H700 final resolver release failed");
+#endif
 }
 
 namespace {
@@ -602,6 +655,9 @@ bool is_paused() noexcept {
 }
 
 bool is_presentable() noexcept {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (!h700::presenter_ready()) return false;
+#endif
   return g_window != nullptr && !g_backgrounded.load(std::memory_order_acquire) &&
          g_surfaceReady.load(std::memory_order_acquire) && !g_surfaceChanging.load(std::memory_order_acquire);
 }

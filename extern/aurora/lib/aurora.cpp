@@ -19,6 +19,9 @@
 #include "io.hpp"
 #include "webgpu/gpu.hpp"
 #include "webgpu/gpu_prof.hpp"
+#ifdef AURORA_H700
+#include "h700/presentation.hpp"
+#endif
 #include <webgpu/webgpu_cpp.h>
 #endif
 
@@ -192,7 +195,9 @@ void set_present_viewport(const wgpu::RenderPassEncoder& pass, const gfx::Viewpo
 }
 #endif
 
-#ifdef AURORA_ENABLE_GX
+#if defined(AURORA_ENABLE_GX) && defined(AURORA_H700)
+constexpr std::array PreferredBackendOrder{BACKEND_OPENGLES};
+#elif defined(AURORA_ENABLE_GX)
 constexpr std::array PreferredBackendOrder{
 #ifdef ENABLE_BACKEND_WEBGPU
     BACKEND_WEBGPU,
@@ -257,13 +262,36 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   if (g_config.maxTextureAnisotropy == 0) {
     g_config.maxTextureAnisotropy = 16;
   }
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (!window::initialize()) {
+    window::shutdown();
+    return {.backend = BACKEND_AUTO};
+  }
+  g_sdlCustomEventsStart = SDL_RegisterEvents(2);
+  if (g_sdlCustomEventsStart == static_cast<Uint32>(-1) || !window::initialize_event_watch()) {
+    window::shutdown();
+    return {.backend = BACKEND_AUTO};
+  }
+#else
   AURORA_ASSERT(window::initialize(), "Error initializing window");
 
   g_sdlCustomEventsStart = SDL_RegisterEvents(2);
   AURORA_ASSERT(g_sdlCustomEventsStart, "Failed to allocate user events: {}", SDL_GetError());
   AURORA_ASSERT(window::initialize_event_watch(), "Error initializing SDL event watch");
+#endif
 
 #ifdef AURORA_ENABLE_GX
+#ifdef AURORA_H700
+  const AuroraBackend selectedBackend = BACKEND_OPENGLES;
+  const bool requestedBackend = config.desiredBackend == BACKEND_AUTO || config.desiredBackend == BACKEND_OPENGLES;
+  if (!requestedBackend || config.allowCpuAdapter || !window::create_window(BACKEND_OPENGLES) ||
+      !webgpu::initialize(BACKEND_OPENGLES, false)) {
+    // No fallback/retry, nor destruction of a display still borrowed by a live Dawn group.
+    window::shutdown();
+    Log.error("H700 initialization failed; graphics runtime remains unavailable");
+    return {.backend = BACKEND_AUTO};
+  }
+#else
   /* Attempt to create a window using the calling application's desired backend */
   AuroraBackend selectedBackend = config.desiredBackend;
   bool windowCreated = false;
@@ -309,6 +337,7 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
     std::exit(1);
   }
 
+#endif
   // Initialize SDL_Renderer for ImGui when we can't use a Dawn backend
   if (webgpu::g_backendType == wgpu::BackendType::Null) {
     AURORA_ASSERT(window::create_renderer(), "Failed to initialize SDL renderer: {}", SDL_GetError());
@@ -388,6 +417,9 @@ const AuroraEvent* update() noexcept {
 // Returns false (after dropping the surface where needed) when no frame can be drawn
 // because the surface is changing or gone.
 static bool service_surface(const char* caller) noexcept {
+#ifdef AURORA_H700
+  return webgpu::presentation_ready() && window::is_presentable();
+#else
   // Android keeps the native window across surfaceChanged. Releasing the surface here
   // would rebuild it on that same window while the old swapchain is still connected,
   // which fails with VK_ERROR_NATIVE_WINDOW_IN_USE_KHR (a lost device). Skip the frame.
@@ -405,6 +437,7 @@ static bool service_surface(const char* caller) noexcept {
     return false;
   }
   return true;
+#endif
 }
 #endif
 
@@ -431,12 +464,18 @@ bool begin_frame() noexcept {
       }
       return false;
     }
+#ifdef AURORA_H700
+    // Admission/composition arrives in IG-06. Never route an imported output through
+    // desktop GetCurrentTexture/Present, or admit a frame before native ownership exists.
+    return false;
+#else
     if (!g_surface) {
       webgpu::refresh_surface(true);
       if (!g_surface) {
         return false;
       }
     }
+#endif
     if (const uint32_t quality = g_pendingQuality.exchange(0, std::memory_order_acq_rel); quality != 0) {
       webgpu::set_quality(quality >> 16, static_cast<uint16_t>(quality & 0xFFFF));
     }

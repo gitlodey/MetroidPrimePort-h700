@@ -206,7 +206,7 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-IG-01…IG-02 **PASS**; IG-03…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01…IG-03 **PASS**; IG-04…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
@@ -230,4 +230,13 @@ IG-01…IG-02 **PASS**; IG-03…IG-13 не начаты; IG-14 не разреш
 - Подключён к `aurora_core` только при `AURORA_H700`; новый `h700_presentation_state_tests` компилирует тот же production source с GTest/Threads, без GPU.
 - **17/17 CTest cases PASS** в exact ARM64 image/Clang16. Fresh output: `build/h700-integration-ig02`, configure tests `AURORA_ENABLE_TESTS=ON`, explicit build target `h700_presentation_state_tests`; `ctest --test-dir /out/build -R H700Presentation --output-on-failure --timeout 15`. CTest run около0,05с. Первый узкий фильтр выбрал16fixture cases; расширенный prefix выполнил все17, включая zero-generation case.
 - CPU events не являются проверкой настоящих GPU completions. `try_stop()` подтверждает только отсутствие presentation ownership, не quiescence renderer/compiler; failure-only `stop_after_teardown()` требует доказанного внешним wrapper разрушения поколения и не делает quarantine reusable.
-- Локальные logs: ignored `build/h700-integration-ig02/{configure-tests.log,build-state-tests.log}`, CTest `build/Testing/Temporary/LastTest.log`. Read-only independent review существенных issues не обнаружил. Устройство не использовалось; следующий шаг — IG-03.
+- Локальные logs: ignored `build/h700-integration-ig02/{configure-tests.log,build-state-tests.log}`, CTest `build/Testing/Temporary/LastTest.log`. Read-only independent review существенных issues не обнаружил. Устройство не использовалось. IG-02 зафиксирован и отправлен: `1bd6c80af`.
+
+### IG-03 — PASS, 2026-11-16
+
+- Добавлен постоянный guarded H700 SDL2/Mali/EGL bootstrap, public Dawn external-display/getProc path без WGPU surface/capabilities или CPU/Null fallback. Два fixed640×480 RGBA8 exports/imports, raw `eglMakeCurrent` restoration, один IG-02 state на generation; native slot access проверяет весь descriptor, включая frame.
+- Observer учитывает create/share/current bindings/destroy/release-thread и delayed context destruction до unbind. Failed create с известным `EGL_NO_CONTEXT` регистрируется без выдуманного владельца; итог bootstrap определяют реальные Dawn outcomes. Exports/window/resolver не освобождаются при неподтверждённом release всей группы.
+- Определены partial-init release и будущие IG-11 release APIs. Review обнаружил возврат success после callback failure при создании pipelines/EFB; исправлено terminal-state check и cleanup реально созданных bootstrap holders. Полный app quiescence ещё не реализован и не заявляется.
+- **H700 compile/link/help/version/ELF metadata PASS** в exact ARM64 image. Parent отдельно сконфигурировал `AURORA_H700=OFF` и собрал **полные `aurora_core`/`aurora_gx`**, без graphics execution. Первичная обработка ELF повторного build остановилась на существующем log (защита `open(x)`); повтор с новым каталогом logs PASS, correctness gate не отключался.
+- Evidence: ignored `build/h700-integration-ig03/`, `parent-ig03.json` (configure/libraries/H700 link exit0), `parent-final/commands.json`, `parent-slot-build.log`; дополнительные агентские compile/CLI reports. Последний parent rebuild после проверки полного slot descriptor — PASS.
+- Frame admission и driver graphics execution пока явно закрыты до IG-06/11/12. Mixed request/layout — IG-04; device test не проводился, настоящий GPU/context teardown PASS отсутствует. Следующая итерация — IG-04.

@@ -1,0 +1,455 @@
+#include "presentation.hpp"
+
+#include "../internal.hpp"
+
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <cstdlib>
+#include <dlfcn.h>
+#include <string_view>
+
+namespace aurora::h700 {
+namespace {
+constexpr Module Log{"aurora::h700"};
+// A bounded diagnostic trace, not an unbounded per-frame allocation. Exhaustion fails the
+// generation instead of silently discarding evidence needed to prove context retirement.
+constexpr size_t MaxContextEvents = 65536;
+struct Backend {
+  explicit Backend(uint64_t id) : generation(id), state(std::make_shared<PresentationState>(id)) {}
+  uint64_t generation;
+  std::shared_ptr<PresentationState> state;
+  std::thread::id main = std::this_thread::get_id();
+  SDL_Window* window = nullptr;
+  SDL_GLContext sdl_context = nullptr; // owned by the pinned SDL2 mali window data
+  EGLDisplay display = EGL_NO_DISPLAY; // borrowed from SDL, never eglTerminate here
+  EGLContext presenter = EGL_NO_CONTEXT;
+  EGLSurface draw = EGL_NO_SURFACE;
+  EGLSurface read = EGL_NO_SURFACE;
+  void* egl_library = nullptr;
+  void* gles_library = nullptr;
+  PFNEGLCREATEIMAGEKHRPROC create_image = nullptr;
+  PFNEGLDESTROYIMAGEKHRPROC destroy_image = nullptr;
+  std::array<NativeSlot, 2> slots;
+  bool presenter_ready = false;
+  bool dawn_attempted = false;
+  bool dawn_released = true;
+  bool import_attempted = false;
+  bool imports_ready = false;
+  bool exports_released = false;
+  bool window_release_ready = false;
+  std::mutex observer_mutex;
+  std::vector<ContextRecord> contexts;
+  std::vector<ContextBinding> bindings;
+  std::vector<ContextEvent> events;
+  bool trustworthy = true;
+};
+// Installed before RequestAdapter, removed only after final native release and SDL teardown.
+// No resolver callback may overlap that boundary (IG-11 quiescence contract).
+std::unique_ptr<Backend> backend;
+uint64_t next_generation = 1;
+
+bool fail(std::string message) {
+  Log.error("{}", message);
+  if (backend) backend->state->fail(std::move(message));
+  return false;
+}
+bool main_thread() {
+  return backend && backend->main == std::this_thread::get_id() && SDL_IsMainThread();
+}
+bool require_main() {
+  return main_thread() || fail("H700 presenter operation outside SDL main thread");
+}
+bool has_extension(const char* text, std::string_view name) {
+  for (std::string_view rest = text ? text : ""; !rest.empty();) {
+    const auto end = rest.find(' ');
+    if (rest.substr(0, end) == name) return true;
+    if (end == std::string_view::npos) break;
+    rest.remove_prefix(end + 1);
+  }
+  return false;
+}
+void* raw_proc(const char* name) {
+  if (!backend) return nullptr;
+  void* proc = backend->egl_library ? dlsym(backend->egl_library, name) : nullptr;
+  if (!proc && backend->gles_library) proc = dlsym(backend->gles_library, name);
+  if (!proc) proc = reinterpret_cast<void*>(eglGetProcAddress(name));
+  return proc;
+}
+void observation_failure() {
+  backend->trustworthy = false;
+  backend->state->fail("H700 EGL context observation failed; teardown cannot be certified");
+}
+ContextRecord* live_context(EGLContext context) {
+  if (context == EGL_NO_CONTEXT) return nullptr;
+  for (auto it = backend->contexts.rbegin(); it != backend->contexts.rend(); ++it) {
+    if (it->context == context && !it->destroyed) return &*it;
+  }
+  return nullptr;
+}
+void append_event(const ContextEvent& event) {
+  if (backend->events.size() == MaxContextEvents) {
+    observation_failure();
+  } else {
+    backend->events.push_back(event);
+  }
+}
+void retire_pending() {
+  for (auto& context : backend->contexts) {
+    if (context.destroy_requested && !context.destroyed &&
+        std::none_of(backend->bindings.begin(), backend->bindings.end(), [&](const ContextBinding& binding) {
+          return binding.context == context.context;
+        })) context.destroyed = true;
+  }
+}
+void record_binding(EGLContext context, EGLSurface draw, EGLSurface read) {
+  const auto thread = std::this_thread::get_id();
+  std::erase_if(backend->bindings, [&](const ContextBinding& binding) { return binding.thread == thread; });
+  if (context != EGL_NO_CONTEXT) backend->bindings.push_back({thread, context, draw, read});
+  retire_pending();
+}
+EGLContext EGLAPIENTRY observed_create(EGLDisplay display, EGLConfig config, EGLContext share, const EGLint* attrs) {
+  const auto proc = reinterpret_cast<PFNEGLCREATECONTEXTPROC>(raw_proc("eglCreateContext"));
+  const auto result = proc ? proc(display, config, share, attrs) : EGL_NO_CONTEXT;
+  std::lock_guard lock(backend->observer_mutex);
+  append_event({ContextEvent::Operation::Create, std::this_thread::get_id(), display, result, share,
+                EGL_NO_SURFACE, EGL_NO_SURFACE, reinterpret_cast<uintptr_t>(result)});
+  if (result != EGL_NO_CONTEXT) {
+    auto* parent = live_context(share);
+    if (display != backend->display || live_context(result) || (share != EGL_NO_CONTEXT && !parent)) {
+      observation_failure();
+    }
+    const auto group = parent ? parent->group : backend->contexts.size() + 1;
+    backend->contexts.push_back({result, share, group});
+  } else if (!proc) observation_failure();
+  // A real failed create owns no context. Dawn may attempt optional compiler contexts;
+  // retain the zero return, but let RequestAdapter/RequestDevice decide bootstrap success.
+  return result;
+}
+EGLBoolean EGLAPIENTRY observed_make_current(EGLDisplay display, EGLSurface draw, EGLSurface read, EGLContext context) {
+  // Do not hold our lock during driver calls. Each thread serializes its own current binding;
+  // successful destroy of another thread's current context only marks it pending below.
+  const auto proc = reinterpret_cast<PFNEGLMAKECURRENTPROC>(raw_proc("eglMakeCurrent"));
+  const auto result = proc ? proc(display, draw, read, context) : EGL_FALSE;
+  std::lock_guard lock(backend->observer_mutex);
+  append_event({ContextEvent::Operation::MakeCurrent, std::this_thread::get_id(), display, context, EGL_NO_CONTEXT,
+                draw, read, result});
+  if (result == EGL_TRUE) {
+    if (display != backend->display ||
+        (context != EGL_NO_CONTEXT && context != backend->presenter && !live_context(context))) observation_failure();
+    record_binding(context, draw, read);
+  } else observation_failure();
+  return result;
+}
+EGLBoolean EGLAPIENTRY observed_destroy(EGLDisplay display, EGLContext context) {
+  const auto proc = reinterpret_cast<PFNEGLDESTROYCONTEXTPROC>(raw_proc("eglDestroyContext"));
+  const auto result = proc ? proc(display, context) : EGL_FALSE;
+  std::lock_guard lock(backend->observer_mutex);
+  append_event({ContextEvent::Operation::Destroy, std::this_thread::get_id(), display, context, EGL_NO_CONTEXT,
+                EGL_NO_SURFACE, EGL_NO_SURFACE, result});
+  auto* record = live_context(context);
+  if (result == EGL_TRUE && display == backend->display && record && !record->destroy_requested) {
+    record->destroy_requested = true;
+    retire_pending();
+  } else observation_failure();
+  return result;
+}
+EGLBoolean EGLAPIENTRY observed_release_thread() {
+  const auto proc = reinterpret_cast<PFNEGLRELEASETHREADPROC>(raw_proc("eglReleaseThread"));
+  const auto result = proc ? proc() : EGL_FALSE;
+  std::lock_guard lock(backend->observer_mutex);
+  append_event({ContextEvent::Operation::ReleaseThread, std::this_thread::get_id(), backend->display,
+                EGL_NO_CONTEXT, EGL_NO_CONTEXT, EGL_NO_SURFACE, EGL_NO_SURFACE, result});
+  if (result == EGL_TRUE) record_binding(EGL_NO_CONTEXT, EGL_NO_SURFACE, EGL_NO_SURFACE);
+  else observation_failure();
+  return result;
+}
+__eglMustCastToProperFunctionPointerType EGLAPIENTRY observed_get_proc(const char* name) {
+  return reinterpret_cast<__eglMustCastToProperFunctionPointerType>(resolve(name));
+}
+bool contexts_retired() {
+  std::lock_guard lock(backend->observer_mutex);
+  return backend->trustworthy &&
+         std::all_of(backend->contexts.begin(), backend->contexts.end(), [](const ContextRecord& c) { return c.destroyed; }) &&
+         std::none_of(backend->bindings.begin(), backend->bindings.end(), [](const ContextBinding& b) {
+           return b.context != backend->presenter;
+         });
+}
+} // namespace
+
+bool prepare_sdl() {
+  if (!SDL_IsMainThread() || SDL_GetVersion() != SDL_VERSION) return fail("H700 requires SDL main thread/matched shim");
+  // The pinned shim reads this with libc getenv(), not SDL_GetHint().
+  if (::setenv("SDL_VIDEODRIVER", "sdl2", 1) != 0 || ::setenv("SDL3SHIM_SDL2_VIDEODRIVER", "mali", 1) != 0 ||
+      !SDL_SetHintWithPriority(SDL_HINT_VIDEO_DRIVER, "sdl2", SDL_HINT_OVERRIDE)) {
+    return fail("Cannot select SDL3-over-SDL2 mali video path");
+  }
+  return true;
+}
+
+bool initialize_presenter(SDL_Window* window) {
+  if (backend || !SDL_IsMainThread() || !window || next_generation == 0) return fail("H700 generation cannot be retried");
+  backend = std::make_unique<Backend>(next_generation++);
+  backend->window = window;
+  const char* driver = SDL_GetCurrentVideoDriver();
+  if (!driver || std::string_view(driver) != "sdl2") return fail("H700 requires SDL shim video driver sdl2");
+  backend->egl_library = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
+  backend->gles_library = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_LOCAL);
+  if (!backend->egl_library || !backend->gles_library) return fail("Cannot retain firmware EGL/GLES libraries");
+  backend->sdl_context = SDL_GL_CreateContext(window);
+  if (!backend->sdl_context) return fail(std::string("Cannot create mali presenter: ") + SDL_GetError());
+  backend->display = eglGetCurrentDisplay();
+  backend->presenter = eglGetCurrentContext();
+  backend->draw = eglGetCurrentSurface(EGL_DRAW);
+  backend->read = eglGetCurrentSurface(EGL_READ);
+  int width = 0, height = 0;
+  if (backend->display == EGL_NO_DISPLAY || backend->presenter == EGL_NO_CONTEXT ||
+      backend->draw == EGL_NO_SURFACE || backend->read == EGL_NO_SURFACE ||
+      !SDL_GetWindowSizeInPixels(window, &width, &height) || width != NativeWidth || height != NativeHeight) {
+    return fail("H700 requires real EGL display/context/surfaces and 640x480 drawable");
+  }
+  const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+  const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+  if (!renderer || std::string_view(renderer).find("Mali-G31") == std::string_view::npos || !version ||
+      !std::string_view(version).starts_with("OpenGL ES 3.")) return fail("H700 requires hardware Mali-G31 GLES3");
+  const char* extensions = eglQueryString(backend->display, EGL_EXTENSIONS);
+  const char* egl_version = eglQueryString(backend->display, EGL_VERSION);
+  const bool egl15 = egl_version && std::string_view(egl_version).starts_with("1.5");
+  if ((!egl15 && !has_extension(extensions, "EGL_EXT_create_context_robustness")) ||
+      (!egl15 && !has_extension(extensions, "EGL_KHR_fence_sync")) ||
+      !has_extension(extensions, "EGL_KHR_image_base") || !has_extension(extensions, "EGL_KHR_gl_texture_2D_image")) {
+    return fail("H700 EGL lacks robustness/fence/image export extensions");
+  }
+  backend->create_image = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(resolve("eglCreateImageKHR"));
+  backend->destroy_image = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(resolve("eglDestroyImageKHR"));
+  if (!backend->create_image || !backend->destroy_image || !resolve("glEGLImageTargetTexture2DOES")) {
+    return fail("H700 EGLImage entrypoints missing");
+  }
+  if (glGetError() != GL_NO_ERROR) return fail("GL error after H700 presenter bootstrap");
+  for (auto& slot : backend->slots) {
+    glGenTextures(1, &slot.source);
+    glBindTexture(GL_TEXTURE_2D, slot.source);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, NativeWidth, NativeHeight);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenFramebuffers(1, &slot.framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, slot.framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, slot.source, 0);
+    const auto framebuffer_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    const auto allocation_error = glGetError();
+    if (!slot.source || !slot.framebuffer || framebuffer_status != GL_FRAMEBUFFER_COMPLETE ||
+        allocation_error != GL_NO_ERROR) return fail("H700 native slot allocation/FBO failed");
+    // Initialization only, not a per-frame synchronization or transport mechanism.
+    glFinish();
+    const EGLint attrs[] = {EGL_GL_TEXTURE_LEVEL_KHR, 0, EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
+    slot.image = backend->create_image(backend->display, backend->presenter, EGL_GL_TEXTURE_2D_KHR,
+                                     reinterpret_cast<EGLClientBuffer>(uintptr_t(slot.source)), attrs);
+    if (slot.image == EGL_NO_IMAGE_KHR || glGetError() != GL_NO_ERROR) return fail("H700 EGLImage export failed");
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  if (!SDL_GL_SetSwapInterval(1)) return fail("Cannot set H700 presenter swap interval");
+  backend->presenter_ready = true;
+  Log.info("H700 generation {}: {} / {}, two permanent 640x480 RGBA8 exports", backend->generation, renderer, version);
+  return true;
+}
+
+std::shared_ptr<PresentationState> presentation_state() { return backend ? backend->state : nullptr; }
+bool presenter_ready() { return backend && backend->presenter_ready && !backend->exports_released; }
+bool imports_ready() {
+  if (!presenter_ready() || !backend->imports_ready) return false;
+  const auto phase = backend->state->snapshot().phase;
+  return phase == PresentationPhase::Running || phase == PresentationPhase::Draining;
+}
+EGLDisplay external_display() { return backend ? backend->display : EGL_NO_DISPLAY; }
+
+dawn::native::opengl::EGLFunctionPointerType resolve(const char* name) {
+  if (!backend || !name) return nullptr;
+  using Proc = dawn::native::opengl::EGLFunctionPointerType;
+  if (std::strcmp(name, "eglCreateContext") == 0) return reinterpret_cast<Proc>(observed_create);
+  if (std::strcmp(name, "eglMakeCurrent") == 0) return reinterpret_cast<Proc>(observed_make_current);
+  if (std::strcmp(name, "eglDestroyContext") == 0) return reinterpret_cast<Proc>(observed_destroy);
+  if (std::strcmp(name, "eglReleaseThread") == 0) return reinterpret_cast<Proc>(observed_release_thread);
+  if (std::strcmp(name, "eglGetProcAddress") == 0) return reinterpret_cast<Proc>(observed_get_proc);
+  return reinterpret_cast<Proc>(raw_proc(name));
+}
+
+bool begin_dawn() {
+  if (!require_main() || !presenter_ready() || backend->dawn_attempted) return fail("H700 Dawn bootstrap is single-attempt");
+  backend->dawn_attempted = true;
+  backend->dawn_released = false;
+  return true;
+}
+
+bool import_slots(const wgpu::Device& device) {
+  if (!require_main() || !device || !presenter_ready() || !backend->dawn_attempted || backend->import_attempted) {
+    return fail("H700 import requires one new live device; retry forbidden");
+  }
+  backend->import_attempted = true; // set BEFORE the first irreversible alias allocation
+  for (auto& slot : backend->slots) {
+    wgpu::TextureDescriptor descriptor{};
+    descriptor.label = "H700 permanent native output";
+    descriptor.dimension = wgpu::TextureDimension::e2D;
+    descriptor.format = NativeFormat;
+    descriptor.size = {NativeWidth, NativeHeight, 1};
+    descriptor.mipLevelCount = 1;
+    descriptor.sampleCount = 1;
+    descriptor.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc;
+    dawn::native::opengl::ExternalImageDescriptorEGLImage external;
+    const WGPUTextureDescriptor& c_descriptor = descriptor;
+    external.cTextureDescriptor = &c_descriptor;
+    external.isInitialized = false;
+    external.image = slot.image;
+    slot.texture = wgpu::Texture::Acquire(dawn::native::opengl::WrapExternalEGLImage(device.Get(), &external));
+    if (!slot.texture) return fail("H700 EGLImage import failed; retire whole Dawn generation, do not retry");
+    slot.view = slot.texture.CreateView();
+    if (!slot.view) return fail("H700 imported texture view failed; retire whole Dawn generation");
+    if (backend->state->snapshot().phase == PresentationPhase::Failed) return false;
+  }
+  backend->imports_ready = true;
+  return restore_presenter();
+}
+
+const NativeSlot* native_slot(const FrameDescriptor& descriptor) {
+  if (!imports_ready() || descriptor.generation != backend->generation || descriptor.slot >= backend->slots.size()) return nullptr;
+  const auto ownership = backend->state->snapshot();
+  const auto& current = ownership.slots[descriptor.slot].descriptor;
+  if (!current || *current != descriptor) return nullptr;
+  return &backend->slots[descriptor.slot];
+}
+
+bool restore_presenter() {
+  if (!require_main() || !backend->sdl_context || backend->exports_released) return false;
+  if (observed_make_current(backend->display, backend->draw, backend->read, backend->presenter) != EGL_TRUE ||
+      eglGetCurrentDisplay() != backend->display || eglGetCurrentContext() != backend->presenter ||
+      eglGetCurrentSurface(EGL_DRAW) != backend->draw || eglGetCurrentSurface(EGL_READ) != backend->read) {
+    return fail("Cannot restore raw H700 presenter EGL binding");
+  }
+  return true;
+}
+
+ContextSnapshot context_snapshot() {
+  if (!backend) return {{}, {}, {}, true};
+  std::lock_guard lock(backend->observer_mutex);
+  return {backend->contexts, backend->bindings, backend->events, backend->trustworthy};
+}
+
+bool unbind_current_dawn() {
+  if (!backend) return true;
+  const auto current = eglGetCurrentContext();
+  {
+    std::lock_guard lock(backend->observer_mutex);
+    if (current == EGL_NO_CONTEXT || current == backend->presenter) return true;
+    if (!live_context(current)) return fail("Cannot unbind unobserved EGL context");
+  }
+  return observed_make_current(backend->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
+}
+
+bool release_dawn_imports() {
+  if (!backend) return true;
+  if (!require_main()) return false;
+  backend->state->begin_draining();
+  backend->imports_ready = false;
+  for (auto& slot : backend->slots) {
+    slot.view = {};
+    slot.texture = {};
+  }
+  return true;
+}
+
+bool acknowledge_dawn_release() {
+  if (!backend) return true;
+  if (!require_main()) return false;
+  if (std::any_of(backend->slots.begin(), backend->slots.end(), [](const NativeSlot& s) { return bool(s.texture) || bool(s.view); }) ||
+      !contexts_retired()) return fail("Dawn release incomplete: imports, contexts or current bindings remain");
+  backend->dawn_released = true;
+  return true;
+}
+
+bool release_exports() {
+  if (!backend) return true;
+  if (!require_main()) return false;
+  if (backend->exports_released) return true;
+  if (!backend->dawn_released || !contexts_retired()) return fail("Refusing exports release before entire Dawn share group");
+  const bool has_exports = std::any_of(backend->slots.begin(), backend->slots.end(), [](const NativeSlot& s) {
+    return s.source || s.framebuffer || s.image != EGL_NO_IMAGE_KHR;
+  });
+  if (has_exports) {
+    if (!restore_presenter()) return false;
+    bool ok = true;
+    if (glGetError() != GL_NO_ERROR) {
+      fail("GL error before H700 exports release");
+      ok = false;
+    }
+    for (auto& slot : backend->slots) {
+      if (slot.framebuffer) {
+        glDeleteFramebuffers(1, &slot.framebuffer);
+        if (glGetError() != GL_NO_ERROR) {
+          fail("H700 FBO release failed");
+          ok = false;
+          continue;
+        }
+        slot.framebuffer = 0;
+      }
+      if (slot.image != EGL_NO_IMAGE_KHR) {
+        if (backend->destroy_image(backend->display, slot.image) != EGL_TRUE) {
+          fail("H700 EGLImage release failed");
+          ok = false;
+          continue;
+        }
+        slot.image = EGL_NO_IMAGE_KHR;
+      }
+      if (slot.source) {
+        glDeleteTextures(1, &slot.source);
+        if (glGetError() != GL_NO_ERROR) {
+          fail("H700 source texture release failed");
+          ok = false;
+        } else slot.source = 0;
+      }
+    }
+    if (!ok) return false;
+  }
+  backend->exports_released = true;
+  backend->presenter_ready = false;
+  return true;
+}
+
+bool prepare_window_destruction() {
+  if (!backend) return true;
+  if (!require_main() || !release_exports()) return false;
+  if (backend->window_release_ready) return true;
+  if (backend->display != EGL_NO_DISPLAY &&
+      observed_make_current(backend->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) != EGL_TRUE) {
+    return fail("Cannot unbind presenter before SDL window destruction");
+  }
+  // Pinned SDL2 mali destroys its GL context with the window. Explicit SDL_GL_DestroyContext
+  // would double-delete it. Only clear SDL's stale TLS after a real EGL unbind.
+  if (!SDL_GL_MakeCurrent(nullptr, nullptr) || eglGetCurrentContext() != EGL_NO_CONTEXT) {
+    return fail("Cannot clear SDL GL binding before window destruction");
+  }
+  backend->window_release_ready = true;
+  return true;
+}
+
+bool finish_shutdown() {
+  if (!backend) return true;
+  if (!require_main() || !backend->window_release_ready || !backend->dawn_released || !contexts_retired()) {
+    return fail("H700 shutdown incomplete; retaining resolver/libraries and forbidding next generation");
+  }
+  if (SDL_WasInit(SDL_INIT_VIDEO) != 0) return fail("H700 resolver release must follow SDL video shutdown");
+  bool ok = true;
+  if (backend->gles_library) {
+    if (dlclose(backend->gles_library) != 0) ok = false;
+    else backend->gles_library = nullptr;
+  }
+  if (backend->egl_library) {
+    if (dlclose(backend->egl_library) != 0) ok = false;
+    else backend->egl_library = nullptr;
+  }
+  if (!ok) return fail("H700 runtime library release failed");
+  backend.reset();
+  return true;
+}
+} // namespace aurora::h700

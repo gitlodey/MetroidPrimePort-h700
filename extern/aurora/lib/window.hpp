@@ -32,6 +32,8 @@ bool push_custom_event(CustomEvent eventType);
 void shutdown();
 bool create_window(AuroraBackend backend);
 bool create_renderer();
+// H700 refuses destruction until the complete Dawn generation and exports are released.
+bool can_destroy_window();
 void destroy_window();
 void show_window();
 AuroraWindowSize get_window_size();
