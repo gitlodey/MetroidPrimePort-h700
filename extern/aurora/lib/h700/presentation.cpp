@@ -1,11 +1,17 @@
 #include "presentation.hpp"
 
 #include "../internal.hpp"
+#include "../webgpu/gpu.hpp"
+#include "../gfx/frame.hpp"
+#include "../gfx/render_worker.hpp"
+#include "../window.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <dlfcn.h>
@@ -17,6 +23,17 @@ constexpr Module Log{"aurora::h700"};
 // A bounded diagnostic trace, not an unbounded per-frame allocation. Exhaustion fails the
 // generation instead of silently discarding evidence needed to prove context retirement.
 constexpr size_t MaxContextEvents = 65536;
+struct NativeFlight {
+  explicit NativeFlight(FrameDescriptor value) : descriptor(value) {}
+  const FrameDescriptor descriptor;
+  wgpu::Future forward{}; // written before the published release-store
+  std::atomic<bool> published = false;
+  std::atomic<bool> callback_called = false;
+  std::atomic<wgpu::QueueWorkDoneStatus> status = wgpu::QueueWorkDoneStatus::Error;
+  bool forward_observed = false; // remaining fields are main-only
+  EGLSyncKHR reverse = EGL_NO_SYNC_KHR;
+  bool reverse_wait_failed = false;
+};
 struct Backend {
   explicit Backend(uint64_t id) : generation(id), state(std::make_shared<PresentationState>(id)) {}
   uint64_t generation;
@@ -32,7 +49,14 @@ struct Backend {
   void* gles_library = nullptr;
   PFNEGLCREATEIMAGEKHRPROC create_image = nullptr;
   PFNEGLDESTROYIMAGEKHRPROC destroy_image = nullptr;
+  PFNEGLCREATESYNCKHRPROC create_sync = nullptr;
+  PFNEGLCLIENTWAITSYNCKHRPROC client_wait_sync = nullptr;
+  PFNEGLDESTROYSYNCKHRPROC destroy_sync = nullptr;
   std::array<NativeSlot, 2> slots;
+  std::mutex flights_mutex; // never held across a Dawn/GL/EGL call or a wait
+  std::array<std::shared_ptr<NativeFlight>, 2> flights;
+  uint64_t next_frame = 0;
+  bool progressing = false;
   bool presenter_ready = false;
   bool dawn_attempted = false;
   bool dawn_released = true;
@@ -227,6 +251,12 @@ bool initialize_presenter(SDL_Window* window) {
   if (!backend->create_image || !backend->destroy_image || !resolve("glEGLImageTargetTexture2DOES")) {
     return fail("H700 EGLImage entrypoints missing");
   }
+  backend->create_sync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(resolve("eglCreateSyncKHR"));
+  backend->client_wait_sync = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(resolve("eglClientWaitSyncKHR"));
+  backend->destroy_sync = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(resolve("eglDestroySyncKHR"));
+  if (!backend->create_sync || !backend->client_wait_sync || !backend->destroy_sync) {
+    return fail("H700 reverse fence entrypoints missing");
+  }
   if (glGetError() != GL_NO_ERROR) return fail("GL error after H700 presenter bootstrap");
   for (auto& slot : backend->slots) {
     glGenTextures(1, &slot.source);
@@ -330,6 +360,233 @@ bool restore_presenter() {
   return true;
 }
 
+namespace {
+std::shared_ptr<NativeFlight> flight_for(const FrameDescriptor& descriptor) {
+  if (!backend || descriptor.generation != backend->generation || descriptor.slot >= backend->flights.size()) return {};
+  const auto ownership = backend->state->snapshot();
+  const auto& current = ownership.slots[descriptor.slot].descriptor;
+  if (!current || *current != descriptor) return {};
+  std::lock_guard lock(backend->flights_mutex);
+  const auto& flight = backend->flights[descriptor.slot];
+  return flight && flight->descriptor == descriptor ? flight : nullptr;
+}
+void quarantine_frame(const FrameDescriptor& descriptor, std::string error) {
+  if (!backend->state->quarantine(descriptor, error)) backend->state->fail(std::move(error));
+}
+std::array<std::shared_ptr<NativeFlight>, 2> flights_snapshot() {
+  std::lock_guard lock(backend->flights_mutex);
+  return backend->flights;
+}
+void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
+  if (!flight->published.load(std::memory_order_acquire) || flight->forward_observed || !flight->forward.id) return;
+  wgpu::FutureWaitInfo info{.future = flight->forward};
+  const auto wait = webgpu::g_instance.WaitAny(1, &info, 0);
+  if (wait == wgpu::WaitStatus::TimedOut) return;
+  flight->forward_observed = true;
+  if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire) ||
+      flight->status.load(std::memory_order_relaxed) != wgpu::QueueWorkDoneStatus::Success) {
+    quarantine_frame(flight->descriptor, "H700 forward work-done wait/status failed");
+    return;
+  }
+  const auto ownership = backend->state->snapshot();
+  const auto& slot = ownership.slots[flight->descriptor.slot];
+  if (!slot.descriptor || *slot.descriptor != flight->descriptor) {
+    backend->state->fail("H700 stale forward completion");
+  } else if (slot.status == SlotStatus::Submitted &&
+             !backend->state->complete_forward(flight->descriptor, flight->forward.id)) {
+    quarantine_frame(flight->descriptor, "H700 forward transition failed");
+  }
+  // A quarantined publication is still observed and retained, never converted into Ready.
+}
+void poll_reverse(const std::shared_ptr<NativeFlight>& flight) {
+  if (flight->reverse == EGL_NO_SYNC_KHR || flight->reverse_wait_failed) return;
+  // Both the generation/frame/slot and current ownership must match before touching its fence.
+  if (flight_for(flight->descriptor) != flight) {
+    flight->reverse_wait_failed = true;
+    backend->state->fail("H700 stale reverse fence descriptor");
+    return;
+  }
+  const auto before = backend->state->snapshot();
+  const auto& owned = before.slots[flight->descriptor.slot];
+  if ((owned.status == SlotStatus::Retiring && !owned.reverse) ||
+      (owned.reverse && *owned.reverse != reinterpret_cast<uintptr_t>(flight->reverse))) {
+    flight->reverse_wait_failed = true;
+    quarantine_frame(flight->descriptor, "H700 reverse fence identity mismatch");
+    return;
+  }
+  const auto result = backend->client_wait_sync(backend->display, flight->reverse, 0, 0);
+  if (result == EGL_TIMEOUT_EXPIRED_KHR) return;
+  if (result != EGL_CONDITION_SATISFIED_KHR ||
+      backend->destroy_sync(backend->display, flight->reverse) != EGL_TRUE) {
+    flight->reverse_wait_failed = true;
+    quarantine_frame(flight->descriptor, "H700 reverse fence wait/release failed");
+    return; // keep the actual handle for IG-11, never reuse after a failed wait
+  }
+  flight->reverse = EGL_NO_SYNC_KHR;
+  const auto ownership = backend->state->snapshot();
+  const auto& slot = ownership.slots[flight->descriptor.slot];
+  if (slot.status != SlotStatus::Retiring) return; // quarantine remains owned until generation teardown
+  if (!slot.reverse || !backend->state->complete_reverse(flight->descriptor, *slot.reverse) ||
+      !backend->state->recycle(flight->descriptor)) {
+    quarantine_frame(flight->descriptor, "H700 reverse completion/recycle transition failed");
+    return;
+  }
+  std::lock_guard lock(backend->flights_mutex);
+  if (backend->flights[flight->descriptor.slot] == flight) backend->flights[flight->descriptor.slot].reset();
+}
+void present_ready() {
+  if (!window::is_presentable()) return;
+  const auto descriptor = backend->state->try_begin_read();
+  if (!descriptor) return;
+  const auto flight = flight_for(*descriptor);
+  const auto* slot = native_slot(*descriptor);
+  if (!flight || !slot || !restore_presenter()) {
+    quarantine_frame(*descriptor, "H700 cannot acquire the matching native presenter target");
+    return;
+  }
+  if (glGetError() != GL_NO_ERROR) {
+    quarantine_frame(*descriptor, "H700 GL error before native blit");
+    return;
+  }
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, slot->framebuffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+  if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+    quarantine_frame(*descriptor, "H700 native read framebuffer incomplete");
+    return;
+  }
+  // The measured Mali bridge maps GL row 0 to WebGPU's first row. Flip explicitly
+  // into the bottom-origin default framebuffer; the IG-14 pixel oracle checks this path.
+  glBlitFramebuffer(0, 0, NativeWidth, NativeHeight, 0, NativeHeight, NativeWidth, 0,
+                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
+  if (glGetError() != GL_NO_ERROR) {
+    quarantine_frame(*descriptor, "H700 native blit failed");
+    return;
+  }
+  const EGLint attrs[] = {EGL_NONE};
+  flight->reverse = backend->create_sync(backend->display, EGL_SYNC_FENCE_KHR, attrs);
+  if (flight->reverse == EGL_NO_SYNC_KHR ||
+      !backend->state->begin_retiring(*descriptor, reinterpret_cast<uintptr_t>(flight->reverse))) {
+    quarantine_frame(*descriptor, "H700 reverse fence creation/transition failed");
+    return;
+  }
+  glFlush(); // orders the presenter read before Dawn may write this slot again
+  if (glGetError() != GL_NO_ERROR) {
+    quarantine_frame(*descriptor, "H700 presenter flush failed");
+    return;
+  }
+  // The pinned SDL2 shim returns true unconditionally; only the actual EGL return
+  // can attest a successful swap. SDL still owns this display/surface unchanged.
+  if (eglSwapBuffers(backend->display, backend->draw) != EGL_TRUE) {
+    const EGLint error = eglGetError();
+    quarantine_frame(*descriptor, fmt::format("H700 eglSwapBuffers failed: EGL error {:#x}", error));
+    return;
+  }
+  if (!backend->state->complete_swap(*descriptor)) {
+    quarantine_frame(*descriptor, "H700 swap completion transition failed");
+    return;
+  }
+  gfx::after_present(); // statistics only, never a game callback
+}
+} // namespace
+
+std::optional<FrameDescriptor> acquire_frame() {
+  if (!require_main() || !imports_ready() || backend->progressing) return std::nullopt;
+  while (backend->state->snapshot().phase == PresentationPhase::Running) {
+    if (backend->next_frame == UINT64_MAX) {
+      fail("H700 frame identity exhausted");
+      return std::nullopt;
+    }
+    if (const auto descriptor = backend->state->try_reserve(backend->next_frame)) {
+      auto flight = std::make_shared<NativeFlight>(*descriptor);
+      {
+        std::lock_guard lock(backend->flights_mutex);
+        if (backend->flights[descriptor->slot]) {
+          backend->state->fail("H700 native transport record would be overwritten");
+          (void)backend->state->abort_reservation(*descriptor);
+          return std::nullopt;
+        }
+        backend->flights[descriptor->slot] = std::move(flight);
+      }
+      ++backend->next_frame;
+      return descriptor;
+    }
+    if (!main_progress_once()) return std::nullopt;
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return std::nullopt;
+}
+
+bool abort_frame(const FrameDescriptor& descriptor) {
+  const auto flight = flight_for(descriptor);
+  if (!flight || flight->published.load(std::memory_order_acquire)) return false;
+  if (!backend->state->abort_reservation(descriptor)) return false;
+  std::lock_guard lock(backend->flights_mutex);
+  if (backend->flights[descriptor.slot] == flight) backend->flights[descriptor.slot].reset();
+  return true;
+}
+
+bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& commands) {
+  const auto flight = flight_for(descriptor);
+  if (!flight || !commands || !gfx::render_worker::is_worker_thread()) {
+    if (backend) {
+      (void)abort_frame(descriptor);
+      backend->state->fail("H700 invalid native render submission");
+    }
+    return false;
+  }
+  if (!backend->state->mark_submitted(descriptor)) {
+    (void)abort_frame(descriptor);
+    backend->state->fail("H700 native Submit boundary rejected");
+    return false;
+  }
+  webgpu::g_queue.Submit(1, &commands); // irreversible boundary: no rollback after mark_submitted
+  flight->forward = webgpu::g_queue.OnSubmittedWorkDone(
+      wgpu::CallbackMode::WaitAnyOnly,
+      [flight](wgpu::QueueWorkDoneStatus status, wgpu::StringView) {
+        flight->status.store(status, std::memory_order_relaxed);
+        flight->callback_called.store(true, std::memory_order_release);
+      });
+  const bool published = backend->state->publish_submitted(descriptor, flight->forward.id);
+  flight->published.store(true, std::memory_order_release);
+  // Even after synchronous loss/error, the real future stays published/owned for main/IG-11.
+  if (!published || !flight->forward.id || backend->state->snapshot().phase == PresentationPhase::Failed) {
+    quarantine_frame(descriptor, "H700 Submit/work-done publication failed");
+    return false;
+  }
+  return true;
+}
+
+bool main_progress_once() {
+  if (!require_main()) return false;
+  if (backend->progressing) return fail("H700 recursive main progress");
+  backend->progressing = true;
+  struct ProgressScope { ~ProgressScope() { backend->progressing = false; } } scope;
+  if (!webgpu::g_instance) return false;
+  webgpu::g_instance.ProcessEvents(); // direct: never enqueue behind the worker we may be waiting for
+  const auto flights = flights_snapshot();
+  for (const auto& flight : flights) if (flight) poll_forward(flight);
+  for (const auto& flight : flights) if (flight) poll_reverse(flight);
+  present_ready(); // PresentationState forbids new reads in Failed, but retirement above continues
+  for (const auto& flight : flights_snapshot()) if (flight) poll_reverse(flight);
+  const auto phase = backend->state->snapshot().phase;
+  return phase == PresentationPhase::Running || phase == PresentationPhase::Draining;
+}
+
+std::array<std::optional<NativePending>, 2> pending_native_frames() {
+  std::array<std::optional<NativePending>, 2> result;
+  if (!backend || !require_main()) return result;
+  const auto flights = flights_snapshot();
+  for (size_t i = 0; i < flights.size(); ++i) {
+    if (const auto& flight = flights[i]) {
+      const bool published = flight->published.load(std::memory_order_acquire);
+      result[i].emplace(NativePending{flight->descriptor, published ? flight->forward : wgpu::Future{}, published,
+                                     flight->forward_observed, flight->callback_called.load(std::memory_order_acquire),
+                                     flight->status.load(std::memory_order_relaxed), flight->reverse, flight->reverse_wait_failed});
+    }
+  }
+  return result;
+}
+
 ContextSnapshot context_snapshot() {
   if (!backend) return {{}, {}, {}, true};
   std::lock_guard lock(backend->observer_mutex);
@@ -373,6 +630,12 @@ bool release_exports() {
   if (!require_main()) return false;
   if (backend->exports_released) return true;
   if (!backend->dawn_released || !contexts_retired()) return fail("Refusing exports release before entire Dawn share group");
+  {
+    std::lock_guard lock(backend->flights_mutex);
+    if (std::any_of(backend->flights.begin(), backend->flights.end(), [](const auto& flight) { return bool(flight); })) {
+      return fail("Refusing exports release with pending native ownership/futures/reverse fences (IG-11 retirement required)");
+    }
+  }
   const bool has_exports = std::any_of(backend->slots.begin(), backend->slots.end(), [](const NativeSlot& s) {
     return s.source || s.framebuffer || s.image != EGL_NO_IMAGE_KHR;
   });

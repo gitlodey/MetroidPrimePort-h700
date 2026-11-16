@@ -33,6 +33,16 @@ target_link_libraries(h700_presentation_state_tests PRIVATE gtest_main Threads::
 gtest_discover_tests(h700_presentation_state_tests PROPERTIES TIMEOUT 10)
 
 if (AURORA_H700)
+  # Native presentation integration contracts, CPU/source only: no Dawn/SDL runtime link.
+  add_executable(h700_presentation_integration_tests
+    h700_presentation_integration_test.cpp ../lib/h700/presentation_state.cpp)
+  target_include_directories(h700_presentation_integration_tests PRIVATE ../lib)
+  target_compile_features(h700_presentation_integration_tests PRIVATE cxx_std_20)
+  target_compile_definitions(h700_presentation_integration_tests PRIVATE
+    H700_PRESENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../lib")
+  target_link_libraries(h700_presentation_integration_tests PRIVATE gtest_main Threads::Threads)
+  gtest_discover_tests(h700_presentation_integration_tests PROPERTIES TIMEOUT 10)
+
   # Descriptor/limit helpers and source lifecycle hooks only: never creates a WebGPU device.
   add_executable(h700_mixed_fetch_tests h700_mixed_fetch_test.cpp)
   target_include_directories(h700_mixed_fetch_tests PRIVATE ../include ../lib)

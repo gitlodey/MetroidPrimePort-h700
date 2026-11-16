@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <chrono>
 #include <cstdlib>
@@ -231,6 +232,9 @@ constexpr std::array<AuroraBackend, 0> PreferredBackendOrder{};
 #endif
 
 bool g_initialFrame = false;
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+std::optional<h700::FrameDescriptor> g_nativeFrame;
+#endif
 
 AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexcept {
   g_config = config;
@@ -452,6 +456,9 @@ void release_lost_surface() noexcept {
 bool begin_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
+#ifdef AURORA_H700
+  (void)h700::main_progress_once();
+#endif
   {
     if (!service_surface("begin_frame")) {
       return false;
@@ -464,11 +471,7 @@ bool begin_frame() noexcept {
       }
       return false;
     }
-#ifdef AURORA_H700
-    // Admission/composition arrives in IG-06. Never route an imported output through
-    // desktop GetCurrentTexture/Present, or admit a frame before native ownership exists.
-    return false;
-#else
+#ifndef AURORA_H700
     if (!g_surface) {
       webgpu::refresh_surface(true);
       if (!g_surface) {
@@ -481,8 +484,23 @@ bool begin_frame() noexcept {
     }
   }
 
+#ifdef AURORA_H700
+  if (g_nativeFrame) {
+    if (auto state = h700::presentation_state()) state->fail("H700 begin_frame while another frame is recording");
+    return false;
+  }
+  const auto nativeFrame = h700::acquire_frame(); // reserve native credit BEFORE CPU recording/admission
+  if (!nativeFrame) return false;
+  g_nativeFrame.emplace(*nativeFrame);
+#endif
   phase::set(phase::Main, "begin_frame (waiting for a frame slot)");
   if (!gfx::begin_frame()) {
+#ifdef AURORA_H700
+    if (!h700::abort_frame(*g_nativeFrame)) {
+      if (auto state = h700::presentation_state()) state->fail("H700 native admission rollback failed");
+    }
+    g_nativeFrame.reset();
+#endif
     return false;
   }
   // A failed staging-buffer acquisition must not leave an ImGui frame open.
@@ -508,6 +526,14 @@ void end_frame() noexcept {
     }
   } resizeFrameTimer;
 #ifdef AURORA_ENABLE_GX
+#ifdef AURORA_H700
+  const auto nativeFrame = g_nativeFrame;
+  g_nativeFrame.reset();
+  if (!nativeFrame) {
+    if (auto state = h700::presentation_state()) state->fail("H700 end_frame without a native reservation");
+    return;
+  }
+#endif
   phase::set(phase::Main, "end_frame (recording and queueing the frame)");
   gx::fifo::drain();
   gx::fifo::end_frame();
@@ -531,6 +557,9 @@ void end_frame() noexcept {
 #endif
 
   gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), rmlOverlay, viewport,
+#ifdef AURORA_H700
+                  nativeFrame = *nativeFrame, // immutable value: the CPU packet is cleared before this callback
+#endif
                   imguiDrawData = std::move(imguiDrawData)](
                      wgpu::CommandEncoder& encoder, std::vector<gfx::AfterSubmitCallback> afterSubmitCallbacks) {
     if (g_screenshotRequested.exchange(false, std::memory_order_acq_rel)) {
@@ -538,6 +567,16 @@ void end_frame() noexcept {
     }
     wgpu::Texture currentTexture;
     wgpu::TextureView currentView;
+#ifdef AURORA_H700
+    const auto* native = h700::native_slot(nativeFrame);
+    if (!native) {
+      (void)h700::abort_frame(nativeFrame);
+      if (auto state = h700::presentation_state()) state->fail("H700 native composition target unavailable");
+      return;
+    }
+    currentTexture = native->texture;
+    currentView = native->view;
+#else
     auto surfaceStatus = wgpu::SurfaceGetCurrentTextureStatus::Error;
     bool acquireAttempted = false;
     // Port: AURORA_PRESENT_EVERY=<n> presents one frame in n (test runs on Xvfb, where each present
@@ -569,7 +608,15 @@ void end_frame() noexcept {
       }
     }
 
+#endif
     const bool canPresent = currentTexture && currentView;
+#ifdef AURORA_H700
+    if (!canPresent) {
+      (void)h700::abort_frame(nativeFrame);
+      if (auto state = h700::presentation_state()) state->fail("H700 native composition view missing");
+      return;
+    }
+#endif
     if (canPresent) {
       wgpu::BindGroup presentBindGroup;
       if (rmlBindGroup && !rmlOverlay) {
@@ -612,9 +659,12 @@ void end_frame() noexcept {
         imgui::render(pass, imguiDrawData);
         pass.End();
       }
-    } else if (!skipPresent) {
+    }
+#ifndef AURORA_H700
+    else if (!skipPresent) {
       Log.info("Skipping present; window not presentable");
     }
+#endif
     webgpu::gpu_prof::frame_end(encoder);
     gfx::overdraw::frame_end(encoder);
     gfx::vis_query::detail::frame_end(encoder);
@@ -623,13 +673,18 @@ void end_frame() noexcept {
     {
       ZoneScopedN("Queue Submit");
       phase::set(phase::Render, "queue submit");
+#ifdef AURORA_H700
+      if (!h700::submit_frame(nativeFrame, buffer)) return;
+#else
       g_queue.Submit(1, &buffer);
+#endif
     }
     gfx::sample_dawn_memory();
     phase::set(phase::Render, "after submit");
     webgpu::gpu_prof::after_submit();
     gfx::overdraw::after_submit();
     gfx::vis_query::detail::after_submit();
+#ifndef AURORA_H700
     if (canPresent && g_surface) {
       ZoneScopedN("Present");
       wgpu::ConvertibleStatus status = wgpu::Status::Error;
@@ -679,6 +734,7 @@ void end_frame() noexcept {
         break;
       }
     }
+#endif
     for (auto& callback : afterSubmitCallbacks) {
       if (callback) {
         callback();
@@ -703,6 +759,9 @@ void end_frame() noexcept {
     TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(stats.lastStorageSize));
     TracyPlot("aurora: lastTextureUploadSize", static_cast<int64_t>(stats.lastTextureUploadSize));
   });
+#ifdef AURORA_H700
+  (void)h700::main_progress_once();
+#endif
 
 #endif
 }

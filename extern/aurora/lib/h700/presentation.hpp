@@ -76,6 +76,32 @@ bool begin_dawn();
 bool import_slots(const wgpu::Device& device);
 const NativeSlot* native_slot(const FrameDescriptor& descriptor);
 bool restore_presenter(); // raw eglMakeCurrent, never SDL's cached fast path
+
+// Main acquires BEFORE gfx recording. The returned value must be captured independently
+// of the CPU FramePacket, which is cleared before the end-frame callback runs.
+std::optional<FrameDescriptor> acquire_frame();
+bool abort_frame(const FrameDescriptor& descriptor);
+// Render worker only: mark the irreversible boundary, Submit, then publish the real
+// WaitAnyOnly future. Never waits for main, forward completion or a free native slot.
+bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& commands);
+// Main only, nonrecursive and lock-free at entry: internal events/completions, blit/swap,
+// reverse polling. No game callbacks/event pump/recording/resize/shutdown.
+bool main_progress_once();
+
+struct NativePending {
+  FrameDescriptor descriptor;
+  wgpu::Future forward;
+  bool published;
+  bool forward_observed;
+  bool callback_called;
+  wgpu::QueueWorkDoneStatus forward_status;
+  EGLSyncKHR reverse;
+  bool reverse_wait_failed;
+};
+// IG-11 inventory, not a release/drain claim. Failed/late publications and reverse
+// fences remain owned here. Exports cannot be released while these records remain.
+std::array<std::optional<NativePending>, 2> pending_native_frames();
+
 ContextSnapshot context_snapshot();
 bool unbind_current_dawn(); // must run on EACH owning thread, not just main
 
