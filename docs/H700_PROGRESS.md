@@ -6,7 +6,9 @@
 
 - **IG-01…IG-13 LOCAL PASS:** постоянный H700 backend, mixed resources/shaders/cache, main presenter, progress-aware render/FIFO/compiler waits, normal drain/full generation lifecycle, GX+ImGui diagnostic scene и clean ARM64 package.
 - **IG-14: последний корректный manual run PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил видимый нормальный запуск. Последний run=120+2frames/exit0; три других сохранённых manual runs — incomplete/exit1 из-за real_overlap0, не ошибки pixels. Это не4/4PASS/не готовность полной игры. Подробные ограничения — в gate report.
-- [Подробный утверждённый план и результаты каждой итерации](H700_INTEGRATION_PLAN.md), [простая версия этапа](H700_INTEGRATION_SUMMARY.md), [artifact/device evidence и ограничения](H700_INTEGRATION_GATE.md).
+- [Подробный утверждённый IG-план и результаты](H700_INTEGRATION_PLAN.md), [простая версия IG-этапа](H700_INTEGRATION_SUMMARY.md), [artifact/device evidence и ограничения](H700_INTEGRATION_GATE.md).
+- **[План полной игры GM-01…GM-21 утверждён](H700_GAME_PLAN.md)** ([коротко](H700_GAME_SUMMARY.md)): D1…D11, локальные GM-01…GM-17, commit/push каждой завершённой итерации. Три device-окна требуют отдельных разрешений.
+- **GM-01 LOCAL PASS:** fresh root game configure в exact offline ARM64 image,14 verified inputs,642game TU в manifest;5/5game-profile +10/10bootstrap host tests,30/30integration helper tests в Linux. Compile/link игры ещё не выполнялся; следующий GM-02.
 
 ## Что подтверждено
 
@@ -19,12 +21,12 @@
 ## Что ещё не подтверждено
 
 - Повторяемость actual3-thread overlap не подтверждена: наблюдение получено в1из4manual runs (последний, ~0.272ms); прочие3 честно incomplete. Пользователь уточнил неверный core при первом invocation, но это не доказанная причина logged overlap failures. `fbgrab` показывает demo, но не все expected markers; источник расхождения с точными GL/native samples не установлен, pixel-perfect физический scanout этим снимком не доказан.
-- Полная игра, все retail effects/UI, game-owner quiescence/`archSupport`, skinning waits, input/audio, kernel4.9 nod fallback, память реальных сцен, save/load и обычная установка Ports. Optional profiler/visibility-query/readback paths не активировались ради gate.
-- Целевые30FPS и полная firmware exact-symbol closure не заявлены. EOL image принят только для integration slice, не автоматически для полной игры.
+- Полная игра, все retail effects/UI, game-owner quiescence/`archSupport`, skinning waits, input/audio, actual nod SDL-stream path на kernel4.9, память реальных сцен, save/load и обычная установка Ports. Optional profiler/visibility-query/readback paths не активировались ради gate.
+- Целевые30FPS и полная firmware exact-symbol closure не заявлены. EOL image явно разрешён для correctness RC GM-01…17, включая повторный fresh build; это не долгосрочная поддерживаемая build platform.
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — отдельно согласовать план подключения полной игры, не начинать его автоматически. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-02: full compile/link `metroid_prime_port` без device runtime. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 

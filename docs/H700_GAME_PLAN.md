@@ -1,0 +1,375 @@
+# H700 — план подключения полной игры
+
+**Редакция 1, 2026-11-16. УТВЕРЖДЁН пользователем: «Прочитал короткую версию плана. Даю добро на все». Решения D1…D11 и локальные GM-01…GM-17 разрешены; commit/push после каждой завершённой итерации подтверждены отдельно. Device-окна по D11 согласуются отдельно.**
+
+Цель: воспроизводимо собрать **Metroid Prime Unbound v0.46.0** и получить корректно работающую игру на **ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda**: графика, интерфейс, встроенный контроллер, звук, штатные сохранение/загрузка. **Достижение 30 FPS — следующий отдельный этап**, не критерий завершения этого плана.
+
+Короткая версия — [H700_GAME_SUMMARY.md](H700_GAME_SUMMARY.md). Правила — [H700_WORKFLOW.md](H700_WORKFLOW.md); состояние — [H700_PROGRESS.md](H700_PROGRESS.md). Основание: новая база `c872da704` / v0.46.0, интеграция на `03dff0827`, [архитектурное решение](H700_ARCHITECTURE_DECISION.md), [IG-план](H700_INTEGRATION_PLAN.md) и [device evidence](H700_INTEGRATION_GATE.md).
+
+## 1. От чего продолжаем и что получаем
+
+IG-01…IG-13 дали постоянный production backend, а не одноразовую замену renderer. Последний корректный IG-14 manual run прошёл bounded-сценарий, пользователь подтвердил видимый запуск через Ports. Три других manual runs остались incomplete/exit1 из-за отсутствия observed actual overlap. Это не 4/4 PASS; причина расхождения `fbgrab` с точными native/GL samples не установлена. Новые повторы демки ради зелёной матрицы не нужны.
+
+**Сохраняем:** SDL3-over-SDL2 → firmware SDL2 `mali` → EGL/GLES + pinned Dawn; настоящие FIFO/render/compiler workers; main presenter; два permanent 640×480 imports; forward/reverse completion; mixed vertex-texture/fragment-SSBO generator; cache namespace `h700-mixed-v1`; IG11 drain, map retirement и whole-share-group teardown.
+
+**Результат данного плана:** настоящий `metroid_prime_port`, воспроизводимый offline build recipe, проверенный ARM64 пакет с notices, отдельная установка Ports и отчёт об ограниченной, но содержательной приёмке реальной игры. Это не прохождение всей кампании и не сертификация всех дисков/настроек upstream.
+
+**Разрешена локальная реализация GM-01…GM-17 в рамках утверждённых решений.** Утверждение локальных итераций не означает разрешения на SSH/deploy/device tests. Каждое из трёх device-окон согласуется отдельно. Подготовка плана не требует commit/push; после утверждения действует цикл небольшая итерация → проверки → документы → отдельный commit/push.
+
+## 2. Утверждённые решения
+
+D1…D11 утверждены пользователем. Значения профиля ещё предстоит реализовать и проверить; утверждение не превращает их в измеренные гарантии.
+
+| ID | Предлагаемое решение | Граница / причина остановки |
+| --- | --- | --- |
+| D1 | Расширить разрешение на существующий exact EOL ARM64 image **для correctness RC этого плана: configure/build/tests GM-01…17, включая повторную fresh build GM-17**: `sha256:2db4439763783aa796da4268dbd91847ee2c13deef4c8ce2439e0f6bdf926962`, Ubuntu 23.10, Clang 16.0.6, CMake 3.27.4, Ninja 1.11.1 | [Риск EOL](H700_BUILD_ENVIRONMENT.md) принят явно, это не поддерживаемая долгосрочная build platform. Несовместимость root game с toolchain → остановка/согласование, без apt/new image/Rust/Dawn rebuild |
+| D2 | Те же 14 hashed inputs из `tools/h700_integration_driver/inputs.json`: pinned Dawn static, matched SDL fork/headers, nod alpha.12 release static, остальные прежние providers. Offline build; `MP_ANDROID_NOD_STUB=OFF` | Новая зависимость/неожиданный system provider/изменение pins → остановка. Использовать существующие staging/audit helpers, не создавать второй framework |
+| D3 | Первый профиль — offline retail GameCube; `CMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON`, без WSS/Archipelago acceptance. Embedded controller glyphs/resources ON, smoke driver OFF, RmlUi OFF | OpenSSL здесь optional desktop WSS dependency, не причина собирать Rust или отключать чтение disc. Полный online/modded профиль вне этапа; upstream-возможности не удаляем |
+| D4 | Hardware OpenGLES, validation и robustness ON, без AUTO/CPU/Null fallback, skip-present и conflicting overrides. Native/EFB baseline 640×480, 4:3, MSAA1, anisotropy1 | Ошибка init/unsupported override → понятный nonzero до game owners. Не молчаливый переход на иной backend |
+| D5 | Original assets; MEM1 24 MiB, room/resident geometry reserve OFF, effective frame/storage scale **1 unpinned**, resident0, lazy pipelines ON/no old seed | Не `MP_FRAME_BUFFERS=1`: наличие env pin-ит полную allocation. Нужен H700 default; прежние desktop defaults не менять |
+| D6 | Pipeline pressure: moderate **192 MiB**, severe **128 MiB** доступной памяти; replacement pressure те же thresholds, replacements в baseline OFF. Сохраняются штатные eviction/global-pipeline правила | Это начальная policy, **не измеренный бюджет**. На устройстве проверяем маршрут и headroom; менять thresholds автоматически после неудачи нельзя |
+| D7 | Dynamic resolution, interpolation, PBR/remastered/HD, additional sun shadows и дополнительные scan-эффекты OFF; штатные visors, EFB copies, transparency, reflections, bloom остаются | Нельзя выключить retail effect ради PASS или уменьшить разрешение незаметно. `Original Experience` не заменяет этот профиль |
+| D8 | Modern/twin-stick, штатный first-real-controller policy; Back+Start → PortMenu → Quit, gamepad navigation. Stock audio balance. Output cap30 / simulation60 / adaptive OFF — начальная pacing policy | Это **не обещание 30 FPS**. Не переносим donor immediate-exit/gain/volume/PAD-ID hacks |
+| D9 | Healthy reset/exit: game destructor cleanup при работающих FIFO/render; terminal failure: CPU quiescence **до** unwinding, typed internal C++ token, milestone-based no-new-graphics cleanup | Детальный контракт в §4. Нельзя вызвать обычные dtors после закрытия FIFO или освободить owners из-за timeout |
+| D10 | Отдельный физический executable и собственный `<exe>/user/`; `MP_USER_PATH` указывает туда же. `share_emulator_card=0`, `quick_resume=0`; стабильный installation path | Никаких старых settings/cards/mods/caches, symlink на старую установку, migration или serial sidecar. Старый порт не затрагиваем |
+| D11 | Три коротких ручных device-окна с реальной игрой, без фоновой второй графической сессии, destructive fault injection и автоматического убийства при записи CARD | Time/headroom/watchdog policy в §6. Каждый запуск требует отдельного разрешения, approval плана этого не даёт |
+
+Изменение любого из этих выборов требует остановки и нового согласования по workflow.
+
+## 3. Сборка, память и платформенные границы
+
+### 3.1. Настоящий root target, не расширенная демка
+
+Root `CMakeLists.txt` создаёт OBJECT library `mp_game` и executable **`metroid_prime_port`**, включая `src/MetroidPrime/main.cpp`, MusyX и остальные game dependencies. `cmake/h700/InitialCache.cmake` — профиль slice, его нельзя объявлять готовой сборкой игры.
+
+Предлагаемые **новые** пути (сейчас отсутствуют): `cmake/h700/GameInitialCache.cmake`, `tools/h700_game/`, `packaging/h700/`. Они тонко связывают root build с существующими safe staging/offline/audit helpers. Сначала root-scope `find_package(nod CONFIG GLOBAL … NO_DEFAULT_PATH)` до Aurora: это известное решение directory-local imported targets из IG, не смена package/version. Сохраняются `-fsigned-char`, `-fno-strict-aliasing`, `-fwrapv`, ABI compatibility и meaningful diagnostics. ISO не нужен для compilation: glyphs встроены, игровые fonts берутся из retail DOL при запуске.
+
+Fresh output, read-only source, writable output, `--pull=never --network=none --read-only`; контейнер не является Jacaranda sysroot. В build-контейнере **не запускаем GPU**. `--version` и settings selftest допустимы только по проверенному no-init пути. Рецепт и реальные команды публикуем после их выполнения, не выдаём планируемый CLI за существующий.
+
+ELF audit включает actual game + bundled SDL и их loader/NEEDED/version nodes, затем firmware SDL2 `dlopen` chain. Нынешний snapshot содержит только пять выбранных exact exports, **не полную symbol closure**. Если статического evidence недостаточно, помечаем unresolved imports и проверяем loader в разрешённом device-окне; metadata не называется runtime PASS. Firmware libraries не подменяем.
+
+### 3.2. RAM: известные размеры и проверяемая policy
+
+Source-level desktop MEM1 reserve256 MiB / room reserve / scale12 — риск профиля, **не измеренный OOM и не immediate RSS**: часть reserve virtual/lazy. Linux `LowRamDevice()` сейчас false, поэтому H700 defaults задаём явно.
+
+При scale1 staging начинает с **30 MiB ×5 =150 MiB**, ceiling **63 MiB ×5 =315 MiB**; это не вся память и не доказательство одновременного resident peak. Дополнительно есть 32 MiB native skinning ring вне MEM1, MEM1, game heaps, textures, pipelines, mirrors и shared driver allocations. Retail texture cache128 MiB и desktop replacement cache4 GiB — разные сущности; выключенный HD cache не освобождает всю обычную графику.
+
+В D6 выбраны moderate192/severe128, чтобы desktop thresholds1024/512 не держали 1-GB устройство постоянно в наиболее жёстком режиме, сохранив pressure handling до исчерпания памяти. Это обоснование начального выбора, **не evidence достаточности**. Не уменьшать/увеличивать staging/ring/retail cache, не отключать eviction, не добавлять swap/governor/clock tuning в этом плане.
+
+Для согласованного маршрута фиксируем `/proc` MemAvailable и process RSS/HWM примерно раз в секунду, доступные штатные memory/growth/trim diagnostics и точки scene/reset. Не складываем RSS и GPU accounting как независимые величины: память общая. Peak между samples может быть пропущен — ограничение отчёта.
+
+**Gate:** ни allocation failure/overflow/OOM-kill, ни unsafe reuse; sampled MemAvailable не ниже **96 MiB**, после повторного маршрута нет неограниченного роста owners/arenas, все high-water/growth events объяснены. 96 MiB — предлагаемый запас для первой приёмки, не гарантия ОС. При пересечении порога окно не PASS: остановить нагрузку и выйти штатно при ближайшей безопасной возможности; не прерывать CARD write. При невозможности безопасного выхода — сохранить partial и запросить решение. Не внедряем автоматический memory-killer. Стабильное plateau может быть выше начального RSS из-за caches; возврат точно к стартовому RSS не требуем.
+
+### 3.3. Input/audio/disc/cards — сохранить новые реализации
+
+- **Input:** `extern/aurora/lib/input_first_port.hpp`, `lib/input.cpp`, `platform/input/port_input_devices.cpp`, `platform/port_controls.cpp`, `platform/debug_ui/ui_common.cpp`. Проверить настоящий встроенный pad и PortMenu, оба порядка Back+Start; не переписывать scheduler/input только ради переноса.
+- **Audio:** MusyX32kHz, штатный SDL stream, существующий `MP_AUDIO_STATS` в `extern/musyx/src/musyx/runtime/hw_pc.c`. Silent fallback возможен: driver string/exit0 не доказывают звук. `PIPEWIRE_RUNTIME_DIR=/run` задаётся только при существующем socket и незаданной переменной; никаких mixer/services/forced ALSA изменений. Music/SFX/spatial/movie/pause-resume проверяются на слух пользователем.
+- **Disc:** actual `SDL_IOFromFile("rb") → nod_disc_open_stream`, callbacks read/seek в `extern/aurora/lib/dolphin/dvd.cpp`. Kernel4.9 compatibility ещё не подтверждена. Не добавлять io_uring/pread fallback/Rust по одним weak imports. Launcher принимает один явный absolute readable regular image, quoted одним argument, без glob/диалога/поиска старого install. Первый диск — одна выбранная пользователем legal GameCube release; рекомендуем USA1.00, но это не обязательная новая покупка/смена образа. Другие revisions/Trilogy вне первой матрицы.
+- **Cards:** `platform/include/port_paths.h`: `CardFolder()` использует writable `<exe>/user/` независимо от `MP_USER_PATH`. Поэтому изоляция требует отдельного executable directory, не одной env. Существующие nonzero serial, identity checks, atomic writes сохраняем. Real station save → обычный exit → **новый процесс** → file select/CARD load → gameplay. Quick-resume/savestate не заменяют проверку.
+
+## 4. Game lifecycle: обязательный контракт реализации
+
+### 4.1. Healthy boundary без закрытия поколения
+
+`archSupport` — локальный owner в `RsMain`, `x164_archSupport` — raw alias. Деструкторы renderer/models/palettes/textures/ARAM создают новые delayed frees; `CStateManager` может отправлять `GXDestroyPBR*`/resident cleanup. `GXDrawDone` — **FIFO barrier, не render/GPU completion**. Диск/loader должны жить до уничтожения `CResLoader`.
+
+Reset и normal exit выполняются на main safe-point:
+
+1. Остановить game ticks/draw, без повторного entry из progress callbacks.
+2. Если открыт Aurora frame — закончить **ровно один раз**, с учётом `s_auroraFrameOpen` в `src/Kyoto/Graphics/DolphinCGraphics.cpp`.
+3. Status-bearing FIFO drain → render sync, включая **возврат** post-submit callbacks и уничтожение их game-facing captures. Queue-empty и GX marker недостаточны.
+4. Уничтожить `archSupport` при живых workers/backend. Raw alias не должен оставаться доступным как рабочий owner.
+5. Drain destructor tail → render sync. После этого flush delayed frees, **без лишнего GX command** за уже доказанной границей.
+6. **Reset:** создать новый `archSupport`, продолжить в том же generation; root admission глобально не закрывать, device/compiler не join-ить.
+7. **Exit:** дополнительно `ShutdownSubsystems`, game globals и их destructor tail, final delayed flush/ARAM в исходно необходимом порядке; loader живёт достаточно долго. Затем существующий **полный IG11**, platform/disc cleanup и `aurora_shutdown` без двойного shutdown.
+
+Для исходных game buffers CPU boundary достаточна: FIFO копирует arrays/vertices, texture uploads имеют owned staging; GPU использует Aurora-owned resources. Universal GPU-idle/native retirement/compiler join **не добавлять к healthy reset**. Compiler configs value-captured. Если обнаружен конкретный late callback к game raw userdata за этой границей — остановка и пересмотр, не speculative universal framework.
+
+### 4.2. Terminal failure без раннего unwinding
+
+Транспорт: отдельный **typed internal C++ token**, не `std::runtime_error` (он ловится boot-кодом), только с main safe-point. Это не исключение из callbacks, C ABI, workers, `noexcept` или деструкторов.
+
+1. H700 terminal state прекращает обычные waits/frame/growth paths, будит waiters и передаёт статус main, не симулирует success.
+2. **До throw** main получает фактическую CPU quiescence FIFO/render/compiler. Reuse IG11 polling **до стадии Maps** после compiler joins, сохраняя device/exports; добавить явную остановку/статус `CPU quiescent`, не `Released`/GPU complete. Одна проверка текущего enum без барьера продвижения недостаточна.
+3. Если driver/worker call завис или completion неизвестен — **не throw/unwind используемых owners**. Удерживать owners, диагностический fail-stop; watchdog/оператор не объявляют это успешным cleanup.
+4. `gameGlobalObjects` и `archSupport` объявляются снаружи encompassing boot+loop `try`; typed `catch` находится **внутри живого owner scope**. Inner generic loop catch rethrow-ит этот конкретный token, а не вызывает прежний crash abort.
+5. После CPU boundary — явная milestone-based terminal cleanup **без новой graphics work**. CFDk имеет no-command flush; частично созданные owners учитываются. Normal и terminal destruction paths не подменяют друг друга.
+6. Для retail profile room-env/resident resources не создаются. Если фактически созданы ресурсы, destructor cleanup которых требует уже закрытого FIFO, это terminal-cleanup blocker: не игнорировать `GXDestroy*` и не отмечать released; остановка/согласование. Пустота должна быть проверена **до throw/unwinding и уничтожения соответствующего owner**, не предположена и не проверена постфактум.
+7. Продолжить оставшиеся IG11 map/native/holder/device/export/window стадии. После device loss GPU completion не обещаем; Unknown не разрешает освобождать потенциально используемые данные или начинать новое поколение. CPU quiescence не равна безопасному GPU release.
+8. Провести nonzero через `RsMain → metroid_main → platform main`: нынешний `metroid_main` игнорирует RsMain return. Boot failure должен иметь ту же безопасную границу, а не только inner-loop catch.
+
+**Не делаем:** live device-loss recovery, новый универсальный exception framework, искусственные GPU-completion tokens или полный rewrite game ownership. Existing SkinPool detached/process-lifetime сам по себе не основание переделывать потоки: `Run` синхронно ждёт настоящие jobs. Cancelled waiter не разрешает освободить running job inputs.
+
+### 4.3. Skinning ring
+
+В `src/Kyoto/Animation/DolphinCSkinnedModel.cpp` init/reclaim/allocation могут бесконечно ждать draw-sync token. Нужны main progress/health **вне locks**, настоящий FIFO-ordered token/wrap contract, invalid-size check и failure **до** установки workspace pointers. Не возвращать фиктивный allocation/token. Проверка должна различать pending/success/terminal и сохранность данных running skin jobs.
+
+## 5. Локальные итерации
+
+Для каждой карточки: до работы goal gate по [workflow](H700_WORKFLOW.md), собственный небольшой diff, только относящиеся проверки, запись результата/команд/ограничений в этот документ и [прогресс](H700_PROGRESS.md), отдельный commit/push **после утверждения**. Новые paths ниже — проектируемые. Донор read-only; `.DS_Store` и чужие local changes не трогаем.
+
+Общая безопасность/откат: локальные шаги не подключаются к устройству; не менять image/pins/firmware и прежние builds; при failure сохранить partial и не продвигать artifact. Откат только собственных изменений после проверки diff, без destructive reset/clean. Каждая карточка — **1–2 часа активной работы**, кроме явно более короткой; ожидание cold builds, пользователя и доступов отдельно. Если не помещается или требуется новый значимый выбор — согласовать split, не превращать карточку в неограниченное «починить всё».
+
+### GM-01. Full-game build profile
+
+- **Цель/риск:** slice cache не собирает root игру; закрепить providers до первой попытки.
+- **Зависимости:** утверждение D1–D3. **Файлы:** root `CMakeLists.txt`, новый `cmake/h700/GameInitialCache.cmake`, тонкий `tools/h700_game/` entry поверх существующих helpers.
+- **Решение:** root game target, GLOBAL nod import до Aurora, те же hashes/offline mounts, SDL headers/library одного snapshot; никаких новых providers.
+- **Проверка/готово:** hash/missing-input fail до configure; root configure в fresh output перечисляет expected providers, source manifests и compile definitions. Никакой сети/GPU. Только configure PASS, не full build.
+- **Safety/docs:** общий rollback; D1/EOL scope и actual configure command записать здесь; существующий slice не ломать.
+
+### GM-02. Первый compile/link настоящей игры
+
+- **Цель/риск:** MusyX/API slice не доказывает C++ game dependencies/toolchain compatibility.
+- **Зависимости:** GM-01. **Файлы:** только доказанные root/H700 build seams; существующие game manifests не урезать.
+- **Решение:** собрать `metroid_prime_port` с embedded resources, без disc, nod stub и smoke mode. Допустимы узкие H700 build fixes внутри D1/D2; новая библиотека/toolchain или semantic game fix требует остановки.
+- **Проверка/готово:** full compile/link и artifact manifest, `--version` лишь после подтверждения no-init. Никаких no-op symbols/исключённых game sources ради линковки.
+- **Safety/docs:** artifact пока не deployable; сохранить actual errors/решение/команды. Оценка1–2ч **на ограниченный compatibility diff**, cold build отдельно; неизвестные новые blockers не считаются включённым пакетом исправлений.
+
+### GM-03. Детерминированный H700 retail profile
+
+- **Цель/риск:** desktop scale12, Linux low-RAM=false и NDEBUG toggles неприменимы как baseline устройства.
+- **Зависимости:** GM-02, D4/D5/D7/D8. **Файлы:** `platform/main.cpp`, settings/profile seams, Aurora init config.
+- **Решение:** H700-only effective defaults из §2, scale1 unpinned, lazy/no-seed, validation/robustness ON; reject противоречащих backend/skip-present/toggle overrides. Existing user settings не перезаписывать: создавать baseline только новой установки и логировать effective значения/источник.
+- **Проверка/готово:** focused profile tests на effective values, absent-vs-present env pin и conflict rejection; non-H700 defaults неизменны. Не использовать GPU Null profile17 для этой проверки.
+- **Safety/docs:** generic settings migration вне scope; сохранить профиль и список отклоняемых override-классов, не raw environment.
+
+### GM-04. Pressure policy и наблюдаемость RAM
+
+- **Цель/риск:** shared1GB и staging150…315MiB требуют реальных данных, не вывода OOM из reserve.
+- **Зависимости:** GM-03, D6. **Файлы:** `platform/main.cpp`, `platform/port_memory_log.cpp`, существующие pressure interfaces/tests.
+- **Решение:** H700 moderate192/severe128 с сохранением штатных trims; bounded diagnostics для effective reserve/growth/pressure, reuse existing memory log. Минимальный внешний `/proc` observer входит в device procedure, не новая telemetry subsystem.
+- **Проверка/готово:** CPU tests thresholds/boundaries и сохранение GLOBAL pipeline semantics; переполнение/allocation failure не success. Подготовлены записи для gate96MiB, но **RAM device PASS ещё нет**.
+- **Safety/docs:** не менять sizes/eviction алгоритм/ОС; описать accounting limitations и конкретный sampled headroom gate.
+
+### GM-05. Init gate до создания игры
+
+- **Цель/риск:** platform игнорирует `aurora_initialize` result, crash marker допускает AUTO fallback.
+- **Зависимости:** GM-03. **Файлы:** `platform/main.cpp`, actual H700 init/status interface.
+- **Решение:** проверить result и actual backend/terminal state до game owners, strict OpenGLES; partial init → существующий безопасный teardown по milestones, nonzero, без второго backend.
+- **Проверка/готово:** focused injected status tests before-owner boundary; failure не входит в `metroid_main`, не double shutdown; success не повторяет init. Real loader/GPU проверяется только позже.
+- **Safety/docs:** не расширять recovery; сохранить порядок и exit codes.
+
+### GM-06. Healthy game-owner barrier
+
+- **Цель/риск:** `GXDrawDone` не защищает owner от render callback tail.
+- **Зависимости:** GM-05, D9. **Файлы:** Aurora FIFO/render status-bearing seams; `src/Kyoto/Graphics/DolphinCGraphics.cpp`; соответствующие existing tests.
+- **Решение:** reusable main-only boundary §4.1: finish-open-frame once → FIFO drain → render sync/callback-return; root admission остаётся открыт. No-command CFDk flush отделить от command-producing варианта.
+- **Проверка/готово:** pending FIFO/render/callback work задерживает boundary; callback capture уничтожен до success; opened/closed frame без double-end; terminal возвращает failure, а не success. Healthy GPU-idle/compiler joins не добавлены.
+- **Safety/docs:** вызовы progress вне locks, без game reentry; documented boundary semantics. Не менять existing GX callback ABI.
+
+### GM-07. Reset игровых owners
+
+- **Цель/риск:** reset `archSupport` создаёт новый owner, пока старые commands ещё могут его использовать.
+- **Зависимости:** GM-06. **Файлы:** `src/MetroidPrime/main.cpp`, `src/Kyoto/CFrameDelayedKiller.cpp`, узкие lifecycle tests.
+- **Решение:** порядок §4.1 до/после destruction, raw alias discipline; после delayed flush новый archSupport в том же generation. Не закрывать root admission.
+- **Проверка/готово:** ordering regression: pre-dtor work → destructor commands → tail barrier → frees → new owner; reset не вызывает generation shutdown. Реальный reset остаётся device gate.
+- **Safety/docs:** normal-only path не принимает terminal как completion; сохранить evidence и точный reset trigger для device-процедуры.
+
+### GM-08. Нормальный выход всей игры
+
+- **Цель/риск:** shutdown globals/ARAM/loader имеет дополнительные destructor tails за archSupport.
+- **Зависимости:** GM-07. **Файлы:** game main, platform main, CFDk; existing lifecycle integration seams.
+- **Решение:** §4.1 exit: owner → subsystem/globals tails → final delayed flush/ARAM → IG11 → platform/disc final cleanup. Loader/disc живут до CResLoader dtor, shutdown вызывается один раз.
+- **Проверка/готово:** ordering test с destructor-created cleanup и live loader; all normal accepted work drains. Back+Start не превращён в immediate kill.
+- **Safety/docs:** не освобождать используемые owners при timeout; зафиксировать ownership order и unresolved conditions.
+
+### GM-09. Terminal CPU-quiescence checkpoint
+
+- **Цель/риск:** исключение до joins раскрутит RAII и освободит данные executing worker.
+- **Зависимости:** GM-06, D9. **Файлы:** `extern/aurora/lib/h700/lifecycle.hpp`, existing IG11 implementation и lifecycle tests.
+- **Решение:** explicit poll mode/checkpoint до Maps, после producers/FIFO/render/compiler joins; device/exports ещё удержаны. Pending/CPU-quiescent/Unknown различаются; старый full-shutdown default сохраняется.
+- **Проверка/готово:** executing CPU job/callback/compiler блокирует checkpoint; на checkpoint Maps/native/release ещё не выполнены; hung/unknown не success. No real GPU-loss injection требуется для CPU ordering test.
+- **Safety/docs:** не дублировать state machine и не объявлять CPU status GPU-complete; сохранить stop/resume contract полного IG11.
+
+### GM-10. Terminal status transport через boot и loop
+
+- **Цель/риск:** boot/runtime catches и прежний crash abort могут swallow failure; `metroid_main` теряет RsMain return.
+- **Зависимости:** GM-09. **Файлы:** `src/MetroidPrime/main.cpp`, platform/game wait safe-points, internal token declaration.
+- **Решение:** encompassing owner scope и typed catch §4.2, token только после CPU checkpoint; inner generic catch rethrow; nonzero до platform. Все relevant waits обязаны завершить обычный путь при terminal, не продолжить void-call как success.
+- **Проверка/готово:** boot partial-init и loop terminal transport, token не caught как runtime_error, owners остаются живы до checkpoint; unknown/hung case не unwinds. Запрет throw через C/noexcept/worker проверен по затронутым call sites.
+- **Safety/docs:** никакого global exception redesign; таблица safe-points и return propagation.
+
+### GM-11. Terminal owner cleanup по milestones
+
+- **Цель/риск:** обычные game dtors публикуют commands в уже закрытый FIFO.
+- **Зависимости:** GM-08/GM-10. **Файлы:** game main, CFDk, конкретные destructor seams renderer/room/resident cleanup и их tests.
+- **Решение:** только явный no-new-graphics path после CPU checkpoint, no-command delayed flush, partial construction milestones; проверка отсутствия non-retail live cleanup obligations, затем resume IG11. Unknown GPU state сохраняет необходимые holders, не fake release.
+- **Проверка/готово:** no enqueue после terminal seal; каждый созданный owner либо безопасно released, либо явно retained при Unknown; destructor-generated retail frees покрыты. Непустой неподдержанный room/resident cleanup → диагностический blocker, не silent skip.
+- **Safety/docs:** если безопасный no-command cleanup требует более широкого redesign, остановить план. Оценка1–2ч для установленных retail seams, не обещание любого destructor rewrite.
+
+### GM-12. Skinning waits и allocation failure
+
+- **Цель/риск:** busy-wait ring token на main может остановить present/progress; failure не должен установить неверный workspace.
+- **Зависимости:** GM-10/GM-11. **Файлы:** `src/Kyoto/Animation/DolphinCSkinnedModel.cpp`, связанные headers/tests; SkinPool только если конкретный call site требует status propagation.
+- **Решение:** §4.3, progress/health вне locks; ordered token/wrap, invalid-size guard, pending/terminal до pointer assignment; running jobs retain inputs.
+- **Проверка/готово:** pending→actual token completion, wrap/reclaim, impossible size, terminal без allocation/workspace use, cancelled waiter не освобождает running data. Не immediate-token mock вместо FIFO semantics.
+- **Safety/docs:** ring32MiB и scheduler не менять; записать token invariants и реальные failure paths.
+
+### GM-13. Локальная проверка game/lifecycle diff
+
+- **Цель/риск:** H700 guards не должны сломать upstream core/GX или корректность освобождения.
+- **Зависимости:** GM-04…GM-12. **Файлы:** затронутые existing tests/manifests; production changes только correction уже выбранных контрактов.
+- **Решение:** explicit targeted suites из §7, полный compile `aurora_core`+`aurora_gx` non-H700, root game ARM64 build; no GPU в container, не all-platform matrix.
+- **Проверка/готово:** relevant CPU/source tests и оба guard builds PASS, actual counts/commands сохранены. Meaningful tests не отключены. Device behaviour остаётся unknown.
+- **Safety/docs:** нет unrelated test fixes; fresh outputs не переиспользуют чужие конфигурации. Build waits отдельно.
+
+### GM-14. Изоляция data и settings без переписывания IO
+
+- **Цель/риск:** одного MP_USER_PATH недостаточно для cards, implicit migrations могут прочесть старые данные.
+- **Зависимости:** GM-03/GM-08. **Файлы:** существующие `platform/include/port_paths.h`, settings/path tests и будущая package layout specification; production IO лишь если тест обнаружил нарушение нового isolated contract.
+- **Решение:** отдельный physical executable dir + same-path user dir, new-install baseline, quick-resume/share OFF; literal disc argument. Не включать old loose-data рядом.
+- **Проверка/готово:** temporary two-install fixtures: settings/cards/cache не пересекаются, no old autodiscovery/migration; existing atomic/identity tests PASS; `port_settings_roundtrip` реально исполняет game selftest без GPU.
+- **Safety/docs:** не открывать личные cards/saves и не менять serial; схема package dirs и first-run policy.
+
+### GM-15. Ports launcher полной игры
+
+- **Цель/риск:** корректный executable не равен корректному muOS invocation/audio/data path.
+- **Зависимости:** GM-05/GM-14, D8/D10. **Файлы:** новые launcher/template в `packaging/h700/`, тонкие package helpers в `tools/h700_game/`.
+- **Решение:** фиксированный new install path, две SDL env, sanitized H700 overrides, one quoted image arg, own user/cache/log path; conditional PipeWire runtime, preserved caller audio configuration. Сохранять frontend-exported `SDL_ROTATION`, `SDL_HQ_SCALER`, `SDL_BLITTER_DISABLED`, `SDL_ASSERT`, `SDL_GAMECONTROLLERCONFIG_FILE` по контракту существующего manual launcher, без безусловной перезаписи. Lock только своей установки, traps cleanup; не завершать menu/чужой процесс автоматически.
+- **Проверка/готово:** shell/static + mock child tests: spaces в path, missing/unreadable/not-regular image, conflicting overrides, existing lock/exit code, socket absent/present, сохранение переданных frontend SDL variables. Никаких firmware writes/remote deployment в helper.
+- **Safety/docs:** пользователь выбирает разрешённый absolute disc path перед device-окном; launcher не ищет старый install. README с реальным использованием после проверки, не PortMaster submission.
+
+### GM-16. ABI, provenance и licenses настоящего пакета
+
+- **Цель/риск:** slice artifact audit не распространяется автоматически на game ELF/dependencies.
+- **Зависимости:** GM-13/GM-15. **Файлы:** reuse audit/package helpers, `packaging/h700-notices/`, `tools/collect_licenses.sh`, новый package manifest/report.
+- **Решение:** §3.1 audit полной цепочки, bundled SDL only по установленной policy; complete notices через существующий collector, matching pinned Dawn primary texts. Source/input/image/config hashes и build commands; никаких игровых данных.
+- **Проверка/готово:** artifact architecture/interpreter/NEEDED/version/import report, package content/licenses/hash checks; отсутствие container EGL/GLES/SDL2/libmali и private paths. Неполный firmware exact-symbol evidence явно listed, не замаскирован PASS.
+- **Safety/docs:** unresolved loader requirement блокирует deploy до согласованного loader check, не install system libs. Обновить ABI report только по новым facts.
+
+### GM-17. Release candidate и маршрут приёмки
+
+- **Цель/риск:** устройство должно проверять один идентифицированный full-game artifact, не incremental смесь.
+- **Зависимости:** GM-16; согласованные disc revision/container и доступ к маршрутам §8.
+- **Файлы:** build/package recipe, новая обезличенная запись приёмки; production code не менять.
+- **Решение:** второй fresh offline build по опубликованному рецепту; сравнить inputs/config/dependency manifests, объяснить возможную nondeterministic binary metadata, package hash каждого artifact. Reproducible recipe не называть bit-identical без сравнения hashes. Выбрать один RC для device-окон.
+- **Проверка/готово:** same source/pins/options снова compile/link/audit/CPU checks; packaged RC hash; no-init selftests. Финальный список сцен/кнопок/ожидаемых эффектов готов **до** запроса device access, late-save access не оставлен «потом».
+- **Safety/docs:** никаких загрузок saves/ISO в Git. Если нет legal доступного late route, согласовать ожидание прохождения или private test copies; не урезать coverage молча. Оценка1–2ч подготовки/проверки, два cold builds могут ожидаться существенно дольше.
+
+## 6. Device policy: отдельно разрешаемые окна
+
+Все окна — через правильный Ports invocation с пользователем перед экраном, без SSH fullscreen поверх живой menu/session. При необходимости SSH согласовать endpoint/host identity/разрешённые команды и deploy отдельно. Device checks не начаты этим документом.
+
+- Перед каждым окном: аппарат/firmware, package hash, выбранный образ, собственная isolated installation/user directory, отсутствие чужой активной игры, достаточно места на storage. Новая установка создаётся **один раз** и остаётся по стабильному пути; между окнами сохраняем её card/settings/cache. Новыми делаем только каталоги отчётов; разрешённые late-save copies подготавливаются отдельным явным действием, не сбросом user data. Использовать уже известные firmware baselines, не повторять общий inventory ради inventory. Проверить только затрагиваемые libraries до/после, без их замены.
+- Запуск пользовательский/наблюдаемый. Все logs ограничены размером и остаются private/ignored до очистки; environment, paths, saves, ISO, core не публиковать. Нет forced backend/audio fallback, dummy audio, автоматического пропуска всех роликов или smoke mode.
+- **Time box:** окно A до20мин, B до30мин, C до30мин активной device-сессии; это предел эксперимента, не kill timeout. Время естественного прохождения к late content отдельно согласуется. По окончании — PortMenu/Quit в безопасной точке, не power-cut.
+- **Hang bound:** 60с без наблюдаемого progress — FAIL/partial и диагностическая остановка эксперимента; normal Quit свыше30с — FAIL/partial. Это deadlines для результата, **не разрешение убить процесс**. Во время CARD operation не посылать timeout/SIGKILL и не перезагружать устройство. При зависании сохраняем наблюдение, удерживаем owners там, где CPU/GPU use неизвестно; отдельно согласуем принудительное завершение с риском для новой test card. Автоматический destructive watchdog из IG-demo к save-capable игре не переносим.
+- Terminal fault injection допускается локально на CPU seams с временными fixtures; на device не вызываем loss/OOM/forced kill ради доказательства failure policy. Естественный failure не скрываем; no-return driver call нельзя обещать исправить C++ exception.
+- Headroom gate96MiB и критерии §3.2 применяются ко всем окнам. При warning остановить нагрузку/выйти безопасно; не продолжать ради screenshots. Никаких clocks/governors/swap/mixer/system-service изменений.
+- Rollback: штатный выход, удостовериться в отсутствии своего процесса/lock, убрать только свою новую launcher/data installation **лишь по согласованию**, сохранив новые test saves по желанию пользователя. Не удалять оставленный по просьбе IG launcher. Старую игру/settings/cards не трогаем и не «восстанавливаем» из ненужного backup.
+
+### GM-18. Окно A — первая настоящая игра
+
+- **Цель/риск:** loader/kernel4.9/nod/display/pad/audio не доказаны демкой.
+- **Зависимости:** GM-17 и отдельное разрешение A. **Объём:** выбранный RC, одна новая установка, один legal disc; до20мин.
+- **Процедура:** Ports launch → logo/movie с реальным звуком → file select → new game → управляемая сцена/движение/стрельба → PortMenu → Quit. Проверить physical image orientation/цвет/читаемость HUD, controller без keyboard, music/SFX/movie audio, нет silent fallback; записать actual backend/errors/exit и memory baseline.
+- **Готово:** игровая сцена, звук и управление подтверждены пользователем, readable disc callbacks фактически работают, штатный exit, возврат в Ports, нет validation/GL/EGL/device-loss errors. Одно меню не PASS. Это не все effects/save/load.
+- **Safety/docs:** §6; failure → минимальный root-cause report, не новый nod backend или бесконечный rerun. Результат в отдельный game acceptance report, кратко в прогресс. Оценка1–2ч на подготовку/разбор, device time отдельно.
+
+### GM-19. Окно B — lifecycle, RAM и настоящий save/load
+
+- **Цель/риск:** игра может boot-иться, но unsafe reset/tail, нехватка RAM или неверная card изоляция проявятся позже.
+- **Зависимости:** GM-18 PASS, отдельное разрешение B; заранее выбранный достижимый маршрут к station/area transitions/reset. **Объём:** до30мин, тот же RC.
+- **Процедура:** переходы между несколькими rooms с возвратом по одному маршруту дважды; pause/map/PortMenu; один штатный reset в file select/пересоздание archSupport без нового generation; продолжение игры. Save station → дождаться подтверждения записи/исчезновения pending card IO → normal Quit → новый process → file select/CARD load → управляемое gameplay в сохранённой точке.
+- **Готово:** ordering/lifecycle diagnostics согласованы с §4, game owners не удерживаются/не растут бесконтрольно; RAM §3.2 PASS; реальные card files только в new user dir, identity/atomic-write errors отсутствуют, user подтвердил loaded progress. Settings/bindings persist в новом процессе. Quick-resume OFF; no savestate substitute.
+- **Safety/docs:** §6, не копировать personal save без разрешения; не reset/kill во время write. Отчёт содержит маршрут, sampled minimum/HWM, growth/trim и limits, не обещание всей кампании. Оценка1–2ч + отдельно окно.
+
+### GM-20. Окно C — retail correctness и полное управление
+
+- **Цель/риск:** shader demo/ранняя сцена не доказывают visors/EFB/materials/menus/input coverage.
+- **Зависимости:** GM-19 PASS, подготовленная в GM-17 карта доступных сцен, отдельное разрешение C. **Объём:** до30мин на известные сцены, тот же RC; непокрытые пункты остаются pending, не PASS.
+- **Процедура:** конечный checklist §8, пользователь видит и слышит результат; screenshots/clips при необходимости только supplementary evidence. Проверить поздние visors/beam effects на разрешённых private test copies или naturally reached save, не включать mods/smoke cheats ради снятия флажка.
+- **Готово:** все строки §8 имеют observed PASS/обоснованный N/A для выбранного retail release; любой missing scene/access — pending и блокирует полную приёмку. Наличие логов без physical confirmation недостаточно.
+- **Safety/docs:** private copies никогда не пишутся поверх личных saves; только разрешённая копия в собственной установке. Source effect defect — конкретный минимальный fix+regression в выбранной архитектуре после согласования новой карточки, не заранее обещанное «починить все эффекты за2ч».
+
+### GM-21. Итоговый пакет и граница переноса
+
+- **Цель/риск:** не выдать испытанный частичный artifact/демку за готовую новую игру.
+- **Зависимости:** GM-18…GM-20 PASS **одного RC**; любые code/package changes требуют повторения затронутых gates, не автоматического зачёта старых runs.
+- **Файлы:** game acceptance report, README, `docs/NATIVE_PORT.md`, прогресс, проверенные package/build instructions. Production code не менять.
+- **Решение/готово:** manifest/hash ровно проверенного пакета, reproducible build evidence, полный checklist/ограничения, безопасный manual install/uninstall; user acceptance. Frametime/performance baseline сохранён без обещания30FPS; будущие идеи только в optimization notes. Невыполненный критерий явно блокирует статус полного переноса.
+- **Safety/docs:** обезличить logs и проверить package на отсутствие assets/saves/secrets; старую установку не заменять автоматически. Оценка1–2ч. Не пересобирать «финальный» binary после приёмки и не объявлять непроверенную пересборку тем же artifact.
+
+## 7. Минимальная локальная валидация
+
+Точные команды/regex записываются по actual configure/`ctest -N` в своей итерации; здесь указаны **существующие targets/entries**, не вымышленные команды нового build wrapper.
+
+| Изменение | Минимальные относящиеся проверки |
+| --- | --- |
+| Root build/providers | Настоящий `metroid_prime_port`, whole MusyX в нём, provider/hash/ABI audit; no-init version; второй fresh build GM-17 |
+| Lifecycle/waits/frame | Существующие `render_worker_tests`, `gfx_recording_tests`, `gx_fifo_tests`, `bloom_readback_slots_tests`; относящиеся cases GenerationLifecycle/PipelineWaitTest/MapCompletionTest + новые game-boundary/terminal/skinning regressions. Это разные target/suite/case names, выбрать actual CTest inventory, а не выдать все за build targets |
+| Non-H700 guards | Полный compile `aurora_core` и `aurora_gx` в отдельном non-H700 output; не несколько случайных TU вместо библиотек |
+| Disc/path isolation | `port_disc_tests`, `port_disc_verify_tests`; temporary fixtures, отсутствие чтения чужого install. Real disc/kernel остаются device gate |
+| Controller/settings | `port_input_gate_tests`, `port_input_engine_tests`, `port_input_bindings_tests`, `port_input_user_presets_tests`, `port_input_map_tests`, `port_input_settings_tests`, relevant InputFirstPort cases |
+| Audio/cards/atomic IO | `port_audio_math_tests`, `port_card_tests`, `port_gci_tests`, `port_save_convert_tests`, existing relevant atomic-IO cases; temporary files only |
+| Settings roundtrip | CTest entry **`port_settings_roundtrip`**, НЕ build target: использует game executable `--settings-selftest` с isolated MP_USER_PATH; exits до graphics |
+| Launcher/package | Missing/mismatched input, quoted spaces, invalid image/lock/conflicts, notices/content/hash checks; не generic новый orchestration framework |
+
+Не строить все тесты всех платформ ради отчёта. Не запускать GPU в image. `ctest -L port` не означает whole Aurora PASS. Если нужный CPU-test backend не способен представить H700 feature, проверяем контракт на существующем seam; не меняем Dawn/лимиты ради новой матрицы. Это не разрешение ослаблять meaningful tests.
+
+## 8. Конечный checklist реальной игры
+
+Перед GM-17 для каждой строки зафиксировать конкретную доступную сцену/действие и ожидаемый результат по оригинальной игре, без private paths. Поздние сцены требуют заранее выбранного законного доступа. В отчёте: RC hash, disc region/revision/container, scene/route, observed result, user confirmation, ограничения. Нельзя назначить N/A эффекту только потому, что к нему ещё не дошли.
+
+| Область | Обязательная наблюдаемая проверка |
+| --- | --- |
+| Boot/display/UI | Logo и movie, file select, HUD/reticle/fonts/glyphs, pause/inventory/map, читаемый PortMenu 640×480/4:3; нет flip/black frame/color corruption |
+| Materials/light | Оpaque/alpha-tested geometry, lighting/lightmaps, animated/skinned actors, weapon, particles, water/transparency, reflections и retail bloom; no missing surfaces после pipeline trim/возврата |
+| EFB/visors | Scan visor с читаемым overlay/text и scan progress; Thermal и X-ray в характерных сценах; штатные EFB-dependent visor/beam/post effects, без отключённых retail функций |
+| Gameplay pad | Movement/aim, fire/charge/missile, jump, lock-on/scan, morph/bombs, beams/visors, pause/map. Всё без keyboard; оба порядка Back+Start; navigation/close/Quit; bindings persist |
+| Audio | Music, SFX, positional balance, movie sound, pause/resume и выход без треска/потери stream; actual audible confirmation + available MP_AUDIO_STATS, no dummy/silent fallback. Rumble отдельно observed/unsupported, не доказан controller name |
+| Lifecycle | Area transition/return, reset/new owner same generation, normal exit after real work, новый process и повторный launch; no device-loss/validation/EGL/GL errors/unknown teardown |
+| Saves | New isolated card → actual station write → normal quit → новый process → file select load → сохранённое gameplay. Существующие personal cards не затронуты; quick-resume OFF |
+| RAM/pacing | Маршрут дважды, samples/HWM/growth/trim и headroom gate; приблизительные frametimes/observable stutters как baseline, без суммирования overlapping thread times и без FPS PASS по screenshot |
+
+Эта приёмка подтверждает **играбельный перенос на проверенном маршруте и release**, не всю кампанию, все контроллеры, HD/PBR, optional photo/profiler/readback paths, другие muOS или30FPS. Если дополнительный эффект реально нужен выбранной retail сцене, его нельзя объявить optional только из-за дороговизны.
+
+## 9. Неизвестности, решения по исходам и стоп-условия
+
+| Что ещё неизвестно | Минимальное evidence / решение |
+| --- | --- |
+| Full root game совместим с exact image? | GM-01/02 compile/link: PASS → продолжать; новый toolchain/dependency нужен → остановка и новая договорённость, не install |
+| Реальные game callbacks выходят за healthy CPU boundary? | GM-06…08 ordering/call-site review и tests; конкретный late userdata → stop/replan. Universal GPU-idle «на всякий случай» не вводим |
+| Terminal retail cleanup укладывается в no-new-graphics? | GM-09…11 explicit milestones/empty-resource assertions; фактический nonempty unsupported obligation → blocker, не ignore |
+| nod actual SDL stream работает на kernel4.9? | GM-18 real legal disc reads/seeks: успех → без нового IO backend; failure → определить actual operation/error, отдельно согласовать необходимый fix |
+| Достаточен RAM budget при настоящих scenes? | GM-18…20 measurements и §3.2 gate: PASS → baseline; fail → остановка, факты, варианты. Не уменьшать эффекты/sizes и не менять thresholds автоматически |
+| Полны ли hardware effects/pad/audio/save? | §8 physical checks; missing/failure → partial report и конкретная карточка исправления/доступа, а не общий rewrite |
+| Driver hang/device loss даёт безопасный normal release? | Это не гарантируется. CPU/GPU Unknown удерживает необходимые owners, fail-stop; отчёт FAIL, отдельное разрешение на forced termination |
+
+**Общая остановка:** изменение architecture/pins/image/security/correctness/acceptance; исчерпанный time box карточки с новым значимым решением; memory/loader/graphics/card failure; отсутствие требуемого device разрешения или late-scene access. Сохранить partial, объяснить fact vs inference, предложить варианты и дождаться согласия. Не продолжать параллельно другие шаги переноса при необходимом изменении плана.
+
+## 10. Оценка и порядок утверждения
+
+**21 карточка**, ориентир **около 30–42 часов активной работы** при отсутствии новых фундаментальных блокеров: local integration GM-01…17, три отдельных device-окна GM-18…20, итог GM-21. Это не гарантия срока: cold full builds/очередь пользователя/прохождение к late scenes/новые согласуемые исправления отдельно. GM-02 и GM-11 особенно чувствительны к ещё не измеренному объёму; их completion не гарантирован одной карточкой.
+
+Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
+
+**Статус после согласования: локальная реализация разрешена, GM-01 configure LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
+
+## 11. Проверка черновика до утверждения
+
+Выполнены два независимых read-only review: lifecycle/CPU checkpoint и build/safety/acceptance. После уточнения D1 scope, сохранения одной установки между окнами и frontend SDL environment contract блокеров в проверенном design не осталось. Отдельно закреплена проверка unsupported cleanup obligations до throw/destruction. Это не верификация ещё не написанного кода; последующее утверждение пользователем записано в начале документа.
+
+Проверены локальные Markdown link targets, уникальность/порядок 21 GM-карточки, whitespace новых документов и diff. Production files не изменялись; build/test/device actions не выполнялись. Существующий whitespace в upstream README вне изменённых строк не исправлялся. Чужие `.DS_Store` сохранены; commit/push подготовки не выполнялись.
+
+## 12. Результаты реализации
+
+### GM-01 — LOCAL PASS: root configure, не compile/link
+
+Добавлены `cmake/h700/GameInitialCache.cmake`, `GameBuild.cmake`, shared `VerifyProviders.cmake` и тонкий `tools/h700_game/build.py` поверх существующего helper. Root H700 branch импортирует GLOBAL nod до Aurora и генерирует actual game/SDL artifact paths. Provider assertions integration driver вынесены без изменения policy; отдельного manifest/build framework нет.
+
+Проверенные команды из корня (output всегда новый):
+
+```sh
+python3 -B tools/h700_game/build.py --check-inputs
+python3 -B tools/h700_game/build.py --configure-only --output build/h700-game-gm01 --jobs 2
+python3 -B tools/h700_integration_driver/build.py --configure-only --output build/h700-integration-gm01-regression --jobs 2
+python3 -B -m unittest discover -s tools/h700_game -p 'test_build.py' -v
+```
+
+- Все14 archive hashes PASS; exact image identity/native Linux ARM64 подтверждены. Fresh offline root configure/generate PASS, no GPU/disc/deploy. Logs/environment/commands и cache — в ignored `build/h700-game-gm01/`.
+- Compile database:1592 entries, в том числе642 `mp_game` units и настоящий `src/MetroidPrime/main.cpp`; MusyX включён. Все game units сохраняют signed-char/no-strict-aliasing/wrap flags. Embedded resources/bundled deps ON, stub/smoke/tests/TLS OFF по approved profile. Это сгенерированные команды, **не выполненная компиляция**.
+- `providers.txt`: SDL3 source `/out/inputs/sdl`, zlib-ng source, zstd static source; Dawn и nod — staged static archives. Game target/artifact — `metroid_prime_port`, не driver. Локальные private absolute paths в versioned report не включены.
+- 5/5 новых profile tests PASS на host;10/10 существующих bootstrap tests PASS на host. Полный integration-helper suite **30/30 PASS в утверждённом Linux image**, включая package/launcher safety. На macOS тот же полный suite имел4 failures/errors и1 skip: отсутствует prerequisite `setsid`; Linux-only launcher fixture не адаптировали и tests не ослабляли. Integration fresh configure также PASS.
+- Independent read-only code review: blockers не обнаружены. Общий slice cache/pins/image не изменены; production runtime ещё не затронут. Next: GM-02 compile/link; этот результат не ABI/runtime/device PASS.

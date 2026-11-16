@@ -6,6 +6,7 @@ project/build/... directory and the already approved native ARM64 image.
 InitialCache.cmake owns the build/provider profile; Inputs.cmake owns staging.
 """
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -23,6 +24,20 @@ ROOT = Path(__file__).resolve().parents[2]
 DRIVER = Path("tools/h700_integration_driver")
 IMAGE_ID = "sha256:2db4439763783aa796da4268dbd91847ee2c13deef4c8ce2439e0f6bdf926962"
 MARKER = ".h700-integration-driver"
+
+
+@dataclass(frozen=True)
+class BuildProfile:
+    source: str = "/src/tools/h700_integration_driver"
+    cache: str = "/src/cmake/h700/InitialCache.cmake"
+    script: str = "/src/tools/h700_integration_driver/build.py"
+    target: str = "h700_integration_driver"
+    marker: str = MARKER
+    prefix: str = "h700-integration-driver"
+    help_check: bool = True
+
+
+INTEGRATION = BuildProfile()
 
 # Reuse the ABI/environment inspector, not the old probe's production-hash gate.
 sys.path.insert(0, str(ROOT / "tools/h700_graphics_probe"))
@@ -218,22 +233,22 @@ class Commands:
         return log
 
 
-def configure_command():
-    return ["cmake", "-S", "/src/tools/h700_integration_driver", "-B", "/out/build", "-G", "Ninja",
-            "-C", "/src/cmake/h700/InitialCache.cmake", "-C", "/out/Inputs.cmake",
+def configure_command(profile=INTEGRATION):
+    return ["cmake", "-S", profile.source, "-B", "/out/build", "-G", "Ninja",
+            "-C", profile.cache, "-C", "/out/Inputs.cmake",
             "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"]
 
 
-def build_command(jobs):
-    return ["cmake", "--build", "/out/build", "--target", "h700_integration_driver", "--parallel", str(jobs)]
+def build_command(jobs, profile=INTEGRATION):
+    return ["cmake", "--build", "/out/build", "--target", profile.target, "--parallel", str(jobs)]
 
 
-def docker_command(root, out, name, args):
+def docker_command(root, out, name, args, profile=INTEGRATION):
     command = ["docker", "run", "--rm", "--pull=never", "--name", name, "--platform", "linux/arm64",
                "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
                "--volume", f"{root}:/src:ro", "--volume", f"{out}:/out:rw", "--workdir", "/out",
                "--env", "HOME=/out/home", "--env", "TMPDIR=/out/tmp", "--env", "XDG_CACHE_HOME=/out/cache",
-               IMAGE_ID, "python3", "-B", "/src/tools/h700_integration_driver/build.py",
+               IMAGE_ID, "python3", "-B", profile.script,
                "--container", "--jobs", str(args.jobs)]
     if args.configure_only:
         command.append("--configure-only")
@@ -267,9 +282,9 @@ def inspect_artifacts(out, commands, help_check=True):
         commands.run("help", [artifacts["executable"], "--help"], 30)
 
 
-def container_build(args):
+def container_build(args, profile=INTEGRATION):
     out = Path("/out")
-    require(ROOT == Path("/src") and (out / MARKER).read_text() == IMAGE_ID + "\n",
+    require(ROOT == Path("/src") and (out / profile.marker).read_text() == IMAGE_ID + "\n",
             "Use the host build.py entry point")
     commands = Commands(out)
     report = environment.inspect_environment()
@@ -284,17 +299,17 @@ def container_build(args):
     write_json(out / "environment.json", report)
     shutil.copyfile("/opt/h700-toolchain/packages.tsv", out / "packages.tsv")
     stage_inputs(ROOT, out)
-    configure = configure_command()
+    configure = configure_command(profile)
     if args.package:
         configure += ["-DAURORA_ENABLE_TESTS=ON", "-DH700_STAGE_PACKAGE=ON"]
     commands.run("configure", configure, 300)
     if not args.configure_only:
-        command = build_command(args.jobs)
+        command = build_command(args.jobs, profile)
         if args.package:
             import package as staging
             command[command.index("--parallel"):command.index("--parallel")] = staging.CPU_TARGETS
         commands.run("build", command, 1800)
-        inspect_artifacts(out, commands, help_check=not args.package)
+        inspect_artifacts(out, commands, help_check=profile.help_check and not args.package)
         if args.package:
             commands.run("cpu-tests", ["ctest", "--test-dir", "/out/build", "-R", staging.CPU_FILTER,
                                       "--output-on-failure", "--timeout", "10"], 180)
@@ -303,26 +318,29 @@ def container_build(args):
                          "/src/tools/h700_integration_driver", "-p", "test_*.py", "-v"], 180)
             staging.stage_package(out, commands)
     write_json(out / "result.json", {"status": "configure-only" if args.configure_only else "local-readiness-complete" if args.package else "build-complete",
-               "device_validated": False, "image_id": IMAGE_ID})
+               "device_validated": False, "image_id": IMAGE_ID, "target": profile.target})
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None, profile=INTEGRATION, configure_only_required=False):
+    parser = argparse.ArgumentParser(description=f"Offline {profile.target} build; no deployment or graphics execution.")
     parser.add_argument("--check-inputs", action="store_true", help="Read-only archive hash check; no Docker")
-    parser.add_argument("--output", default="build/h700-integration-driver", help="NEW project/build/... directory")
+    parser.add_argument("--output", default=f"build/{profile.prefix}", help="NEW project/build/... directory")
     parser.add_argument("--configure-only", action="store_true", help="Stage inputs and configure, without building")
     parser.add_argument("--package", action="store_true", help="IG13 fresh build, CPU tests, audit and explicit package; never graphics")
     parser.add_argument("--jobs", type=int, default=2, choices=range(1, 9), metavar="1..8")
     parser.add_argument("--container", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
+        require(not args.package or profile == INTEGRATION, "--package is only available for the integration driver")
+        require(not configure_only_required or args.configure_only or args.check_inputs,
+                "This step requires --configure-only; full-game compile/link belongs to GM-02")
         require(not args.package or not (args.configure_only or args.check_inputs), "--package requires a complete fresh build")
         if args.check_inputs:
             require(not args.container, "--container cannot be combined with --check-inputs")
             print(json.dumps(check_inputs(), indent=2, sort_keys=True))
             return 0
         if args.container:
-            container_build(args)
+            container_build(args, profile)
             return 0
         out = output_path(ROOT, args.output)
         manifest = check_inputs()
@@ -330,13 +348,14 @@ def main(argv=None):
             import package as staging
             staging.verify_notices(ROOT)
             source = staging.source_snapshot(ROOT)
-        for rel in (DRIVER / "CMakeLists.txt", DRIVER / "main.cpp", Path("cmake/h700/InitialCache.cmake")):
+        for rel in (Path(profile.source).relative_to("/src") / "CMakeLists.txt",
+                    Path(profile.script).relative_to("/src"), Path(profile.cache).relative_to("/src")):
             require((ROOT / rel).is_file(), f"Missing build source: {rel}")
         require(shutil.which("docker"), "Docker CLI unavailable; no automatic install/pull/build")
         out.mkdir(parents=True)
         for name in ("home", "tmp", "cache"):
             (out / name).mkdir()
-        (out / MARKER).write_text(IMAGE_ID + "\n")
+        (out / profile.marker).write_text(IMAGE_ID + "\n")
         write_json(out / "input-manifest.json", manifest)
         if args.package:
             write_json(out / "source.json", source)
@@ -346,9 +365,9 @@ def main(argv=None):
         require(inspected == [IMAGE_ID, "linux", "arm64"], "Exact approved Linux ARM64 image required")
         native = commands.run("docker-native", ["docker", "info", "--format", "{{.Architecture}}"], 30)
         require(native.read_text().strip() in ("aarch64", "arm64"), "Native ARM64 Docker daemon required")
-        name = "h700-integration-" + uuid.uuid4().hex
+        name = profile.prefix + "-" + uuid.uuid4().hex
         try:
-            commands.run("container", docker_command(ROOT, out, name, args), 2700)
+            commands.run("container", docker_command(ROOT, out, name, args, profile), 2700)
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
             commands.run("container-cleanup", ["docker", "rm", "--force", name], 30)
             raise
@@ -357,7 +376,7 @@ def main(argv=None):
         print(f"Completed: {out.relative_to(ROOT)} (NOT device-validated; no deploy)")
         return 0
     except (ValueError, KeyError, OSError, tarfile.TarError, zipfile.BadZipFile, subprocess.TimeoutExpired) as error:
-        print(f"Integration build refused/failed: {error}", file=sys.stderr)
+        print(f"H700 build refused/failed: {error}", file=sys.stderr)
         return 1
 
 

@@ -122,4 +122,8 @@ Package находится в `build/h700-graphics-probe-abi238-final/package/`;
 
 После завершения ENV-01/02 пользователь отдельно разрешил активную проверку: firmware loader/CPU smoke tests, offscreen 2 кадра и bridge 120 кадров прошли программные pixel/order/teardown assertions на RG40XX H. Пользователь подтвердил видимость квадрантов и маркера при кратком наблюдении; полная визуальная проверка и возврат меню не подтверждены. Это не полный ABI/feature audit игры. Сценарий, artifact hashes, результаты и cleanup — [H700_GRAPHICS_PROBE.md](H700_GRAPHICS_PROBE.md). Границы исходной ENV-итерации и её результаты выше сохранены как история.
 
+## Расширение разрешения на full-game correctness RC
+
+2026-11-16 пользователь утвердил D1…D11 [плана полной игры](H700_GAME_PLAN.md). Тот же exact image разрешён для configure/build/tests GM-01…GM-17, включая повторный fresh build RC. Исходные EOL-риски и pins остаются прежними; это явное расширение области разрешения, не переход на поддерживаемый builder и не автоматическое разрешение менять image/dependencies. GM-01 fresh root configure и integration-configure regression прошли; full compile/link и device compatibility этим не подтверждены.
+
 Текущий статус — [H700_PROGRESS.md](H700_PROGRESS.md).

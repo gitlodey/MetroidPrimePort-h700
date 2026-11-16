@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.25)
 project(metroid_prime_port LANGUAGES C CXX)
+if(AURORA_H700)
+    include(cmake/h700/GameBuild.cmake)
+endif()
 if(IOS)
     # platform/port_ios.mm. Enabled here: enabled where the target is made, it
     # comes after the subdirectories and leaves CMake without its compile rules.
@@ -115,6 +118,9 @@ endif()
 # Aurora provides the GameCube/Wii compatibility layer (MIT): GX, OS, PAD, DVD,
 # CARD, VI, SI, THP, mtx, plus the SDL3/WebGPU application layer.
 add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
+if(AURORA_H700)
+    include(cmake/h700/VerifyProviders.cmake)
+endif()
 if(TARGET aurora_mtx)
     target_compile_definitions(aurora_mtx PRIVATE MTX_USE_PS=1)
 endif()
@@ -674,6 +680,10 @@ endif()
 
 include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
 aurora_copy_runtime_dlls(metroid_prime_port)
+if(AURORA_H700)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/artifacts.json" CONTENT
+        "{\"executable\":\"$<TARGET_FILE:metroid_prime_port>\",\"sdl\":\"$<TARGET_FILE:SDL3::SDL3>\"}\n")
+endif()
 
 # Aurora imports this machine-independent pipeline description cache and
 # compiles its entries in the background before first use.
