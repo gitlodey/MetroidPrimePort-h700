@@ -1,56 +1,33 @@
 # H700 — прогресс переноса
 
-**Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
+**Цель:** Metroid Prime Unbound v0.46.0 на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-13 LOCAL PASS; STOP перед IG-14, device window не разрешён.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
+## Текущий статус
 
-## Что готово
+- **IG-01…IG-13 LOCAL PASS:** постоянный H700 backend, mixed resources/shaders/cache, main presenter, progress-aware render/FIFO/compiler waits, normal drain/full generation lifecycle, GX+ImGui diagnostic scene и clean ARM64 package.
+- **IG-14 DEVICE TECHNICAL PASS, визуальное подтверждение PENDING.** Пользователь отдельно разрешил устройство/deploy/run. Выполнен один исходный bounded-сценарий на Mali; cleanup закончен. Полный gate пока не закрыт.
+- [Подробный утверждённый план и результаты каждой итерации](H700_INTEGRATION_PLAN.md), [простая версия этапа](H700_INTEGRATION_SUMMARY.md), [artifact/device evidence и ограничения](H700_INTEGRATION_GATE.md).
 
-- **IG-13:** готов [пакет и local-readiness report](H700_INTEGRATION_GATE.md):23 237 286bytes, SHA256 `43f31a20d4d31fb06ffaf4e1f083484d31710a300835cefca80e5d4f23bdaeb9`. Clean ARM64 build, notices/provenance, ABI/provider audit и watchdog. **108/108 CPU/source +262/262 FIFO +23/23 helpers PASS**. Device/GPU gate pending.
+## Что подтверждено
 
-- **IG-12:** real GX+ImGui scene, независимый fog/pixel oracle native+post-blit и bounded two-generation scenario/hooks; fail-stop при unproven release, pre-init profile guards. **19/19 scene CPU/source cases**, regressions/compile/link PASS. Graphics entry реализован, **valid GPU run не выполнялся**. [Результат](H700_INTEGRATION_PLAN.md#ig-12--pass-2026-11-16).
-
-- **IG-11:** ordered generation teardown, bounded worker/capacity polling, owner-thread unbind/joins и полный holder/Dawn/native release с запретом reinit после Failed/Unknown. **11 lifecycle +85 H700 cases PASS**, non-H70066/FIFO262 и compile/link PASS. Реальный teardown двух поколений — IG-14. [Результат](H700_INTEGRATION_PLAN.md#ig-11--pass-2026-11-16).
-
-- **IG-10:** request-owned maps, guarded profiler/vis-query reset и полный recorder reset после joins/maps без дополнительного Submit; source inventory12 групп holders. **10/10 новых cases**, regressions/link/compile PASS. Реальный GPU release не заявляется. [Результат](H700_INTEGRATION_PLAN.md#ig-10--pass-2026-11-16).
-
-- **IG-09:** независимый compiler, blocking lookup вне cache lock, Draining сохраняет required builds/continuations и закрывает background roots; captures живут до real return/joins. **8/8 новых CPU tests** и regressions/link/compile PASS. [Результат](H700_INTEGRATION_PLAN.md#ig-09--pass-2026-11-16).
-
-- **IG-08:** FIFO drain/growth с progress вне buffer lock и честными failure outcomes; accepted continuations, tokens и draw-done порядок сохранены. **260/260 FIFO tests в обоих профилях**, H70031/non-H70025 regressions и compile/link PASS. [Результат](H700_INTEGRATION_PLAN.md#ig-08--pass-2026-11-16).
-
-- **IG-07:** progress-aware queue/frame/staging/growth waits вне locks, terminal outcomes и safe partial-acquire/map ownership. Accepted continuations не теряются; rejected jobs после stop не исполняются inline. **54/54 H700 +25/25 non-H700 CPU tests**, H700 link/full non-H700 compile PASS. [Результат](H700_INTEGRATION_PLAN.md#ig-07--pass-2026-11-16).
-
-- **IG-06:** native credit до recording, final composition с UI, worker Submit/work-done publication, main blit/reverse fence/actual EGL swap. **23/23 CPU/source tests**, H700 link и non-H700 core/GX compile PASS. Исправлено ложное подтверждение swap в SDL shim: проверяется raw EGL return на той же surface. Pixels/fences/runtime — только IG-14. [Результат](H700_INTEGRATION_PLAN.md#ig-06--pass-2026-11-16).
-
-- **IG-05:** настоящий stage-aware GX generator в одном WGSL module, mixed production cache отдельно от старого. **5 generator/cache +6 resource tests PASS**; non-H7002tests/6baseline hashes и core/GX compile PASS. Mali WGSL/execution ещё не проверены. [Результат](H700_INTEGRATION_PLAN.md#ig-05--pass-2026-11-16).
-
-- **IG-04:** постоянный mixed group0 (две vertex-only R32Uint mirrors + fragment-only текущий storageBuffer), normal/shadow group2 по16 textures без lightmap; mixed RequestDevice и отдельная проверка granted limits для реальных размеров U. **6/6 CPU/source tests, actual H700 compile/link/CLI и non-H700 core/GX compile — PASS.** WGSL/cache ещё прежние до IG-05; graphics execution закрыт. [Результат и hooks](H700_INTEGRATION_PLAN.md#ig-04--pass-2026-11-16).
-
-- **IG-03:** постоянный H700 EGL/Mali bootstrap, два fixed imports, raw context restore и observer всей Dawn share group. H700 compile/link/CLI и полный compile `aurora_core/gx` с H700 OFF — PASS. Partial-init failure исправлен; runtime пока закрыт, реальный teardown не проверен. [Результат](H700_INTEGRATION_PLAN.md#ig-03--pass-2026-11-16).
-
-- **IG-02:** CPU-only production state двух slots/FIFO, Draining/Failed и owned notifications; **17/17 tests PASS** на ARM64/Clang16. Реальные GPU fences этим не проверены. [Результат](H700_INTEGRATION_PLAN.md#ig-02--pass-2026-11-16).
-
-- **IG-01:** новый offline profile/manifest/driver линкует настоящие Aurora core/GX. 14 input hashes, 10 helper tests, clean configure/build и CLI help — PASS; compile graph включает 121 Aurora library translation unit. Проверены provider paths и ELF metadata; GPU/firmware runtime не запускались. [Команды и evidence](H700_INTEGRATION_PLAN.md#ig-01--pass-2026-11-16).
-
-- [Аудит базы и донора](H700_PORT_REVIEW.md), [краткий обзор](H700_PORT_SUMMARY.md), [правила работы](H700_WORKFLOW.md), [firmware ABI snapshot](H700_RUNTIME_ABI.md).
-- [Graphics demo](H700_GRAPHICS_PROBE.md): offscreen 2 кадра и последовательный EGLImage bridge 120 кадров — device PASS в своём ограниченном сценарии. Не production threading/lifetime и не полноценная визуальная приёмка.
-- [Contract-v2](H700_CONTRACT_PROBE.md) на Mali воспроизвёл отказ исходных U layouts: 17 fragment textures при лимите 16. RequestDevice PASS, общий exit 1 без timeout. Этот failure не скрыт.
-- После [сравнения решений](H700_LAYOUT_OPTIONS.md) **[mixed-v2](H700_MIXED_FETCH_PROBE.md) прошёл на H700:** оба layouts/pipelines, 8 draws / 32768 pixels, updates, GPU-preserved growth и чтение за старой границей; exit 0 без timeout. Исправление shader демки — явный `flat, either`; подготовка: 71 helper tests/build/ABI/CPU/Null PASS. Повторять этот же опыт не требуется.
-- Новое исследование определило **main presenter + ранняя reservation двух slots**, progress/cancellation в реальных waits U; **два постоянных imports на lifetime device**, cleanup через всю Dawn share group. Патч Dawn ради per-import cleanup для этого bounded контракта не нужен. Найден необходимый будущий reset static holders `vis_query`; сейчас не исправлялся.
-- **PF-02 build/API:** 252 SDL function references, реальные Linux consumers, C++20/Aurora thread, все 33 MusyX C units/whole-archive link, 19 nod API references — PASS. Дополнительно получены exact pinned zlib-ng 2.3.3 / zstd 1.5.7 / nod alpha.12 release archives; hashes, static builds/API link и provider/version-node gate (firmware + bundled SDL) — PASS. Runtime/kernel совместимость и полная сборка игры этим не доказаны.
+- **Локально:** fresh ARM64 build из14 pinned inputs,108/108CPU/source +262/262FIFO +23/23helper tests; non-H700 core/GX compile и targeted regressions. Пакет23 237 286bytes, SHA256 `43f31a20d4d31fb06ffaf4e1f083484d31710a300835cefca80e5d4f23bdaeb9`; notices/provenance, ABI/provider audit и watchdog. Ограничения firmware-symbol coverage отражены в отчёте.
+- **На приставке:** hardware OpenGLES/Mali-G31, validation/robustness ON;120+2frames в двух поколениях одного процесса,2permanent imports каждого поколения, EFB640×480→320×240 при native640×480. Все2440RGBA samples native/post-blit совпали с независимым oracle, maximum error0LSB.
+- Настоящие compiler/resource/render API intervals пересеклись на3threads(~0.218ms), без учёта artificial barrier waits. Gen1 pressure4progress passes; gen2 normal Draining при подтверждённой accepted pending работе одного pipeline key; оба accepted frames завершились.
+- Все6observed context lifetimes каждого поколения(1temporary +5Dawn share group) destroyed до native export cleanup. Нет validation/EGL/GL errors/device loss. Процесс exit0 без watchdog; это не FPS measurement и не утверждение о параллельности внутри Mali.
+- Test processes/временная установка удалены;6baseline SONAME hashes(5уникальных) до run/после run/после cleanup совпали. Firmware, игровые установки, настройки и saves не менялись. Raw logs/SSH/session paths — только в ignored build.
 
 ## Что ещё не подтверждено
 
-**Один архитектурный runtime-допуск:** совместная работа pinned Dawn/Mali с реальными resource/render/compiler потоками, main presenter и полным teardown всей EGL share group. Static contract определён, совместный device PASS отсутствует.
+- **Оставшийся пункт IG-14:** пользовательское подтверждение правильной ориентации изображения, видимости cyan UI marker и возврата меню. Pixel oracle не заменяет визуальную приёмку.
+- Полная игра, все retail effects/UI, game-owner quiescence/`archSupport`, skinning waits, input/audio, kernel4.9 nod fallback, память реальных сцен, save/load и обычная установка Ports. Optional profiler/visibility-query/readback paths не активировались ради gate.
+- Целевые30FPS и полная firmware exact-symbol closure не заявлены. EOL image принят только для integration slice, не автоматически для полной игры.
 
-**Подход раннего slice согласован.** Не отдельная копия renderer: diagnostic frontend линкует штатные Aurora targets, постоянный H700 path остаётся в игре. До PASS единственного общего gate остальной renderer-перенос блокируется. Локальные итерации и [критерии приёмки](H700_INTEGRATION_PLAN.md#5-конечная-device-приёмка) согласованы; device-запуск отдельно не разрешён.
+## Следующий шаг
 
-Также не проверены полная игра/эффекты/UI, input/audio, kernel 4.9 fallback nod, реальный save/load и возврат в меню. Это приёмка переноса, не обязательный набор предплановых probes. ABI snapshot не является полным списком firmware exports.
+Получить визуальное подтверждение и честно завершить статус IG-14. Повторный graphics run ради полноты не нужен. После полного PASS — подготовить отдельный план остального переноса; текущий gate не разрешает его автоматически. Архитектура, зависимости и критерии не менялись.
 
-## Следующий шаг и согласование
+## Основания и история
 
-**13 локальных итераций завершены; остановиться перед IG-14.** Нужны отдельное разрешение на device window/deploy/run, актуальный device/host identity и pre-run проверки firmware hashes/`timeout`. Единственный общий hardware gate — [§5 плана](H700_INTEGRATION_PLAN.md#5-конечная-device-приёмка): actual pixels/UI/overlap/fences/normal pending drain/full teardown и два поколения. EOL image принят только для slice; live recovery/full-game перенос не выполнялись. План всей игры ещё не составлен.
+[Архитектурное решение](H700_ARCHITECTURE_DECISION.md), [аудит базы/донора](H700_PORT_REVIEW.md), [runtime ABI snapshot](H700_RUNTIME_ABI.md). Прежние [graphics demo](H700_GRAPHICS_PROBE.md), [contract-v2 failure17>16](H700_CONTRACT_PROBE.md) и [mixed-v2 device PASS](H700_MIXED_FETCH_PROBE.md) сохраняют отдельные границы доказательности; не подменяют actual integration run. Результаты PF-02 и IG-01…IG-13 сохранены в тематических документах/плане, не требуют повторных probes.
 
-**В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
-
-**Ориентир до каждого действия:** цель → конкретный вопрос целевого пути → минимальная проверка → решение по результату → остановка. Полнота вспомогательной матрицы не цель; правила — [H700_WORKFLOW.md](H700_WORKFLOW.md).
+**До любого действия:** цель → конкретный риск целевого пути → минимальная проверка → решение → остановка; [правила работы](H700_WORKFLOW.md). Донор read-only, чужие `.DS_Store` сохранены.

@@ -1,10 +1,10 @@
-# H700 integration gate — IG‑13 local readiness / IG‑14 pending
+# H700 integration gate — IG‑13 local PASS / IG‑14 technical PASS, visual pending
 
 **Дата:** 2026-11-16. **Source revision:** `6a58db6e3a71dac843a02eb616cc8e149ec0f72c` (IG‑12 accepted).
 
-**IG‑13: LOCAL READINESS PASS. IG‑14: PENDING / STOP — отдельного разрешения на device/deploy/run нет.**
+**IG‑13: LOCAL READINESS PASS. IG‑14: DEVICE TECHNICAL PASS, визуальная приёмка pending.** Пользователь отдельно разрешил device/deploy/run; выполнен один исходный bounded-сценарий и cleanup. Полный gate ещё не закрыт без подтверждения ориентации/UI/возврата меню.
 
-Ни один runtime-критерий §5 интеграционного плана не объявляется выполненным по этой сборке. Valid graphics `--run`, GPU/backend initialization и обращения к устройству не выполнялись.
+Ни один runtime-критерий §5 не объявлялся выполненным только по локальной сборке IG-13. Subsequent actual device run и доказательства IG-14 приведены ниже; это не приёмка полной игры или FPS.
 
 ## Готовый artifact
 
@@ -81,4 +81,38 @@ Final output `build/h700-integration-ig13-final/`:
 
 История исправлений не скрыта: первый helper invocation обнаружил Python module-name collision с legacy `build.py` (исправлено до сборки); первый clean output прошёл build/audit/CPU, но helper mode-test предполагал сохранение setuid на Docker bind filesystem. Production bit predicate теперь тестируется напрямую, filesystem case использует world-writable mode. Полный fresh build повторён в final output; первый output не является принятым readiness artifact.
 
-**IG‑14 остаётся STOP до отдельного разрешения. Пакет не отправлялся; ни устройство, ни firmware/user data не затрагивались. Parent повторил helper23/23 и сверил archive SHA-256; independent read-only review проверил все89 archive files и503 source hashes, blockers не нашёл. Последующая фиксация IG-13 не меняет provenance уже собранного архива.**
+**На момент завершения IG‑13:** IG‑14 оставался STOP, package ещё не отправлялся. Parent повторил helper23/23 и сверил archive SHA-256; independent read-only review проверил все89 archive files и503 source hashes, blockers не нашёл. Последующие commit и device run не меняют provenance исходного архива.
+
+## IG-14 — actual device run, 2026-11-16
+
+**Разрешение:** пользователь явно предоставил приставку для IG-14, затем актуальный SSH endpoint с key authentication. Strict known-host verification и BatchMode включены, host-key bypass не использовался. Адрес и уникальный session path в Git не включены.
+
+### Preflight / deploy
+
+- Firmware: MustardOS2601.0 Jacaranda, AArch64/Linux4.9.170, Mali-G31. Игра/другая демка не обнаружены; работал `muxlaunch`. Разовый MemAvailable888276kB, SwapTotal0; `/tmp` available498296KiB. Это не memory/FPS budget полной игры.
+- Проверены прежние6SONAME baselines: loader/libc/libstdc++/EGL/GLES/SDL2,5уникальных hashes (EGL/GLES оба Mali). Совпадение до run, после run и после cleanup.
+- Firmware BusyBox1.36.1 `timeout -s KILL` проверен на безвредном sleep в отдельной session/process group. Исходная неотделённая SSH-команда завершилась signal/255; isolated `setsid` check вернул управление родителю. Сам IG-14 также запускался через `setsid`, с внешним90s watchdog и app60s.
+- Archive SHA256 **тот же `43f31a20d4d31fb06ffaf4e1f083484d31710a300835cefca80e5d4f23bdaeb9`**. Firmware tar не поддерживает `-z`: первая распаковка отказала до graphics. Gzip снят на host штатным Python; тот же tar payload передан/проверен по hash и распакован обычным `tar -xf`. Затем все файловые `SHA256SUMS` и device help/version PASS. Binary, dependencies, acceptance/scenario не менялись.
+- Установка только в свежем временном `/tmp` session directory, HOME/XDG/TMPDIR изолированы, core dumps OFF. Без Ports/game/assets/cards discovery, system settings/governors/libraries не менялись. Перед cleanup скачаны только наши results/logs.
+
+### Программный результат: PASS
+
+| Критерий | Actual evidence |
+| --- | --- |
+| Процесс / bounds | Один исходный run, exit0 самостоятельно; SSH+run около10.508s, watchdog не сработал. Два поколения в одном процессе |
+| Поколение1 | 120/120frames,4cold fog variants,2permanent imports,120Presented, pressure4progress passes |
+| EFB/native | EFB640×480 →320×240 на frame60; native640×480 и2imports остаются постоянными; поколение2 снова640×480 |
+| Oracle | 2440RGBA samples в обоих stages (`native`/`after-blit`):976fog +1464corner/frame/ImGui. Независимый пересчёт §5.3: maximum error0LSB при допуске±1 дляfog, всеmarkers exact. Native=after-blit на всех точках |
+| Actual overlap | Gen1 compiler/resource-texture/render-encoder интервалы на3разных threads пересекаются217866ns (~0.218ms), после barrier-leave. Barrier/cache waits не засчитаны; параллельное исполнение внутри libMali не заявляется |
+| Pending normal stop | Gen2 frame0published/forward+reverse+swap complete, credit held; frame1accepted/unpublished, compiler-held/render-wait одного pipeline key. Stop до release compiler gate; затем actual compilation, render completion и Submit/Presented обоихframes |
+| Context teardown | В каждом поколении observer trustworthy=1, все6context lifetimes destroyed: временная группа1context + вся Dawn share group5contexts. Успешный unbind/destroy; snapshot на Exports barrier до native cleanup. После первого teardown реально создано второе поколение |
+| Validation/errors | Hardware OpenGLES/Mali, validation/robustness ON. Нет validation/EGL/GL errors/device loss/fail-stop. Найдены8slow-compile warnings,4dynamic-limit clamping messages и2unsupported-screensaver warnings: это не graphics/lifetime failures |
+| Cleanup | Все test processes завершены, остался menu process; наша remote временная установка удалена и отсутствие проверено. Baseline firmware hashes неизменны |
+
+Parent выполнил независимый CPU пересчёт сохранённых samples/intervals/context events; read-only reviewer отдельно проверил то же evidence, существенных расхождений не нашёл. TimestampQuery unsupported на этом device: profiler GPU maps этим run не проверены; lazy visibility-query/прочие optional effects не активировались. Runtime nod/kernel4.9, полная игра, input/audio/save-load и FPS остаются вне данного gate.
+
+### Evidence / что ещё требуется
+
+Ignored `build/h700-integration-ig14/`: `device-run.log`, `run-exit.json`, `technical-result.json`, `audit_evidence.py`, `firmware-{before,after-run,after-cleanup}.log`, payload/cleanup logs; `device-results/generation-{1,2}/{pixels,intervals,contexts,exports}.tsv`, gen2`stop.tsv`. Raw logs/private orchestration не публикуются. Device run не требовал production fixes/rebuild или повторного graphics запуска.
+
+**Визуальная приёмка пользователя PENDING:** правильная ориентация, видимый cyan UI marker и возврат меню. Pixel oracle не заменяет этот пункт §5. До подтверждения полный IG-14 не помечается PASS; остальной перенос игры автоматически не разрешён.

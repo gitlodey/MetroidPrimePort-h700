@@ -1,6 +1,6 @@
 # H700 — план первого интеграционного этапа
 
-**Редакция 1, 2026-11-16. Статус: IG-01…IG-13 утверждены пользователем для последовательной локальной реализации с commit/push после каждой итерации. IG-14/device window отдельно не разрешён.**
+**Редакция 1, 2026-11-16. Статус: IG-01…IG-13 утверждены пользователем для последовательной локальной реализации с commit/push после каждой итерации. IG-14 отдельно разрешён и выполнен: technical device PASS, визуальное подтверждение pending.**
 
 **Для чтения без технических подробностей:** [что делаем в 13 итерациях, что получаем и какая это часть переноса](H700_INTEGRATION_SUMMARY.md). Ниже — рабочая техническая версия того же плана.
 
@@ -206,7 +206,7 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-IG-01…IG-13 **PASS локально**; IG-14 **PENDING / STOP**, не разрешён и не начат. [Готовый пакет, hashes, ABI/notice audit и границы local readiness](H700_INTEGRATION_GATE.md). Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01…IG-13 **PASS локально**; IG-14 отдельно разрешён, actual device run **TECHNICAL PASS**, cleanup завершён; полный gate **PENDING** только по визуальному подтверждению пользователя. [Готовый пакет, hashes, ABI/notice audit и границы local readiness](H700_INTEGRATION_GATE.md). Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
@@ -342,4 +342,12 @@ IG-01…IG-13 **PASS локально**; IG-14 **PENDING / STOP**, не разр
 - Первичный license gap Dawn package закрыт matching primary texts/provenance для того же ref/transitive pins; downloads только host documentation, dependency binaries/build profile неизменны, build offline. Полный existing collector сохранён с optional verified overrides root/nested notices/FreeType FTL; actual ImGui/STB/font/SQLite grants учтены. Coverage — bounded source/build metadata+symbols audit, не юридическая сертификация всех prebuilt flags.
 - **108/108 targeted CPU/source +262/262 FIFO +23/23 helper/security/watchdog tests PASS**; staged help/version и launcher syntax/help/version PASS. Parent повторил helpers23/23, сверил archive hash; independent read-only review проверил payload/source bytes и blockers не нашёл. Diff check PASS. Valid graphics `--run` не выполнялся.
 - Explicit launcher требует fresh absolute test path, не удаляет данные, отвергает loader overrides, задаёт SDL profile и внешний `timeout -s KILL 90` при app60s. Наличие подходящего timeout на firmware — prerequisite IG-14. Ненулевой exit/watchdog не считается cleanup proof. Evidence и полные ограничения: [H700_INTEGRATION_GATE.md](H700_INTEGRATION_GATE.md), ignored `build/h700-integration-ig13-final/{commands,host-commands,handoff,package-result}.json`, logs и `package/manifest.json`/`audit.json`/`SHA256SUMS`.
-- **Все13 локальных итераций закончены. STOP перед IG-14**: package не отправлялся, device/SSH/deploy/GPU не использовались. Для hardware gate требуется отдельное разрешение; runtime pixels/orientation/UI/menu/overlap/fences/two-generation teardown остаются pending.
+- **На момент завершения IG-13:** все13 локальных итераций закончены, STOP перед отдельным разрешением IG-14; device/SSH/deploy/GPU тогда не использовались. Последующий разрешённый run описан ниже.
+
+### IG-14 — DEVICE TECHNICAL PASS / VISUAL PENDING, 2026-11-16
+
+- Пользователь отдельно разрешил device window/deploy/run и предоставил актуальный endpoint. Strict SSH host identity verification, firmware preflight и внешний watchdog подтверждены; один исходный IG-13 artifact, без production изменений/rebuild. Tar gzip снят на host из-за firmware tar без `-z`; payload/hash/checksums неизменны. Одна изолированная временная установка, без game/settings/saves/firmware изменений.
+- Один bounded actual Mali run: exit0, около10.508s включаяSSH,120+2frames/Presented,2imports каждого поколения,4coldvariants/pressure4passes gen1. EFB640→320 при постоянном native640×480. Независимо проверены2440samples обоих stages:976fog/1464markers, максимальное отклонение0LSB. Real host API overlap217866ns на3threads после barriers; не утверждение о параллельности внутри Mali.
+- Gen2 stop snapshot подтвердил pending published frame0 и accepted unpublished frame1 с compiler-held/render-wait одногоkey; после открытия собственных gates accepted work штатно завершилось. Observer trustworthy в обоих поколениях: все6context lifetimes destroyed (1temporary +5Dawn share group) до exports. Второе поколение в том же процессе; нет validation/EGL/GL errors/device loss.
+- Cleanup выполнен: test processes/временная установка отсутствуют,6SONAME baseline hashes(5уникальных) до/после/послеcleanup совпадают. Независимый reviewer и parent пересчитали local evidence. Raw logs/address/session orchestration только ignored `build/h700-integration-ig14/`, очищенный отчёт — [H700_INTEGRATION_GATE.md](H700_INTEGRATION_GATE.md#ig-14--actual-device-run-2026-11-16).
+- **Полный gate ещё не закрыт:** ожидается пользовательское подтверждение ориентации/UI/возврата меню. Нет дополнительного graphics run ради этого без необходимости. Полная игра/input/audio/cards/FPS не проверены; дальнейший перенос требует следующего согласованного плана.
