@@ -5,7 +5,7 @@
 # packaging/licenses/ for prebuilt packages that ship none (Dawn, nod) and for
 # generated data tables whose licence lives only in the project they came from.
 #
-# Usage: tools/collect_licenses.sh <build-dir> <dest-dir>
+# Usage: tools/collect_licenses.sh <build-dir> <dest-dir> [verified-source-overrides-dir]
 #
 # Each fetched package's first licence file is filed as <dep>.txt (e.g.
 # sdl-src.txt); further ones (zstd's COPYING, a dual licence) as
@@ -15,14 +15,36 @@
 # zip and the macOS app), so they all carry the same set.
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-    echo "usage: $0 <build-dir> <dest-dir>" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+    echo "usage: $0 <build-dir> <dest-dir> [verified-source-overrides-dir]" >&2
     exit 2
 fi
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD=$1
 DEST=$2
+OVERRIDES=${3:-}
+if [[ -n "$OVERRIDES" && ! -d "$OVERRIDES" ]]; then
+    echo "missing verified source overrides: $OVERRIDES" >&2
+    exit 2
+fi
 mkdir -p "$DEST"
+shopt -s nullglob
+sources=("$BUILD"/_deps/*-src)
+if [[ -n "$OVERRIDES" ]]; then
+    for src in "$OVERRIDES"/*; do
+        [[ -d "$src" ]] && sources+=("$src")
+    done
+fi
+shopt -u nullglob
+
+dep_name() {
+    local name
+    name=$(basename "$1")
+    if [[ -n "$OVERRIDES" && "$1" == "$OVERRIDES"/* ]]; then
+        name="$name-src"
+    fi
+    printf '%s' "$name"
+}
 
 copy() {
     # $1 = source file, $2 = name it is filed under. Missing sources are skipped.
@@ -39,14 +61,17 @@ copy "$ROOT/extern/GamepadMotionHelpers/LICENSE" gamepadmotionhelpers.txt
 # freetype's LICENSE.TXT only points at the licence it is used under, and the
 # fetched loop below only looks at the package's top level.
 copy "$BUILD"/_deps/freetype-src/docs/FTL.TXT freetype-FTL.txt
+if [[ -n "$OVERRIDES" ]]; then
+    copy "$OVERRIDES"/freetype/docs/FTL.TXT freetype-FTL.txt
+fi
 for notice in "$ROOT"/packaging/licenses/*.txt; do
     copy "$notice" "$(basename "$notice")"
 done
 
 found=0
 shopt -s nullglob nocaseglob
-for src in "$BUILD"/_deps/*-src; do
-    dep=$(basename "$src")
+for src in "${sources[@]}"; do
+    dep=$(dep_name "$src")
     first=1
     for notice in "$src"/LICENSE* "$src"/COPYING* "$src"/NOTICE*; do
         [[ -f "$notice" ]] || continue
@@ -65,9 +90,9 @@ shopt -u nullglob nocaseglob
 # and yuv2rgb, Tracy's libbacktrace, ...). They keep their path, under
 # <dep>/, since their names repeat; a package's own build/ trees (copies made
 # while building it) are skipped. find rather than globstar: macOS ships bash 3.2.
-for src in "$BUILD"/_deps/*-src; do
+for src in "${sources[@]}"; do
     [[ -d "$src" ]] || continue
-    dep=$(basename "$src")
+    dep=$(dep_name "$src")
     (cd "$src" && find . -mindepth 2 -type f -not -path '*/build/*' \
         \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print) |
         while IFS= read -r notice; do

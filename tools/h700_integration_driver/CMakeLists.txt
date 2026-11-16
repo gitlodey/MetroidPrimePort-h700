@@ -94,9 +94,14 @@ add_executable(h700_integration_driver main.cpp scene.cpp ../../platform/glibc_c
 target_link_libraries(h700_integration_driver PRIVATE aurora::main
   "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi,aurora::mtx,aurora::os>")
 target_compile_options(h700_integration_driver PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(h700_integration_driver PRIVATE H700_DRIVER_REVISION="IG-12"
+target_compile_definitions(h700_integration_driver PRIVATE H700_DRIVER_REVISION="IG-13"
   $<$<BOOL:${AURORA_H700}>:AURORA_H700>)
 set_target_properties(h700_integration_driver PROPERTIES BUILD_RPATH_USE_ORIGIN ON)
+option(H700_STAGE_PACKAGE "Link diagnostic driver for the IG13 local SDL staging layout" OFF)
+if(H700_STAGE_PACKAGE)
+  set_target_properties(h700_integration_driver PROPERTIES
+    BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN/lib")
+endif()
 if(AURORA_ENABLE_TESTS)
   include(GoogleTest)
   find_package(Threads REQUIRED)

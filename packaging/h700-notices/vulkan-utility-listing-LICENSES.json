@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Apache-2.0.txt",
+    "path": "LICENSES/Apache-2.0.txt",
+    "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "size": 11358,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/contents/LICENSES/Apache-2.0.txt?ref=6673ca41d73d36c3c838451e66dd30dd1ec46a97",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/Apache-2.0.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/Apache-2.0.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/contents/LICENSES/Apache-2.0.txt?ref=6673ca41d73d36c3c838451e66dd30dd1ec46a97",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "html": "https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/Apache-2.0.txt"
+    }
+  },
+  {
+    "name": "CC-BY-4.0.txt",
+    "path": "LICENSES/CC-BY-4.0.txt",
+    "sha": "13ca539f377dc705af32b8d2ce89262298ea2f06",
+    "size": 17023,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/contents/LICENSES/CC-BY-4.0.txt?ref=6673ca41d73d36c3c838451e66dd30dd1ec46a97",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/CC-BY-4.0.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/git/blobs/13ca539f377dc705af32b8d2ce89262298ea2f06",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/CC-BY-4.0.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/contents/LICENSES/CC-BY-4.0.txt?ref=6673ca41d73d36c3c838451e66dd30dd1ec46a97",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Utility-Libraries/git/blobs/13ca539f377dc705af32b8d2ce89262298ea2f06",
+      "html": "https://github.com/KhronosGroup/Vulkan-Utility-Libraries/blob/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/CC-BY-4.0.txt"
+    }
+  }
+]

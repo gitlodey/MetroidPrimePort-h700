@@ -1,0 +1,52 @@
+IG13 pinned notice coverage (not a legal certification or device/runtime PASS)
+
+Dawn package v20261029.114630, source ref 118436b3f8f68583eb86e811ca605dc41637e8cc,
+archive SHA256 cbb550709fdd519d52330b9b59206a8300bcbd8bd698af0359e0ba5bfca2fed8.
+Existing packaging/licenses/dawn.txt is retained. Additional exact-source texts
+and provenance are in provenance.json. Retrieved texts are NOT build inputs.
+
+Source DEPS and release.yml/dawn-ci.cmake bound the Linux static monolithic
+package: CMake install -> tar, Clang, GLFW/samples/benchmarks/Tint tests/command
+tools/IR-binary OFF. Host code-generation tools are not runtime payload. We do
+not execute this workflow or fetch/build any dependency from these documents.
+
+Covered Dawn/Tint runtime/source-header dependencies:
+* SPIRV-Tools 5b5a25231a3543559b4f2cb27fe725a08b76b5d0: Apache LICENSE.
+* SPIRV-Headers 942fe4b988359a0750b79f0ae7ed735994d3147d: complete root
+  multi-license text plus LICENSES (Khronos MIT, ancillary MIT, CC-BY).
+* Vulkan-Headers f9973cd97e6f3584707e7ef1c425e336f1b92a5b and utility libraries
+  6673ca41d73d36c3c838451e66dd30dd1ec46a97: LICENSE + LICENSES.
+  Vulkan code is present in the prebuilt library even though the driver requests
+  only hardware OpenGLES. Presence is not permission to switch runtime backend.
+* Dawn Abseil df548c50b2cda67158364d3d23c63043881b391d: primary mirror LICENSE,
+  separate from the application's independently pinned Abseil source notices.
+* Chromium PartitionAlloc f51f0758dbbcaaca9161bbe1f13ae0cf48130418: leading
+  raw_ptr attribution, Chromium BSD LICENSE from Dawn's recorded Chromium
+  revision 3e452a2ef67895a74c017cf1569c94b2aaca056f. The extracted attribution
+  references this ancestor license; it is not replaced by a generic grant.
+* EGL-Registry 3d7796b3721d93976b6bfe536aa97bbc4bce8667 and OpenGL-Registry
+  e8f7cd0e35ac8d6f5667a021ff83d04b1fec41ef: actual header attribution blocks.
+  The complete Khronos MIT grants are retained with the covered headers above.
+
+Exact root listings document no extra top-level NOTICE for the four inspected
+Khronos repositories. Namespace inventory from the actual executable supplements
+source metadata (SPIRV/Tint/Abseil/raw_ptr/Vulkan); absence of a namespace is not
+universal binary proof. Protobuf/GLSLang command tools, SwiftShader, ANGLE,
+GLFW, DXC, Node, fuzzers and tests are not added as runtime libraries. Their
+mere appearance in DEPS is not a claim they are linked. No full prebuilt flag
+reconstruction or independent upstream-ref authentication is asserted.
+
+Application source dependencies and nested notices are collected by the existing
+full tools/collect_licenses.sh with verified inputs/ source overrides. SQLite's
+public-domain declaration is extracted from the actual pinned amalgamation.
+ImGui's three imstb_* license blocks are extracted from its actual pinned source.
+Default ProggyClean copyright/metadata is extracted from imgui_draw.cpp; its full
+MIT license was retrieved from font author's primary repository at immutable
+license commit 479694094055b30f09365c6b3cf2c78345719f06, matching the 2004/2005
+Tristan Grimmer attribution in pinned ImGui. No replacement font is downloaded.
+
+The unmodified baseline collector also retains project/vendored/prebuilt notices
+that may be conservative extras for this slice (e.g. nod or MusyX); those are not
+claims that the diagnostic uses disc/audio/game assets. Collector coverage.json
+separates source dependency notice coverage and embedded data. All shipped
+notice/provenance files are included in package hashes.

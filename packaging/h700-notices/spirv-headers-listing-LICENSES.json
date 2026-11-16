@@ -1,0 +1,34 @@
+[
+  {
+    "name": "CC-BY-4.0.txt",
+    "path": "LICENSES/CC-BY-4.0.txt",
+    "sha": "4ea99c213c5c0c005ae4e80df8e52169d06896ec",
+    "size": 18656,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/CC-BY-4.0.txt?ref=942fe4b988359a0750b79f0ae7ed735994d3147d",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Headers/blob/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/CC-BY-4.0.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/git/blobs/4ea99c213c5c0c005ae4e80df8e52169d06896ec",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/CC-BY-4.0.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/CC-BY-4.0.txt?ref=942fe4b988359a0750b79f0ae7ed735994d3147d",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/git/blobs/4ea99c213c5c0c005ae4e80df8e52169d06896ec",
+      "html": "https://github.com/KhronosGroup/SPIRV-Headers/blob/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/CC-BY-4.0.txt"
+    }
+  },
+  {
+    "name": "MIT.txt",
+    "path": "LICENSES/MIT.txt",
+    "sha": "fc2cf8e6b667b752cf62d1306521071db34c0a63",
+    "size": 1087,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/MIT.txt?ref=942fe4b988359a0750b79f0ae7ed735994d3147d",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Headers/blob/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/MIT.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/git/blobs/fc2cf8e6b667b752cf62d1306521071db34c0a63",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/MIT.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/contents/LICENSES/MIT.txt?ref=942fe4b988359a0750b79f0ae7ed735994d3147d",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Headers/git/blobs/fc2cf8e6b667b752cf62d1306521071db34c0a63",
+      "html": "https://github.com/KhronosGroup/SPIRV-Headers/blob/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/MIT.txt"
+    }
+  }
+]

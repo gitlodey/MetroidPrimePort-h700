@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "source_ref": "118436b3f8f68583eb86e811ca605dc41637e8cc",
+  "documents": [
+    {
+      "file": "dawn-DEPS.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/DEPS",
+      "sha256": "56c8d39fd9a4b44e72630cf6ea2d984301d09e967c845159a174e7cc09d157d6",
+      "source_sha256": "56c8d39fd9a4b44e72630cf6ea2d984301d09e967c845159a174e7cc09d157d6",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-release.yml.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/.github/workflows/release.yml",
+      "sha256": "6c84f6f002644f260bd7a75caed0cfa57afa20c50958ef7c5880d158f7b48d62",
+      "source_sha256": "6c84f6f002644f260bd7a75caed0cfa57afa20c50958ef7c5880d158f7b48d62",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-ci.cmake.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/.github/workflows/dawn-ci.cmake",
+      "sha256": "a627ba8c9d29e0703328a21f83ae89fa45a0940225d36583a29c9b768d28161c",
+      "source_sha256": "a627ba8c9d29e0703328a21f83ae89fa45a0940225d36583a29c9b768d28161c",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-third-party.cmake.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/third_party/CMakeLists.txt",
+      "sha256": "f981981776cce4a8b92b72dd23f198cf998d8a36caa354b2941b87b990150ca3",
+      "source_sha256": "f981981776cce4a8b92b72dd23f198cf998d8a36caa354b2941b87b990150ca3",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-fetch-metadata.py.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/tools/fetch_dawn_dependencies.py",
+      "sha256": "cd3b789b7c34bedb7b6df8693456ac6884eca65306fd95a778ddba206d67d346",
+      "source_sha256": "cd3b789b7c34bedb7b6df8693456ac6884eca65306fd95a778ddba206d67d346",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-options.cmake.txt",
+      "url": "https://raw.githubusercontent.com/Timdeuces/dawn/118436b3f8f68583eb86e811ca605dc41637e8cc/CMakeLists.txt",
+      "sha256": "d496fd2ef25d496f857808270769fd5a48981acaa6e15bd2ab7b2c1dad2559dd",
+      "source_sha256": "d496fd2ef25d496f857808270769fd5a48981acaa6e15bd2ab7b2c1dad2559dd",
+      "kind": "provenance-only",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "spirv-tools-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "spirv-headers-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSE",
+      "sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613",
+      "source_sha256": "ea43b1de38a6f90c488800d66dec1ed671e68cda530266bc96951fb5b6307613",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "spirv-headers-LICENSES-CC-BY-4.0.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/CC-BY-4.0.txt",
+      "sha256": "9e5f1b3c610b9c2da5c313bf81d577a7d1acec686bdb0384edefa6df0f90cd94",
+      "source_sha256": "9e5f1b3c610b9c2da5c313bf81d577a7d1acec686bdb0384edefa6df0f90cd94",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "spirv-headers-LICENSES-MIT.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Headers/942fe4b988359a0750b79f0ae7ed735994d3147d/LICENSES/MIT.txt",
+      "sha256": "6d7c9e9d7d12c8d3753bdb24417b84819ba4d6c2f025c37948113d86dc81eef9",
+      "source_sha256": "6d7c9e9d7d12c8d3753bdb24417b84819ba4d6c2f025c37948113d86dc81eef9",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-headers-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSE.md",
+      "sha256": "95ad366d23fadf701d355bc45fb8b82ae2d700239471d35d41286ac3b08ff903",
+      "source_sha256": "95ad366d23fadf701d355bc45fb8b82ae2d700239471d35d41286ac3b08ff903",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-headers-LICENSES-Apache-2.0.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-headers-LICENSES-MIT.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/MIT.txt",
+      "sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227",
+      "source_sha256": "1ca3502222d967f3be5751c55f6b7ee735b5383909c3b501495f54b216dbf227",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-utility-LICENSE.md.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSE.md",
+      "sha256": "69760673abf91cfd0280ae73739a29c078f493804d9016a122b3b189b48ad6e6",
+      "source_sha256": "69760673abf91cfd0280ae73739a29c078f493804d9016a122b3b189b48ad6e6",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-utility-LICENSES-Apache-2.0.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/Apache-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "vulkan-utility-LICENSES-CC-BY-4.0.txt.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Utility-Libraries/6673ca41d73d36c3c838451e66dd30dd1ec46a97/LICENSES/CC-BY-4.0.txt",
+      "sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
+      "source_sha256": "d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "dawn-abseil-LICENSE.txt",
+      "url": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/df548c50b2cda67158364d3d23c63043881b391d/LICENSE?format=TEXT",
+      "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747",
+      "source_sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "partition-alloc-Chromium-LICENSE.txt",
+      "url": "https://chromium.googlesource.com/chromium/src/+/3e452a2ef67895a74c017cf1569c94b2aaca056f/LICENSE?format=TEXT",
+      "sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b",
+      "source_sha256": "368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b",
+      "kind": "notice",
+      "extraction": "verbatim"
+    },
+    {
+      "file": "partition-alloc-raw-ptr-attribution.txt",
+      "url": "https://chromium.googlesource.com/chromium/src/base/allocator/partition_allocator/+/f51f0758dbbcaaca9161bbe1f13ae0cf48130418/src/partition_alloc/pointers/raw_ptr.h?format=TEXT",
+      "sha256": "9741cc2ca60d9cbb7324578d49a5fdbf0fd38e83aaac984edb1de559ceffeb01",
+      "source_sha256": "e5eb7e97d17390f536d09d74d8009d80f704505193e4f517b1318d11859946e7",
+      "kind": "notice",
+      "extraction": "leading attribution comment before include guard"
+    },
+    {
+      "file": "egl-khrplatform-attribution.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/EGL-Registry/3d7796b3721d93976b6bfe536aa97bbc4bce8667/api/KHR/khrplatform.h",
+      "sha256": "438187dca092de4032c1a16524aa4c34c71a0f985a71251a675aad54e77ed561",
+      "source_sha256": "7b1e01aaa7ad8f6fc34b5c7bdf79ebf5189bb09e2c4d2e79fc5d350623d11e83",
+      "kind": "notice",
+      "extraction": "first block comment"
+    },
+    {
+      "file": "opengl-glcorearb-attribution.txt",
+      "url": "https://raw.githubusercontent.com/KhronosGroup/OpenGL-Registry/e8f7cd0e35ac8d6f5667a021ff83d04b1fec41ef/api/GL/glcorearb.h",
+      "sha256": "e2c9d48be214f7bbd0ed749cb22479be5588b41ba2594caf7efbb5e430a9898c",
+      "source_sha256": "65fae555a8b3b5709099837001e0c14228b3e45651e2d0fa2ad22649833921e1",
+      "kind": "notice",
+      "extraction": "first block comment"
+    },
+    {
+      "file": "proggyclean-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/bluescan/proggyfonts/479694094055b30f09365c6b3cf2c78345719f06/LICENSE",
+      "sha256": "fe61d069df303c697e04200f5f8232c2cb09dd3572f4357b323469f7d592d142",
+      "source_sha256": "fe61d069df303c697e04200f5f8232c2cb09dd3572f4357b323469f7d592d142",
+      "kind": "notice",
+      "extraction": "verbatim"
+    }
+  ]
+}

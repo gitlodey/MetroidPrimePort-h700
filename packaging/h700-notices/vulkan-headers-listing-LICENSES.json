@@ -1,0 +1,34 @@
+[
+  {
+    "name": "Apache-2.0.txt",
+    "path": "LICENSES/Apache-2.0.txt",
+    "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "size": 11358,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES/Apache-2.0.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/Apache-2.0.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/Apache-2.0.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES/Apache-2.0.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/Apache-2.0.txt"
+    }
+  },
+  {
+    "name": "MIT.txt",
+    "path": "LICENSES/MIT.txt",
+    "sha": "8495fe9e901b430947d54980af7c77c0bb8a6221",
+    "size": 1084,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES/MIT.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/MIT.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/8495fe9e901b430947d54980af7c77c0bb8a6221",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/MIT.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES/MIT.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/8495fe9e901b430947d54980af7c77c0bb8a6221",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES/MIT.txt"
+    }
+  }
+]

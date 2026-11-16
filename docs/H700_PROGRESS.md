@@ -2,9 +2,11 @@
 
 **Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-12 PASS, следующий шаг IG-13.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
+**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-13 LOCAL PASS; STOP перед IG-14, device window не разрешён.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
 
 ## Что готово
+
+- **IG-13:** готов [пакет и local-readiness report](H700_INTEGRATION_GATE.md):23 237 286bytes, SHA256 `43f31a20d4d31fb06ffaf4e1f083484d31710a300835cefca80e5d4f23bdaeb9`. Clean ARM64 build, notices/provenance, ABI/provider audit и watchdog. **108/108 CPU/source +262/262 FIFO +23/23 helpers PASS**. Device/GPU gate pending.
 
 - **IG-12:** real GX+ImGui scene, независимый fog/pixel oracle native+post-blit и bounded two-generation scenario/hooks; fail-stop при unproven release, pre-init profile guards. **19/19 scene CPU/source cases**, regressions/compile/link PASS. Graphics entry реализован, **valid GPU run не выполнялся**. [Результат](H700_INTEGRATION_PLAN.md#ig-12--pass-2026-11-16).
 
@@ -47,7 +49,7 @@
 
 ## Следующий шаг и согласование
 
-Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-13 после commit/push IG-12. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
+**13 локальных итераций завершены; остановиться перед IG-14.** Нужны отдельное разрешение на device window/deploy/run, актуальный device/host identity и pre-run проверки firmware hashes/`timeout`. Единственный общий hardware gate — [§5 плана](H700_INTEGRATION_PLAN.md#5-конечная-device-приёмка): actual pixels/UI/overlap/fences/normal pending drain/full teardown и два поколения. EOL image принят только для slice; live recovery/full-game перенос не выполнялись. План всей игры ещё не составлен.
 
 **В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
 

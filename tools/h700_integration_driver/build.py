@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline IG-01 build of real Aurora targets; no deployment or graphics tests.
+"""Offline build/package of real Aurora targets; no deployment or graphics tests.
 
 --check-inputs is read-only and never invokes Docker. A build needs a fresh
 project/build/... directory and the already approved native ARM64 image.
@@ -237,10 +237,12 @@ def docker_command(root, out, name, args):
                "--container", "--jobs", str(args.jobs)]
     if args.configure_only:
         command.append("--configure-only")
+    if getattr(args, "package", False):
+        command.append("--package")
     return command
 
 
-def inspect_artifacts(out, commands):
+def inspect_artifacts(out, commands, help_check=True):
     # CMake's file(GENERATE) must supply these two actual target paths.
     artifacts = json.loads((out / "build/artifacts.json").read_text())
     reports = {}
@@ -261,7 +263,8 @@ def inspect_artifacts(out, commands):
                         "undefined_symbols": environment.symbols(text, undefined=True)}
     write_json(out / "elf-metadata.json", {"artifacts": reports,
                "limitations": "ELF metadata only; not a firmware ABI or device runtime PASS"})
-    commands.run("help", [artifacts["executable"], "--help"], 30)
+    if help_check:
+        commands.run("help", [artifacts["executable"], "--help"], 30)
 
 
 def container_build(args):
@@ -281,11 +284,25 @@ def container_build(args):
     write_json(out / "environment.json", report)
     shutil.copyfile("/opt/h700-toolchain/packages.tsv", out / "packages.tsv")
     stage_inputs(ROOT, out)
-    commands.run("configure", configure_command(), 300)
+    configure = configure_command()
+    if args.package:
+        configure += ["-DAURORA_ENABLE_TESTS=ON", "-DH700_STAGE_PACKAGE=ON"]
+    commands.run("configure", configure, 300)
     if not args.configure_only:
-        commands.run("build", build_command(args.jobs), 1800)
-        inspect_artifacts(out, commands)
-    write_json(out / "result.json", {"status": "configure-only" if args.configure_only else "build-complete",
+        command = build_command(args.jobs)
+        if args.package:
+            import package as staging
+            command[command.index("--parallel"):command.index("--parallel")] = staging.CPU_TARGETS
+        commands.run("build", command, 1800)
+        inspect_artifacts(out, commands, help_check=not args.package)
+        if args.package:
+            commands.run("cpu-tests", ["ctest", "--test-dir", "/out/build", "-R", staging.CPU_FILTER,
+                                      "--output-on-failure", "--timeout", "10"], 180)
+            commands.run("fifo-tests", ["/out/build/aurora/tests/gx_fifo_tests"], 120)
+            commands.run("helper-tests", ["python3", "-B", "-m", "unittest", "discover", "-s",
+                         "/src/tools/h700_integration_driver", "-p", "test_*.py", "-v"], 180)
+            staging.stage_package(out, commands)
+    write_json(out / "result.json", {"status": "configure-only" if args.configure_only else "local-readiness-complete" if args.package else "build-complete",
                "device_validated": False, "image_id": IMAGE_ID})
 
 
@@ -294,10 +311,12 @@ def main(argv=None):
     parser.add_argument("--check-inputs", action="store_true", help="Read-only archive hash check; no Docker")
     parser.add_argument("--output", default="build/h700-integration-driver", help="NEW project/build/... directory")
     parser.add_argument("--configure-only", action="store_true", help="Stage inputs and configure, without building")
+    parser.add_argument("--package", action="store_true", help="IG13 fresh build, CPU tests, audit and explicit package; never graphics")
     parser.add_argument("--jobs", type=int, default=2, choices=range(1, 9), metavar="1..8")
     parser.add_argument("--container", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
+        require(not args.package or not (args.configure_only or args.check_inputs), "--package requires a complete fresh build")
         if args.check_inputs:
             require(not args.container, "--container cannot be combined with --check-inputs")
             print(json.dumps(check_inputs(), indent=2, sort_keys=True))
@@ -307,6 +326,10 @@ def main(argv=None):
             return 0
         out = output_path(ROOT, args.output)
         manifest = check_inputs()
+        if args.package:
+            import package as staging
+            staging.verify_notices(ROOT)
+            source = staging.source_snapshot(ROOT)
         for rel in (DRIVER / "CMakeLists.txt", DRIVER / "main.cpp", Path("cmake/h700/InitialCache.cmake")):
             require((ROOT / rel).is_file(), f"Missing build source: {rel}")
         require(shutil.which("docker"), "Docker CLI unavailable; no automatic install/pull/build")
@@ -315,6 +338,8 @@ def main(argv=None):
             (out / name).mkdir()
         (out / MARKER).write_text(IMAGE_ID + "\n")
         write_json(out / "input-manifest.json", manifest)
+        if args.package:
+            write_json(out / "source.json", source)
         commands = Commands(out, "host-commands")
         inspected = commands.run("image-inspect", ["docker", "image", "inspect", "--format",
                                  "{{.Id}} {{.Os}} {{.Architecture}}", IMAGE_ID], 30).read_text().split()
@@ -323,10 +348,12 @@ def main(argv=None):
         require(native.read_text().strip() in ("aarch64", "arm64"), "Native ARM64 Docker daemon required")
         name = "h700-integration-" + uuid.uuid4().hex
         try:
-            commands.run("container", docker_command(ROOT, out, name, args), 2200)
+            commands.run("container", docker_command(ROOT, out, name, args), 2700)
         except (subprocess.TimeoutExpired, KeyboardInterrupt):
             commands.run("container-cleanup", ["docker", "rm", "--force", name], 30)
             raise
+        if args.package:
+            require(staging.source_snapshot(ROOT) == source, "Build sources changed during packaging; artifact not accepted")
         print(f"Completed: {out.relative_to(ROOT)} (NOT device-validated; no deploy)")
         return 0
     except (ValueError, KeyError, OSError, tarfile.TarError, zipfile.BadZipFile, subprocess.TimeoutExpired) as error:
@@ -335,4 +362,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # package.py imports this helper, not the legacy probe's same-named build.py on sys.path.
+    sys.modules["build"] = sys.modules[__name__]
     sys.exit(main())

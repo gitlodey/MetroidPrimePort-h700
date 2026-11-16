@@ -1,0 +1,274 @@
+[
+  {
+    "name": ".gitattributes",
+    "path": ".gitattributes",
+    "sha": "41eae3715412d26a287dc8529b7b1f92c881562a",
+    "size": 594,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.gitattributes?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitattributes",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/41eae3715412d26a287dc8529b7b1f92c881562a",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitattributes",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.gitattributes?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/41eae3715412d26a287dc8529b7b1f92c881562a",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitattributes"
+    }
+  },
+  {
+    "name": ".github",
+    "path": ".github",
+    "sha": "1516bf5a61dacc1a3236611d61cbd04957b17569",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.github?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.github",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/1516bf5a61dacc1a3236611d61cbd04957b17569",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.github?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/1516bf5a61dacc1a3236611d61cbd04957b17569",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.github"
+    }
+  },
+  {
+    "name": ".gitignore",
+    "path": ".gitignore",
+    "sha": "9dc6d8dcab61283a03c0cfd0e9efea84566e46c8",
+    "size": 253,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.gitignore?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitignore",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/9dc6d8dcab61283a03c0cfd0e9efea84566e46c8",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitignore",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/.gitignore?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/9dc6d8dcab61283a03c0cfd0e9efea84566e46c8",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/.gitignore"
+    }
+  },
+  {
+    "name": "BUILD.gn",
+    "path": "BUILD.gn",
+    "sha": "42a76b5836b301aae6c361220fe3428a2311b241",
+    "size": 2323,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/BUILD.gn?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.gn",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/42a76b5836b301aae6c361220fe3428a2311b241",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.gn",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/BUILD.gn?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/42a76b5836b301aae6c361220fe3428a2311b241",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.gn"
+    }
+  },
+  {
+    "name": "BUILD.md",
+    "path": "BUILD.md",
+    "sha": "a9ccd98fed2c4a245dc58db81634eb102ec1658a",
+    "size": 1217,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/BUILD.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/a9ccd98fed2c4a245dc58db81634eb102ec1658a",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/BUILD.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/a9ccd98fed2c4a245dc58db81634eb102ec1658a",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/BUILD.md"
+    }
+  },
+  {
+    "name": "CMakeLists.txt",
+    "path": "CMakeLists.txt",
+    "sha": "3e5e8c1960d579a8c43b01b4fa34d9f8054ac3c9",
+    "size": 5918,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CMakeLists.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CMakeLists.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/3e5e8c1960d579a8c43b01b4fa34d9f8054ac3c9",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CMakeLists.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CMakeLists.txt?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/3e5e8c1960d579a8c43b01b4fa34d9f8054ac3c9",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CMakeLists.txt"
+    }
+  },
+  {
+    "name": "CODE_OF_CONDUCT.adoc",
+    "path": "CODE_OF_CONDUCT.adoc",
+    "sha": "bd635bb9153538f35a8def037d09c6c4fe0c9ff4",
+    "size": 369,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CODE_OF_CONDUCT.adoc?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CODE_OF_CONDUCT.adoc",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/bd635bb9153538f35a8def037d09c6c4fe0c9ff4",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CODE_OF_CONDUCT.adoc",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CODE_OF_CONDUCT.adoc?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/bd635bb9153538f35a8def037d09c6c4fe0c9ff4",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CODE_OF_CONDUCT.adoc"
+    }
+  },
+  {
+    "name": "CONTRIBUTING.md",
+    "path": "CONTRIBUTING.md",
+    "sha": "2ef16ecdbd34ba749cdd896f9b6b1ee9dc0c4caa",
+    "size": 1969,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CONTRIBUTING.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CONTRIBUTING.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/2ef16ecdbd34ba749cdd896f9b6b1ee9dc0c4caa",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CONTRIBUTING.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/CONTRIBUTING.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/2ef16ecdbd34ba749cdd896f9b6b1ee9dc0c4caa",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/CONTRIBUTING.md"
+    }
+  },
+  {
+    "name": "LICENSE.md",
+    "path": "LICENSE.md",
+    "sha": "17cf4a17d6208dad41b88124d417e0af1d29736d",
+    "size": 495,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSE.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSE.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/17cf4a17d6208dad41b88124d417e0af1d29736d",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSE.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSE.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/17cf4a17d6208dad41b88124d417e0af1d29736d",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSE.md"
+    }
+  },
+  {
+    "name": "LICENSES",
+    "path": "LICENSES",
+    "sha": "1f8dbdd8835161ca4be4872c4597c66acc482e70",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/1f8dbdd8835161ca4be4872c4597c66acc482e70",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/LICENSES?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/1f8dbdd8835161ca4be4872c4597c66acc482e70",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/LICENSES"
+    }
+  },
+  {
+    "name": "Makefile.release",
+    "path": "Makefile.release",
+    "sha": "7596cb25637bf9eb1f489a79d23a85456a62d78e",
+    "size": 4913,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/Makefile.release?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/Makefile.release",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/7596cb25637bf9eb1f489a79d23a85456a62d78e",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/Makefile.release",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/Makefile.release?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/7596cb25637bf9eb1f489a79d23a85456a62d78e",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/Makefile.release"
+    }
+  },
+  {
+    "name": "README.md",
+    "path": "README.md",
+    "sha": "d2d74ed306aabd4bd7a9228492fb989d3cc2eafc",
+    "size": 1919,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/README.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/README.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/d2d74ed306aabd4bd7a9228492fb989d3cc2eafc",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/README.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/README.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/d2d74ed306aabd4bd7a9228492fb989d3cc2eafc",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/README.md"
+    }
+  },
+  {
+    "name": "REUSE.toml",
+    "path": "REUSE.toml",
+    "sha": "fa456efdea1a6096790ae27f4fa5b5d47af642a4",
+    "size": 716,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/REUSE.toml?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/REUSE.toml",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/fa456efdea1a6096790ae27f4fa5b5d47af642a4",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/REUSE.toml",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/REUSE.toml?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/fa456efdea1a6096790ae27f4fa5b5d47af642a4",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/REUSE.toml"
+    }
+  },
+  {
+    "name": "SECURITY.md",
+    "path": "SECURITY.md",
+    "sha": "44533792264be8a16fb2746c3ef15830614d7d62",
+    "size": 411,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/SECURITY.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/SECURITY.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/44533792264be8a16fb2746c3ef15830614d7d62",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/SECURITY.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/SECURITY.md?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/blobs/44533792264be8a16fb2746c3ef15830614d7d62",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/blob/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/SECURITY.md"
+    }
+  },
+  {
+    "name": "include",
+    "path": "include",
+    "sha": "702b5d061bdee98a9c6cc6a4e626176e598fecf9",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/include?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/include",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/702b5d061bdee98a9c6cc6a4e626176e598fecf9",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/include?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/702b5d061bdee98a9c6cc6a4e626176e598fecf9",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/include"
+    }
+  },
+  {
+    "name": "registry",
+    "path": "registry",
+    "sha": "fa1416b0d9731f4bc16b2e9a6dbd145a3731db26",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/registry?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/registry",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/fa1416b0d9731f4bc16b2e9a6dbd145a3731db26",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/registry?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/fa1416b0d9731f4bc16b2e9a6dbd145a3731db26",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/registry"
+    }
+  },
+  {
+    "name": "tests",
+    "path": "tests",
+    "sha": "08748fcabb8d3aee0c251b4389bc35031767d060",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/tests?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+    "html_url": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/tests",
+    "git_url": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/08748fcabb8d3aee0c251b4389bc35031767d060",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/contents/tests?ref=f9973cd97e6f3584707e7ef1c425e336f1b92a5b",
+      "git": "https://api.github.com/repos/KhronosGroup/Vulkan-Headers/git/trees/08748fcabb8d3aee0c251b4389bc35031767d060",
+      "html": "https://github.com/KhronosGroup/Vulkan-Headers/tree/f9973cd97e6f3584707e7ef1c425e336f1b92a5b/tests"
+    }
+  }
+]

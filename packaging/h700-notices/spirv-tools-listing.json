@@ -1,0 +1,546 @@
+[
+  {
+    "name": ".bazelrc",
+    "path": ".bazelrc",
+    "sha": "79ad59480f9ed1f2938ee6c04bcae58dda4a5074",
+    "size": 202,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.bazelrc?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelrc",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/79ad59480f9ed1f2938ee6c04bcae58dda4a5074",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelrc",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.bazelrc?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/79ad59480f9ed1f2938ee6c04bcae58dda4a5074",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelrc"
+    }
+  },
+  {
+    "name": ".bazelversion",
+    "path": ".bazelversion",
+    "sha": "ba7f754d0c33efc277ab296ee7d1cf6b084ba36b",
+    "size": 6,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.bazelversion?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelversion",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/ba7f754d0c33efc277ab296ee7d1cf6b084ba36b",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelversion",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.bazelversion?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/ba7f754d0c33efc277ab296ee7d1cf6b084ba36b",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.bazelversion"
+    }
+  },
+  {
+    "name": ".clang-format",
+    "path": ".clang-format",
+    "sha": "1d43c4ed46c81fdfca274a524bf8b69268210cf9",
+    "size": 92,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.clang-format?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.clang-format",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/1d43c4ed46c81fdfca274a524bf8b69268210cf9",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.clang-format",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.clang-format?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/1d43c4ed46c81fdfca274a524bf8b69268210cf9",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.clang-format"
+    }
+  },
+  {
+    "name": ".github",
+    "path": ".github",
+    "sha": "cd96e133d04650df41581b95252737f4db476499",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.github?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.github",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/cd96e133d04650df41581b95252737f4db476499",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.github?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/cd96e133d04650df41581b95252737f4db476499",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.github"
+    }
+  },
+  {
+    "name": ".gitignore",
+    "path": ".gitignore",
+    "sha": "852c80c07ce22329ae2af74929cd00e53a82d616",
+    "size": 756,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.gitignore?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gitignore",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/852c80c07ce22329ae2af74929cd00e53a82d616",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gitignore",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.gitignore?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/852c80c07ce22329ae2af74929cd00e53a82d616",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gitignore"
+    }
+  },
+  {
+    "name": ".gn",
+    "path": ".gn",
+    "sha": "06b5520b8fb6c64e18a1a2f1340c32cc4d675873",
+    "size": 1760,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.gn?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gn",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/06b5520b8fb6c64e18a1a2f1340c32cc4d675873",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gn",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/.gn?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/06b5520b8fb6c64e18a1a2f1340c32cc4d675873",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/.gn"
+    }
+  },
+  {
+    "name": "Android.mk",
+    "path": "Android.mk",
+    "sha": "31c31ae3badd516cdd671c8ef8da9e6b550f40a8",
+    "size": 13310,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/Android.mk?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/Android.mk",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/31c31ae3badd516cdd671c8ef8da9e6b550f40a8",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/Android.mk",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/Android.mk?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/31c31ae3badd516cdd671c8ef8da9e6b550f40a8",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/Android.mk"
+    }
+  },
+  {
+    "name": "BUILD.bazel",
+    "path": "BUILD.bazel",
+    "sha": "98f616752edf7bf762731752b440d2aba56662b9",
+    "size": 17795,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/BUILD.bazel?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.bazel",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/98f616752edf7bf762731752b440d2aba56662b9",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.bazel",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/BUILD.bazel?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/98f616752edf7bf762731752b440d2aba56662b9",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.bazel"
+    }
+  },
+  {
+    "name": "BUILD.gn",
+    "path": "BUILD.gn",
+    "sha": "a6672fdc3df7704bb65d9fe7070e1412ee2b56d8",
+    "size": 61271,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/BUILD.gn?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.gn",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a6672fdc3df7704bb65d9fe7070e1412ee2b56d8",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.gn",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/BUILD.gn?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a6672fdc3df7704bb65d9fe7070e1412ee2b56d8",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/BUILD.gn"
+    }
+  },
+  {
+    "name": "CHANGES",
+    "path": "CHANGES",
+    "sha": "fbc50a61af7b70faf1dcf7bf4733e5b04bccdb9c",
+    "size": 99748,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CHANGES?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CHANGES",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/fbc50a61af7b70faf1dcf7bf4733e5b04bccdb9c",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CHANGES",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CHANGES?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/fbc50a61af7b70faf1dcf7bf4733e5b04bccdb9c",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CHANGES"
+    }
+  },
+  {
+    "name": "CMakeLists.txt",
+    "path": "CMakeLists.txt",
+    "sha": "b69ec9fb54f819ceb2b570998763a5686417c104",
+    "size": 16220,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CMakeLists.txt?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CMakeLists.txt",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/b69ec9fb54f819ceb2b570998763a5686417c104",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CMakeLists.txt",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CMakeLists.txt?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/b69ec9fb54f819ceb2b570998763a5686417c104",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CMakeLists.txt"
+    }
+  },
+  {
+    "name": "CODE_OF_CONDUCT.md",
+    "path": "CODE_OF_CONDUCT.md",
+    "sha": "a11610bd300bc0ad8135cda4ccc581dda85e0e57",
+    "size": 280,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CODE_OF_CONDUCT.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CODE_OF_CONDUCT.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a11610bd300bc0ad8135cda4ccc581dda85e0e57",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CODE_OF_CONDUCT.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CODE_OF_CONDUCT.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a11610bd300bc0ad8135cda4ccc581dda85e0e57",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CODE_OF_CONDUCT.md"
+    }
+  },
+  {
+    "name": "CONTRIBUTING.md",
+    "path": "CONTRIBUTING.md",
+    "sha": "11fb4e2c7e2fb002964144026eb6d837004f8ea4",
+    "size": 7295,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CONTRIBUTING.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CONTRIBUTING.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/11fb4e2c7e2fb002964144026eb6d837004f8ea4",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CONTRIBUTING.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/CONTRIBUTING.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/11fb4e2c7e2fb002964144026eb6d837004f8ea4",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/CONTRIBUTING.md"
+    }
+  },
+  {
+    "name": "DEPS",
+    "path": "DEPS",
+    "sha": "a4c45e9538585609ce5b31d1a8c736e26099afb1",
+    "size": 5682,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/DEPS?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/DEPS",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a4c45e9538585609ce5b31d1a8c736e26099afb1",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/DEPS",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/DEPS?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/a4c45e9538585609ce5b31d1a8c736e26099afb1",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/DEPS"
+    }
+  },
+  {
+    "name": "LICENSE",
+    "path": "LICENSE",
+    "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "size": 11358,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/LICENSE?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/LICENSE",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/LICENSE",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/LICENSE?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/LICENSE"
+    }
+  },
+  {
+    "name": "MODULE.bazel",
+    "path": "MODULE.bazel",
+    "sha": "e2743e4d0c47cc72efef573819bb375d39a8a67d",
+    "size": 916,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/MODULE.bazel?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/MODULE.bazel",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/e2743e4d0c47cc72efef573819bb375d39a8a67d",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/MODULE.bazel",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/MODULE.bazel?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/e2743e4d0c47cc72efef573819bb375d39a8a67d",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/MODULE.bazel"
+    }
+  },
+  {
+    "name": "PRESUBMIT.py",
+    "path": "PRESUBMIT.py",
+    "sha": "847deb763814834e5f0f346a2cb9dd233786279b",
+    "size": 1295,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/PRESUBMIT.py?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/PRESUBMIT.py",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/847deb763814834e5f0f346a2cb9dd233786279b",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/PRESUBMIT.py",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/PRESUBMIT.py?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/847deb763814834e5f0f346a2cb9dd233786279b",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/PRESUBMIT.py"
+    }
+  },
+  {
+    "name": "README.md",
+    "path": "README.md",
+    "sha": "7f54c74855a9673f9e33dd9de968c3421782a27c",
+    "size": 32338,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/README.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/README.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/7f54c74855a9673f9e33dd9de968c3421782a27c",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/README.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/README.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/7f54c74855a9673f9e33dd9de968c3421782a27c",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/README.md"
+    }
+  },
+  {
+    "name": "SECURITY.md",
+    "path": "SECURITY.md",
+    "sha": "99c5f441a309e54071816d688fa926b4f7dddec9",
+    "size": 697,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/SECURITY.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/SECURITY.md",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/99c5f441a309e54071816d688fa926b4f7dddec9",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/SECURITY.md",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/SECURITY.md?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/99c5f441a309e54071816d688fa926b4f7dddec9",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/SECURITY.md"
+    }
+  },
+  {
+    "name": "WORKSPACE",
+    "path": "WORKSPACE",
+    "sha": "054960aa06b2695ef7ddafb82e56f6d2e0908088",
+    "size": 165,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/WORKSPACE?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/WORKSPACE",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/054960aa06b2695ef7ddafb82e56f6d2e0908088",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/WORKSPACE",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/WORKSPACE?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/054960aa06b2695ef7ddafb82e56f6d2e0908088",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/WORKSPACE"
+    }
+  },
+  {
+    "name": "android_test",
+    "path": "android_test",
+    "sha": "7b9b88409a9a1af0974a3eea3ac09cbc0d40ce14",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/android_test?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/android_test",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/7b9b88409a9a1af0974a3eea3ac09cbc0d40ce14",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/android_test?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/7b9b88409a9a1af0974a3eea3ac09cbc0d40ce14",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/android_test"
+    }
+  },
+  {
+    "name": "build_defs.bzl",
+    "path": "build_defs.bzl",
+    "sha": "c18768fe89476a4e301ee79a2947b7f0d51d9108",
+    "size": 5329,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/build_defs.bzl?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/build_defs.bzl",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/c18768fe89476a4e301ee79a2947b7f0d51d9108",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/build_defs.bzl",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/build_defs.bzl?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/c18768fe89476a4e301ee79a2947b7f0d51d9108",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/build_defs.bzl"
+    }
+  },
+  {
+    "name": "build_overrides",
+    "path": "build_overrides",
+    "sha": "65293af863156c0b45c1e7f8b1d4c0816e454c83",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/build_overrides?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/build_overrides",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/65293af863156c0b45c1e7f8b1d4c0816e454c83",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/build_overrides?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/65293af863156c0b45c1e7f8b1d4c0816e454c83",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/build_overrides"
+    }
+  },
+  {
+    "name": "cmake",
+    "path": "cmake",
+    "sha": "a7d7d494573268b6fdfbd478af4896c56168bd86",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/cmake?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/cmake",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/a7d7d494573268b6fdfbd478af4896c56168bd86",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/cmake?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/a7d7d494573268b6fdfbd478af4896c56168bd86",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/cmake"
+    }
+  },
+  {
+    "name": "codereview.settings",
+    "path": "codereview.settings",
+    "sha": "ef84cf8572396a37a9100025355014c0fb938b03",
+    "size": 101,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/codereview.settings?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/codereview.settings",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/ef84cf8572396a37a9100025355014c0fb938b03",
+    "download_url": "https://raw.githubusercontent.com/KhronosGroup/SPIRV-Tools/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/codereview.settings",
+    "type": "file",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/codereview.settings?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/blobs/ef84cf8572396a37a9100025355014c0fb938b03",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/blob/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/codereview.settings"
+    }
+  },
+  {
+    "name": "docs",
+    "path": "docs",
+    "sha": "09bf98be5874964462d7cc7ada3eb74e511123e5",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/docs?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/docs",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/09bf98be5874964462d7cc7ada3eb74e511123e5",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/docs?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/09bf98be5874964462d7cc7ada3eb74e511123e5",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/docs"
+    }
+  },
+  {
+    "name": "examples",
+    "path": "examples",
+    "sha": "61e70f315cf628d6c9b1af20904629bb62c1720e",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/examples?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/examples",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/61e70f315cf628d6c9b1af20904629bb62c1720e",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/examples?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/61e70f315cf628d6c9b1af20904629bb62c1720e",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/examples"
+    }
+  },
+  {
+    "name": "external",
+    "path": "external",
+    "sha": "57983be9077009103a621b1748f5a5a532e71b80",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/external?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/external",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/57983be9077009103a621b1748f5a5a532e71b80",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/external?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/57983be9077009103a621b1748f5a5a532e71b80",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/external"
+    }
+  },
+  {
+    "name": "include",
+    "path": "include",
+    "sha": "3d9b3ae44f0b57d8c0c6d2d61959b540915a6671",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/include?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/include",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/3d9b3ae44f0b57d8c0c6d2d61959b540915a6671",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/include?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/3d9b3ae44f0b57d8c0c6d2d61959b540915a6671",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/include"
+    }
+  },
+  {
+    "name": "kokoro",
+    "path": "kokoro",
+    "sha": "9272b16b1308b356ea045f9cb58cdd37a5191d89",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/kokoro?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/kokoro",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/9272b16b1308b356ea045f9cb58cdd37a5191d89",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/kokoro?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/9272b16b1308b356ea045f9cb58cdd37a5191d89",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/kokoro"
+    }
+  },
+  {
+    "name": "source",
+    "path": "source",
+    "sha": "d111ac28bc946beb58100e9a6457e00d3ff375a1",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/source?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/source",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/d111ac28bc946beb58100e9a6457e00d3ff375a1",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/source?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/d111ac28bc946beb58100e9a6457e00d3ff375a1",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/source"
+    }
+  },
+  {
+    "name": "test",
+    "path": "test",
+    "sha": "edbc59b15531a964b4f84882cf6681948cabd69f",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/test?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/test",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/edbc59b15531a964b4f84882cf6681948cabd69f",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/test?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/edbc59b15531a964b4f84882cf6681948cabd69f",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/test"
+    }
+  },
+  {
+    "name": "tools",
+    "path": "tools",
+    "sha": "5b2b031f9f8b00ee41f3189b3f8624b5523a43f2",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/tools?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/tools",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/5b2b031f9f8b00ee41f3189b3f8624b5523a43f2",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/tools?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/5b2b031f9f8b00ee41f3189b3f8624b5523a43f2",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/tools"
+    }
+  },
+  {
+    "name": "utils",
+    "path": "utils",
+    "sha": "26aa604b9e1b8910f3a1eae23b9e844c24e84f4d",
+    "size": 0,
+    "url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/utils?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+    "html_url": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/utils",
+    "git_url": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/26aa604b9e1b8910f3a1eae23b9e844c24e84f4d",
+    "download_url": null,
+    "type": "dir",
+    "_links": {
+      "self": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/contents/utils?ref=5b5a25231a3543559b4f2cb27fe725a08b76b5d0",
+      "git": "https://api.github.com/repos/KhronosGroup/SPIRV-Tools/git/trees/26aa604b9e1b8910f3a1eae23b9e844c24e84f4d",
+      "html": "https://github.com/KhronosGroup/SPIRV-Tools/tree/5b5a25231a3543559b4f2cb27fe725a08b76b5d0/utils"
+    }
+  }
+]
