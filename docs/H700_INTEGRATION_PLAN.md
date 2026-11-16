@@ -1,0 +1,211 @@
+# H700 — план первого интеграционного этапа
+
+**Редакция 1, 2026-11-16. Статус: проект подробного плана, ожидает утверждения.**
+
+Пользователь согласовал **подход**: небольшой настоящий участок переноса, diagnostic scene без игровых ресурсов, штатные потоки/renderer U и один общий threading/lifetime gate до остального переноса. Это разрешает подготовить данный план и снимает концептуальный запрет на предложение раннего production slice, но не заменяет требуемое [workflow](H700_WORKFLOW.md) утверждение конкретных итераций. Production-правки и device-запуск пока не начинались.
+
+Основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md), база U `c872da704adde9a7838492aaa56dac73a32053e4`, Unbound v0.46.0. Цель этапа — получить пригодное для будущей игры графическое основание **RG40XX H / H700 / muOS 2601.0**, не отдельный альтернативный renderer и не FPS benchmark.
+
+## 1. Результат и границы
+
+**Остаётся в порте:** opt-in H700 backend Aurora, SDL2/Mali bootstrap, mixed-fetch в настоящем GX generator/resources, два постоянных native slots, main presenter, progress/drain и generation teardown. Эти production-файлы затем использует игра без копирования из harness.
+
+**Вспомогательная часть:** постоянный небольшой frontend `tools/h700_integration_driver/`, который вызывает штатные `aurora_initialize/begin_frame/end_frame/shutdown` и GX API. Он линкует реальные `aurora::core/gx/main/vi/mtx/os`, включая FIFO/render worker/compiler, а не компилирует их упрощённые копии. В current CMake нет единого target `aurora`; source manifests остаются штатными. Driver не является продолжением старого `h700_graphics_probe`.
+
+**Не входит:** полная сборка/запуск игры, audio/input acceptance, cards/save-load, game-owner shutdown hooks, skinning waits, все retail effects, PBR/HD-паки, live device-loss recovery и оптимизация FPS. Они остаются задачами следующего плана. Другие платформы и существующие GX callback semantics не удаляются и не подменяются.
+
+**Не раздуваем scope:** не создаём общий callback framework, не переделываем неиспользуемые optional readbacks, не включаем subsystem ради новой проверки. Однако ресурсы, созданные штатным `gfx/gx` bootstrap, подлежат освобождению независимо от того, рисует ли их сцена.
+
+## 2. Решения, входящие в утверждение плана
+
+1. **Build baseline:** использовать прежний exact ARM64 image `sha256:2db4439763783aa796da4268dbd91847ee2c13deef4c8ce2439e0f6bdf926962`, Clang16, Ninja, RelWithDebInfo, Cortex-A53, `-fsigned-char` и проверенные pinned inputs. Это явное принятие [EOL-ограничений](H700_BUILD_ENVIRONMENT.md) **только для данного integration slice**, не автоматическое утверждение builder полной игры. Никаких apt/Rust installs, нового image или Dawn rebuild.
+2. **Providers:** Dawn package/static без patches; SDL fork `6057d79baf8321bf190479a699655f06cc2a962f` vendor/shared с matched headers; nod alpha.12 release package/static; source-built pinned zlib-ng/zstd. Компиляция offline из manifest с hashes, fresh output. Providers должны подтвердить ожидаемые targets/paths; неожиданный system target — ошибка конфигурации, не повод менять версию. Existing image уже проверен на отсутствие нужных system dev packages. Не добавлять универсальные provider переделки ради других окружений.
+3. **Platform option:** новая opt-in `AURORA_H700`, допустимая только для Linux AArch64. Обычный upstream path по умолчанию неизменён. Реализация в `extern/aurora/lib/h700/`, интеграция через штатные Aurora manifests. Имена новых файлов/API ниже — планируемые, сейчас их нет.
+4. **Runtime:** строго аппаратный OpenGLES на firmware display; без CPU/Null/другого backend fallback. `SDL_VIDEODRIVER=sdl2`, `SDL3SHIM_SDL2_VIDEODRIVER=mali`. Native output 640×480, GL_RGBA8 / RGBA8Unorm, 1 mip, без MSAA. Существующий linear-format present путь U сохраняется, дополнительную sRGB encode/decode не добавлять. EFB и native output — разные объекты.
+5. **Нагрузка и проверки:** frame/storage scale 1, resident geometry 0, неприкреплённые staging buffers; один compiler U для OpenGLES, штатный multi-thread Dawn toggle. RmlUi остаётся исходно OFF; ImGui входит в настоящую final composition. Не форсировать no-compute. `pipelineCacheNoSeed=true`, отдельный пустой cache, профиль `h700-mixed-v1`. Validation и robustness **включены**, в том числе в RelWithDebInfo: U иначе при NDEBUG включает `skip_validation/disable_robustness`. Driver явно отключает эти toggles и отклоняет конфликтующие runtime overrides/skip-present, а не полагается на чистое окружение.
+6. **Recreation — уточнение предлагаемой приёмки:** native presenter context/surface/storage сохраняются до конца поколения; смена EFB-размера их не пересоздаёт. В gate проверяем EFB resize при неизменных native slots, затем **полный teardown и второе поколение**. Это предлагаемая замена surface-only recreation из §5 прежнего заключения: для фиксированного H700 output и fatal-exit policy live recreation не нужно, а SDL-владельцу поверхности нельзя произвольно подменять его EGLSurface. Поддержку live surface recreation не заявляем. До утверждения этого плана прежний пункт не считается ни выполненным, ни автоматически отменённым.
+7. **Failure policy:** fatal EGL/device loss → terminal state, пробуждение ожиданий, доступный best-effort teardown и диагностический exit, без live recovery. Нельзя обещать GPU drain после loss или возврат из зависшего driver call; timeout не PASS. Неизвестный teardown запрещает второе поколение. Firmware/runtime libraries на устройстве не заменяются.
+
+## 3. Неизменные контракты реализации
+
+- Main резервирует native credit **до** `gfx::begin_frame`. Descriptor поколения/frame/slot передаётся worker по значению и живёт независимо от CPU packet. Worker не ждёт swap/main.
+- Два imports на device; FIFO mailbox bounded 2. `Free → Reserved → Submitted → Ready → Reading → Retiring → Free`, недостоверное завершение → Quarantined. Forward completion до чтения, reverse EGL fence completion и успешный swap до reuse; не освобождать credit «по timeout».
+- Normal Draining закрывает **root admissions** на зафиксированной границе принятой работы. Downstream остаётся открыт, пока accepted FIFO/frame producers могут публиковать continuations. Quiescence означает: эти producers завершились, их queued/executing render/compiler continuations и completion obligations закончены. Одного пустого queue, `is_idle()` или sync marker недостаточно. Нормальный stop не отменяет уже принятые frames; rejected root work, ненужный background backlog и явный pre-submit/failure outcome различаются. Выполняющийся job не теряет lifetime данных только потому, что waiter отменён.
+- `main_progress_once()` нерекурсивно обслуживает только внутренние events/completions/presentation, без game/update/event polling/нового recording/resize/shutdown и без неподходящих locks. Не ставится в заполненную render queue.
+- **Уточнение терминов заключения:** существующий `gfx::after_present()` (`frame.cpp:1278`) — статистика, не внешний callback. Для H700 статистика обновляется после успешного swap. Новые notifications driver — owned result records, выдаваемые в его main safe-point, без удержания native credits.
+- Существующие `EncoderTaskDescriptor::afterSubmit` и GX draw-done не переносятся автоматически в этот dispatcher. Первые могут запускать internal maps на render worker, вторые имеют проверяемую семантику возврата до `fifo::drain()`. Не менять публичный callback ABI только ради данного driver.
+- H700 Dawn error/lost callbacks только фиксируют первую terminal ошибку и будят waiters, без прежнего немедленного `FATAL` и без рекурсивного shutdown. Failed wait/lookup прекращает обычный frame/growth/drain путь и возвращает управление driver failure/quiesce; нельзя просто выйти из void wait и продолжить как после success. Публичные здоровые GX semantics и callback ABI сохраняются; для failure propagation нужны status-bearing internal paths.
+- После stop/drain/maps retirement — thread-local unbind на владельцах, joins, release всех фактически созданных app holders, Destroy/lifecycle callbacks/final device release. **Вся Dawn share group** должна исчезнуть до export storage/presenter/display; resolver/libraries живут до конца. Process exit не заменяет штатный release первого поколения.
+
+## 4. Итерации реализации
+
+Для всех карточек ниже общие требования: ограниченный собственный diff → относящиеся к нему проверки → запись результатов/ограничений в этот план и [прогресс](H700_PROGRESS.md) → отдельный commit/push. Не трогать чужие `.DS_Store`, донор, прежние builds или image. Rollback — только собственное изменение; сломанный artifact не развертывать, логи сохранить. До IG-14 все проверки локальные, без устройства.
+
+Оценки — **1–2 часа активной работы на карточку**, не обещание точного срока. Cold configure/build и device window — отдельно. Если карточка не помещается либо нужен новый архитектурный выбор, фиксируем частичный результат и согласуем split/изменение, не расширяем работу молча.
+
+### IG-01. Воспроизводимая сборка настоящих Aurora targets
+
+- **Зачем/результат:** исключить случайные старые binary trees и собрать реальные зависимости первого slice.
+- **Файлы:** новые `tools/h700_integration_driver/{CMakeLists.txt,main.cpp,build.py,inputs.json}`, `cmake/h700/InitialCache.cmake`; `extern/aurora/CMakeLists.txt` — объявление H700 option. Root game CMake не менять.
+- **Решение:** reuse существующего environment/ABI verifier, manifest/staging pinned archives в fresh output; `add_subdirectory(extern/aurora)` и линковка штатных targets с существующей RESCAN policy. CLI пока только help/version и явный отказ ещё неготового graphics режима, без fake successful rendering.
+- **Проверка:** hash mismatch/missing input останавливает bootstrap; offline configure выбирает exact package/fork targets, без Rust/Corrosion/vendor Dawn. Compile/link настоящих Aurora libraries и frontend; `--help` не инициализирует GPU.
+- **Готово:** inputs/providers/команды и ELF metadata сохранены, нет случайных source/build overrides. Это build PASS, не runtime PASS. **Зависимости:** утверждённый план; уже полученные archives. Ожидание cold build может занять десятки минут, пока не измерено. Для CPU tests — отдельный output `/out/tests-h700` с `AURORA_ENABLE_TESTS=ON`, теми же pins и новой H700 state-test target; explicit build/run перечислены в §5.1.
+
+### IG-02. CPU-контракт двух credits и terminal results
+
+- **Зачем/результат:** владение native slot не смешивается с CPU packet и не теряется при stop.
+- **Файлы:** новые `extern/aurora/lib/h700/presentation_state.{hpp,cpp}`, `extern/aurora/tests/h700_presentation_state_test.cpp`, test manifest. H700 records — internal API, без общего external callback framework.
+- **Решение:** immutable descriptor/generation, state machine, reservation rollback, non-overwriting FIFO mailbox, accepted result delivery в Draining. Internal notifications queue не удерживает credits; внешняя выдача только в driver safe-point.
+- **Проверка/готово:** CPU tests: нельзя reserve третий credit, читать Submitted или reuse Reading; pre-submit abort возвращает reservation; stale descriptor отклоняется; pending result не теряется при stop; duplicate completion не удваивает release. GPU completion пока моделируется только как входное событие.
+- **Зависимости:** IG-01; local test target не требует Mali/нового Null profile.
+
+### IG-03. Постоянный EGL/Mali bootstrap и два native imports
+
+- **Зачем/результат:** тот platform/device path, который затем использует игра.
+- **Файлы:** новые `extern/aurora/lib/h700/{presentation.hpp,presentation.cpp}`; `lib/window.cpp/.hpp`, `lib/webgpu/gpu.cpp/.hpp`, `lib/aurora.cpp`, `cmake/aurora_core.cmake`, `cmake/aurora_gx.cmake` внутри Aurora.
+- **Решение:** штатный SDL shim bootstrap; внешний display/proc API Dawn, без WGPU desktop surface и fake surface capabilities. Фиксированный output format. Два GL_RGBA8 export storage/imports на generation. Resolver отслеживает EGL create/share/make-current/destroy и returns по всему Dawn share group. Использовать только публичный interop; private alias GLuint не извлекать.
+- **Проверка/готово:** compile/link H700 path и non-H700 guard; cleanup собственных частично созданных resources структурно определён, import failure прекращает generation без retry. Device claims не ставятся по compile PASS.
+- **Зависимости:** IG-01–02. До интеграции drain/final release driver graphics-запуск запрещён.
+
+### IG-04. Mixed-fetch resources/layout и buffer lifecycle
+
+- **Зачем/результат:** убрать доказанный 17>16 барьер в настоящих bindings U, не урезая material textures.
+- **Файлы:** Aurora `lib/gfx/resources.hpp`, `frame.cpp`, `encoding.cpp`, `lib/gx/gx.cpp`, `lib/webgpu/gpu.cpp`, нужные resource declarations.
+- **Решение:** в H700 mixed profile group0 bindings0/1 — vertex-only R32Uint textures; binding2 — fragment-only исходный storageBuffer. Group2 сохраняет штатные 16 textures без lightmap согласно измеренным limits. Buffer и его texture mirror имеют прежний upload/zeroing/growth contract; при замене buffer обновляются все нужные bind groups. **RequestDevice тоже mixed:** vertex storage 0, fragment storage минимум 1, sampled textures 16; SSBO требуется независимо от no-compute. Проверить final device limits и binding-size limits для фактического storageBuffer U, не размера 64 KiB прежней демки. Несовместимость — явный отказ, не возврат к исходному texture-fetch layout. Остальные profiles неизменны.
+- **Проверка/готово:** CPU/source assertions layout visibility и bindings, сборка actual consumers; static resource footprint/profile выводится в diagnostics. Не выдавать эти проверки за actual Mali layout PASS и не запускать прежнюю матрицу 17 на Null.
+- **Зависимости:** IG-01; runtime совместно с IG-05, без промежуточного GPU-запуска несовместимых shader/layout.
+
+### IG-05. Mixed-fetch в настоящем shader generator и cache identity
+
+- **Зачем/результат:** реальные GX shaders соответствуют новым resources; не подложить synthetic WGSL вместо generator.
+- **Файлы:** Aurora `lib/gx/shader.cpp/.hpp`, при необходимости `shader_info.*`, `lib/gfx/pipeline_cache.cpp`; tests generator в existing Aurora test infrastructure.
+- **Решение:** stage-specific data access в одном WGSL module: vertex helpers обращаются к bindings0/1 как textures; fragment fog/TEV/array consumers — к binding2 как SSBO. Разделять helper families/fragment emitters при генерации, не переписывать весь WGSL слепым global replace и не вводить общий WGSL parser. Normal/shadow entrypoints и bounds semantics сохраняются. H700 resource profile входит в production namespace/identity `pipeline_cache.db`, а не только в driver path; старый cache не удалять и не использовать с новым layout. Dawn blob cache не переделывать: в нынешнем OpenGLES пути U его descriptor не подключается. Для применимых flat varyings явно допустимый Compatibility sampling, не blanket изменение interpolation.
+- **Проверка/готово:** source tests соответствия normal/shadow stage bindings, fragment helper signatures и cache namespace; non-H700 generated contract не меняется. Generated modules/pipelines реально проверяет только общий IG-14.
+- **Зависимости:** IG-04. Если требуется иной shader architecture, остановка и согласование, не незаметная замена решения.
+
+### IG-06. Final composition и двусторонний GPU ownership
+
+- **Зачем/результат:** native slot содержит итог renderer + resampler + ImGui, а main безопасно выводит его.
+- **Файлы:** Aurora `lib/aurora.cpp`, `lib/gfx/frame_packet.hpp`, `frame.cpp/.hpp`, `lib/h700/presentation.*`, при необходимости `lib/webgpu/gpu.*` для target access.
+- **Решение:** reserve до recording; захват descriptor по значению независимо от очищаемого packet; worker composing/Submit → work-done future publication без ожидания main. Main: forward completion → настоящий `eglMakeCurrent` → blit → reverse EGL fence + flush → swap → recycle после completion. Ни glFinish на каждом кадре, ни CPU readback/upload как транспорт.
+- **Проверка/готово:** actual pipeline/format consumers компилируются, CPU state tests подтверждают порядок publication/recycle и abort; callbacks/tasks не удерживают packet до swap. Правильность pixels/fences остаётся IG-14.
+- **Зависимости:** IG-02–05. Отдельную последовательную graphics демку не запускать.
+
+### IG-07. Render queue и frame/staging waits
+
+- **Зачем/результат:** main может обслуживать presenter при full queue, sync и staging acquisition без reentrancy/lock-cycle.
+- **Файлы:** Aurora `lib/gfx/render_worker.cpp/.hpp`, `frame.cpp/.hpp`, нужные encoding enqueue sites; existing `render_worker_test.cpp`, `gfx_recording_test.cpp`.
+- **Решение:** один main-only progress hook; queue capacity/sync/frame/map waits отпускают lock перед progress и различают terminal outcome. Internal map/packet completions выполняются сразу. Partial acquisitions и pre-submit abort не теряют credits. Rejected enqueue после stop не исполняет graphics job inline на произвольном caller. Lifetime уже исполняющихся jobs с захваченными ссылками сохраняется до quiescence.
+- **Проверка/готово:** targeted CPU tests full queue/progress, accepted drain, rejected sync wake, отсутствие inline work и rollback частичного acquire; прежние ordering/shutdown tests сохраняются. Stubs recording fixture не являются GPU/threading доказательством.
+- **Зависимости:** IG-02, IG-06.
+
+### IG-08. FIFO drain/growth без ожидания под buffer lock
+
+- **Зачем/результат:** настоящий FIFO не замыкает цикл main↔worker при downstream backpressure.
+- **Файлы:** Aurora `lib/gx/fifo.cpp/.hpp`, existing `gx_fifo_test.cpp` и относящиеся CPU stubs.
+- **Решение:** main drain и growth terminal/progress-aware; try-lock/retry вне `sBufferMutex`. Сохранить accepted FIFO continuations, ordered draw-sync tokens, unpublished tails и draw-done return-before-drain contract. Failure не продвигает фиктивно processed target и не освобождает используемый buffer.
+- **Проверка/готово:** существующие FIFO growth/token/draw-done tests и один CPU downstream-backpressure case проходят; progress не исполняется с buffer lock. Это не новый GPU harness.
+- **Зависимости:** IG-07. Game skinning polling не входит и не объявляется решённым.
+
+### IG-09. Независимый compiler: blocking lookup и drain
+
+- **Зачем/результат:** pipeline compilation не зависит от очереди/lock, которые ожидает renderer/main.
+- **Файлы:** Aurora `lib/gfx/pipeline_cache.cpp/.hpp` и используемый internal wait/outcome helper; существующий CPU test target.
+- **Решение:** один независимый compiler OpenGLES; blocking lookup отпускает cache lock до main progress. Normal Draining заканчивает builds, нужные accepted frames; ненужный background backlog может быть явно отменён. Writer/prefetch перестают добавлять root work. Terminal failure будит waiter, но не выдаёт pipeline за готовый. Активный driver compile должен реально вернуться до release device.
+- **Проверка/готово:** CPU wait/outcome tests ready/failure/draining без lock; compile реального compiler path. Настоящий overlap и shutdown активной compilation — только IG-14.
+- **Зависимости:** IG-07–08. Не переносить compiler jobs в render queue, не отключать compilation ради gate.
+
+### IG-10. Retirement фактических maps и app holders
+
+- **Зачем/результат:** после последнего кадра ресурсы bootstrap/scene освобождаются без требования «ещё одного Submit».
+- **Файлы:** Aurora `lib/gfx/frame.cpp`, `recording.cpp`, `vis_query.cpp/.hpp` при наличии его holders, `lib/webgpu/gpu_prof.cpp`, фактические bootstrap/effect cleanup sites. Не перерабатывать все optional readback subsystems.
+- **Решение:** фиксированный inventory объектов выбранного init/scene path; internal map retirement при drain; reset query/buffer/pipeline/static refs после settle callbacks. Известный `vis_query` reset включить, если holders созданы; пустое состояние не выдавать за проверку release созданных объектов. Screenshots/selftest/overdraw/bloom специально не активировать. Уже созданные init-ресурсы нельзя исключить этой оговоркой.
+- **Проверка/готово:** CPU late/duplicate completion и reset ownership cases для затронутого helper, existing relevant readback tests; maps settled, нет незавершённых callback obligations/неучтённых captures, у каждого созданного holder есть владелец и release/reset point. Постоянные resources ещё могут жить до IG-11; их окончательное освобождение и исчезновение contexts этим не объявляются.
+- **Зависимости:** IG-07–09. Любая обнаруженная обязательная крупная перестройка readbacks — остановка для согласования, не расширение всех effects.
+
+### IG-11. Driver quiescence, thread-local unbind и полный release generation
+
+- **Зачем/результат:** настоящий штатный shutdown до возврата из процесса, допускающий второе поколение.
+- **Файлы:** Aurora `lib/aurora.cpp`, `lib/gfx/frame.cpp`, `lib/webgpu/gpu.cpp/.hpp`, worker epilogues `fifo.cpp`, `render_worker.cpp`, `pipeline_cache.cpp`, `lib/h700/presentation.*`, driver main.
+- **Решение:** driver закрывает root producers, сохраняет progress/accepted continuations и доставляет свои результаты живым consumers; затем thread-owned unbind/acknowledgement и joins. Release holders → Destroy/lifecycle callbacks/final release всей группы → presenter FBO/EGLImage/source textures → window/display, resolver последним. Контекст, вновь сделанный current lifecycle-вызовами на main, снова unbind. Проверяется отсутствие app references, удерживающих старую группу после final release. EGL errors фиксируются, не заметаются; повторный shutdown безопасен.
+- **Проверка/готово:** CPU order/idempotence/terminal tests, compile реальных epilogues. Context observer должен различать share groups и не путать Destroy с фактическим context destruction. Без успешного полного teardown следующее поколение запрещено.
+- **Зависимости:** IG-03, IG-06–10. Game main/platform shutdown hooks не менять: владельцами сейчас являются driver и Aurora.
+
+### IG-12. Диагностическая сцена через GX и один сценарий
+
+- **Зачем/результат:** проверить постоянный путь на реальной нагрузке, не на clear-only кадре или собственной WebGPU сцене.
+- **Файлы:** новые `tools/h700_integration_driver/scene.{hpp,cpp}`, driver main, минимальные opt-in diagnostic observation hooks Aurora.
+- **Решение:** конечная последовательность GX geometry с асимметричными цветными областями/frame marker, обновляемыми vertex/array данными и **fog range adjustment** как fragment SSBO consumer (`fogRangeEnabled`, не просто включённый fog); ImGui рисует контрольную фигуру в final composition. Четыре заранее заданных холодных shader variants и диагностические phase barriers создают scheduling scenario из §5.2; отдельный пустой cache каждого поколения. Один controlled backpressure эпизод двух native credits, не перебор всех очередей/эффектов.
+- **Проверка/готово:** независимый pixel oracle §5.3 проверяет **final-composed native slot** после forward completion и несколько pixels **после GL blit, до swap**, не только EFB. Readback диагностический, не транспорт. Trace различает периоды artificial barrier wait и действительные интервалы вызовов Dawn API/jobs; stop/pending и overlap нельзя засчитать по одному ожиданию на hook. Параллельное исполнение внутри libMali не заявляется. Hooks не заменяют jobs stubs и не меняют normal runtime по умолчанию.
+- **Зависимости:** IG-04–11. Без game assets, disc access, screenshot API и seed cache.
+
+### IG-13. Конечный ARM64 пакет и local readiness
+
+- **Зачем/результат:** готовый к отдельно разрешённому запуску artifact с известными runtime requirements.
+- **Файлы:** driver build/staging helper, проверяемая artifact metadata и license collector integration; новый отчёт `docs/H700_INTEGRATION_GATE.md` с pending device status.
+- **Решение:** clean build actual target, staged shared SDL с local RPATH, notices/licenses; reuse environment/ELF verifier, audit executable+DSO+runtime chain. Не включать container libc/libstdc++/EGL/GLES, assets/settings/saves. Manifest фиксирует source revision, image/input hashes, toggles, профиль, scenario bounds и artifact hashes.
+- **Проверка/готово:** targeted CPU tests из IG-02/07–11, CLI help/version, hashes/ABI/provider audit и package content check. Full GPU gate остаётся **pending**, никакой другой GPU backend не становится заменой Mali. Package не отправляется автоматически.
+- **Зависимости:** IG-01–12. Ожидание clean build измерить отдельно; full-game build не нужен.
+
+### IG-14. Единственный общий gate на RG40XX H
+
+- **Зачем/результат:** проверить архитектурный допуск Dawn/Mali на настоящем коде и получить основание для следующего плана.
+- **Зависимости:** IG-13 PASS и **отдельное разрешение на device window/deploy/run** с актуальным адресом/host identity. Текущее согласование подхода таким разрешением не является.
+- **Объём:** один bounded сценарий из §5, одна test installation, два поколения в одном процессе. Реальные game installation, firmware, настройки и saves не затрагиваются.
+- **Готово:** все критерии §5, очищенная краткая запись результата и cleanup. После PASS готовим план остального переноса; сам PASS не разрешает его автоматически. При timeout/unexplained loss/driver concurrency failure — остановка, не silent serial fallback или замена Dawn.
+- **Оценка:** до 1–2 часов активной подготовки/приёмки; само штатное выполнение ограничено ниже. Новые попытки — только в пределах согласованного окна и неизменного сценария, не автоматическая серия экспериментов.
+
+## 5. Конечная device-приёмка
+
+**Ни один из критериев ниже не считается выполненным по CPU tests, сборке, Mock/Null или прежней graphics demo.**
+
+1. Первое поколение: **120** конечных кадров, ровно два imports 640×480. Frame IDs/pixels соответствуют ожиданию; реальные resource/render/compiler calls перекрывались, blocking lookup и backpressure завершились с main progress. No software/Null fallback.
+2. В середине последовательности EFB меняется с 640×480 на 320×240 при native 640×480; imports/native storage не меняются, final composition и UI остаются правильными. Это не заявка на live EGLSurface recreation.
+3. Normal drain первого поколения завершает accepted work/maps/presentations; наблюдение EGL подтверждает unbind и фактическое destruction **всех** Dawn contexts до export cleanup. Никакого process exit между поколениями.
+4. Во втором поколении — та же штатная инициализация и свой пустой cache; **normal Draining** запрашивается при подтверждённо принятой pending render/compile/presentation работе, не после полной idle-паузы (§5.2). Принятые frames и необходимые continuations исполняются, submitted presentations проходят retirement. Abort допустим для rejected root work/ненужного background backlog либо явного failure, **не как замена принятой работы просто из-за normal stop**. Начало/конец работы и состояние при stop сохранены в trace; нет callbacks после destruction owners.
+5. В обоих поколениях: read только после forward completion, reuse только после reverse completion + swap; ни потерянных slots/futures, ни случайного mailbox overwrite. Validation/robustness включены. Нет validation/EGL/GL errors, зависших waits/joins или неизвестного teardown.
+6. App deadline **60 секунд**, внешний watchdog **90 секунд** на весь сценарий; bounded кадры второго поколения — не более **8**. Не успел/не удалось получить нужное pending/overlap состояние — **не PASS**, критерий не переписывается ради зелёного результата. Нет обещания прервать зависший driver call средствами самого приложения.
+7. Только отдельный свежий test directory, без auto-discovery ISO/старых user paths и доступа к cards. Перед запуском/после cleanup проверить firmware hashes по ранее принятому набору; временные файлы/процессы убрать. Пользователь отдельно подтверждает правильную ориентацию/видимость UI и возврат меню после закрытия. Этот gate не является измерением FPS и не проверяет управление/звук/save-load.
+
+**Развилка FAIL:** локальный дефект реализации — исправление внутри того же контракта с повтором того же gate в разрешённом окне. Доказанный отказ context/concurrency/lifetime внутри Dawn/Mali — остановка и предложение изменения архитектуры с evidence. Неясная причина остаётся открытым результатом, а не доказательством невозможности Dawn или разрешением ослабить correctness.
+
+### 5.1. Локальные tests — исполнимый маршрут
+
+Тестовый configure driver frontend в отдельном output `/out/tests-h700`: те же dependencies/toolchain, `AURORA_H700=ON`, `AURORA_ENABLE_TESTS=ON`. Build **explicit targets** `h700_presentation_state_tests` (новый IG-02), `render_worker_tests`, `gx_fifo_tests`, `gfx_recording_tests`; `bloom_readback_slots_tests` — только если затронут его helper. `EXCLUDE_FROM_ALL` сам их не соберёт.
+
+Запуск именно этих GPU-free executables через existing GTest entry points с ограничением времени каждой команды; CTest используется для добавленных им suites с явным фильтром, не `-L port` и не произвольный полный suite. Новые cases проверяют production CPU helpers, не альтернативную реализацию. Docker ARM64 execution допустим для этих CPU tests, не считается runtime Mali/kernel 4.9 evidence. GTest 1.17 уже закреплён и cached, установка не нужна.
+
+Для утверждения «non-H700 guards компилируются» — отдельный configure `/out/compile-upstream` с `AURORA_H700=OFF`, сборка **`aurora_core` и `aurora_gx`**, без graphics запуска. Это compile regression check исходной ветки на том же ARM64 toolchain, не тест всех upstream платформ. Не выдавать единственный H700 configure за эту проверку.
+
+### 5.2. Scheduling сценарий, не неопределённый stress loop
+
+- Каждое поколение получает **свой свежий cache directory**. NoSeed не заменяет этого: он не запрещает читать ранее записанную `pipeline_cache.db`.
+- В поколении1: четыре фиксированных GX variants подаются через настоящий FIFO/compiler. Перед реальными CreateRenderPipeline/CreateBuffer/CreateTexture вызовами opt-in hook синхронизирует старт через общий phase barrier; releases дают реальным jobs выполняться. В trace отдельно пишутся `barrier_enter/leave` и интервалы Dawn calls после leave. Для overlap нужны пересекающиеся реальные интервалы compiler и resource/render work, не только hooks. Если наблюдения нет в ограниченном сценарии — результат incomplete, не скрытое увеличение числа variants.
+- Backpressure: после принятия первых двух frames test hook задерживает только **выдачу уже безопасного native credit**, продолжая отслеживать forward/reverse completion. При третьем main acquisition `main_progress_once` после четырёх проходов снимает задержку. Main не должен вызывать driver notification или держать queue/FIFO lock. Worker не ждёт этой задержки; не подменяются GPU fence results.
+- Поколение2: frame0 уже Submitted, его retirement временно удерживается diagnostic hook. Frame1 принят с новым pipeline; compiler hook удерживает **до** фактической compilation, render continuation ожидает настоящий результат. При наблюдении этих трёх pending состояний main запрашивает normal Draining и снимает обе диагностические задержки, чтобы принятая compilation/frame/presentation штатно завершились. Это доказывает shutdown pending accepted work; реальный overlap проверен отдельно поколением1 и не приписывается искусственному ожиданию.
+- Все hooks opt-in только у diagnostic driver, фазовые и ограниченные, без нового универсального scheduler. Failure/deadline снимает собственные barriers, чтобы они не создавали искусственный вечный deadlock. Нельзя снять неизвестный GPU ownership как будто он завершён.
+
+### 5.3. Pixel oracle и fragment data path
+
+Diagnostic scene задаёт ортографический linear fog, белую внутреннюю область на чёрный fog color с GX depth `z=1/4`, start/near 0, end/far 1. `GXSetFogRangeAdj` включён; десять значений таблицы одинаковы:64 (`k=1`), затем128 (`k=2`) в другом контрольном кадре. Uniform coefficients соответствуют `a=1,c=0`; неверные coefficients/данные — failure, не подстройка oracle под считанный результат.
+
+Для EFB width `W`, выбранного fragment x и центра viewport `W/2` независимая формула:
+
+```text
+offset = 2 * (x + 0.5) / W - 1
+range = sqrt(offset*offset + k*k) / k
+fog = clamp(0.25 * range, 0, 1)
+RGB = UNORM8(1 - fog), alpha = 255
+```
+
+Контроль native точек `(80,200),(240,200),(400,200),(560,200)`; при nearest resampler `x = floor((nativeX+0.5)*W/640)`. Geometry/viewport задают данный GX depth с учётом штатного reversed-Z conversion. Fog LUT/expected pixels driver вычисляет независимо, **не вызывает production `build_fog_range_lut` или shader generator для ожидаемых значений**. Fog допускает заранее ограниченный 1 LSB на float/UNORM conversion; первичные цветные corner/frame markers и opaque ImGui marker проверяются точно. Контрольные точки удалены от raster/marker edges. Nearest resampling и sharpness 0 задаются явно, не зависят от default settings.
+
+ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, проверяется в `(24,24)` при обоих EFB размерах; остальная frame-ID/corner разметка асимметрична и не перекрывает fog samples. Проверяются final native slot и presenter backbuffer после blit, до swap. Для GL readback координата преобразуется из top-left в bottom-left (`yGL=479-y`); transport не объявляется проверенным по одному native texture. Несколько контрольных readbacks не являются CPU-путём вывода кадра.
+
+## 6. Учёт и последующий переход
+
+Статусы всех IG-01…IG-14 сейчас **не начаты**. После утверждения выполняются по dependencies, не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+
+Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
+
+До подключения игры следующий план обязан отдельно учесть game-owner safe quiesce до уничтожения `archSupport`, реальные skinning waits, runtime nod на kernel 4.9, бюджет памяти/ресурсов игры, остальные эффекты/UI/input/audio/cards и безопасную установку. Их отсутствие в раннем gate не означает готовность всей игры и не маскируется новым набором предплановых демок.
