@@ -5,7 +5,7 @@
 ## Текущий статус
 
 - **IG-01…IG-13 LOCAL PASS:** постоянный H700 backend, mixed resources/shaders/cache, main presenter, progress-aware render/FIFO/compiler waits, normal drain/full generation lifecycle, GX+ImGui diagnostic scene и clean ARM64 package.
-- **IG-14 DEVICE TECHNICAL PASS, визуальное подтверждение PENDING.** Пользователь отдельно разрешил устройство/deploy/run. Выполнен один исходный bounded-сценарий на Mali; cleanup закончен. Полный gate пока не закрыт.
+- **IG-14 NOT PASS: физический вывод FAIL.** Readback/threading/lifetime checks SSH-run прошли, но пользователь видел только меню ОС. По запросу установлен отдельный `H700 Integration Test.sh` для ручного foreground-запуска из muOS; агент graphics повторно не запускал.
 - [Подробный утверждённый план и результаты каждой итерации](H700_INTEGRATION_PLAN.md), [простая версия этапа](H700_INTEGRATION_SUMMARY.md), [artifact/device evidence и ограничения](H700_INTEGRATION_GATE.md).
 
 ## Что подтверждено
@@ -18,13 +18,13 @@
 
 ## Что ещё не подтверждено
 
-- **Оставшийся пункт IG-14:** пользовательское подтверждение правильной ориентации изображения, видимости cyan UI marker и возврата меню. Pixel oracle не заменяет визуальную приёмку.
+- **Блокер IG-14:** native/post-blit pixels корректны, но демка не была видна на панели. Первый SSH-run шёл поверх работающего menu без SDL display environment штатного Ports handler; это пока лишь гипотеза причины. Manual entry из меню ещё не доказывает исправление.
 - Полная игра, все retail effects/UI, game-owner quiescence/`archSupport`, skinning waits, input/audio, kernel4.9 nod fallback, память реальных сцен, save/load и обычная установка Ports. Optional profiler/visibility-query/readback paths не активировались ради gate.
 - Целевые30FPS и полная firmware exact-symbol closure не заявлены. EOL image принят только для integration slice, не автоматически для полной игры.
 
 ## Следующий шаг
 
-Получить визуальное подтверждение и честно завершить статус IG-14. Повторный graphics run ради полноты не нужен. После полного PASS — подготовить отдельный план остального переноса; текущий gate не разрешает его автоматически. Архитектура, зависимости и критерии не менялись.
+Пользователь запускает **Explore → SD1 → Ports → H700 Integration Test** (`/mnt/mmc/ROMS/Ports/H700 Integration Test.sh`). Та же демка/сценарий, app60s/watchdog90s; logs сохраняются в скрытой `.h700-integration-test/runs/`, latest path — в `latest-run.txt`. Установка намеренно оставлена по запросу, существующие порты не менялись. Launcher CPU tests7/7 и все helpers30/30 PASS, device syntax/help/hashes PASS; graphics не запускался. Затем проверить фактическую видимость и logs; полный gate не закрывать по одному exit0. Следующий план игры пока не разрешён.
 
 ## Основания и история
 

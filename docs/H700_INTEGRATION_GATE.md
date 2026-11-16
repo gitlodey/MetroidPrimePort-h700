@@ -1,8 +1,8 @@
-# H700 integration gate — IG‑13 local PASS / IG‑14 technical PASS, visual pending
+# H700 integration gate — IG‑13 local PASS / IG‑14 physical display FAIL
 
 **Дата:** 2026-11-16. **Source revision:** `6a58db6e3a71dac843a02eb616cc8e149ec0f72c` (IG‑12 accepted).
 
-**IG‑13: LOCAL READINESS PASS. IG‑14: DEVICE TECHNICAL PASS, визуальная приёмка pending.** Пользователь отдельно разрешил device/deploy/run; выполнен один исходный bounded-сценарий и cleanup. Полный gate ещё не закрыт без подтверждения ориентации/UI/возврата меню.
+**IG‑13: LOCAL READINESS PASS. IG‑14: NOT PASS — physical display FAIL.** Программные readback/threading/lifetime checks исходного SSH-run прошли, но пользователь видел только меню ОС. Это не отсутствие подтверждения: видимый вывод не состоялся. По новому запросу оставлен отдельный manual Ports launcher; его graphics run пока не выполнен агентом.
 
 Ни один runtime-критерий §5 не объявлялся выполненным только по локальной сборке IG-13. Subsequent actual device run и доказательства IG-14 приведены ниже; это не приёмка полной игры или FPS.
 
@@ -115,4 +115,17 @@ Parent выполнил независимый CPU пересчёт сохран
 
 Ignored `build/h700-integration-ig14/`: `device-run.log`, `run-exit.json`, `technical-result.json`, `audit_evidence.py`, `firmware-{before,after-run,after-cleanup}.log`, payload/cleanup logs; `device-results/generation-{1,2}/{pixels,intervals,contexts,exports}.tsv`, gen2`stop.tsv`. Raw logs/private orchestration не публикуются. Device run не требовал production fixes/rebuild или повторного graphics запуска.
 
-**Визуальная приёмка пользователя PENDING:** правильная ориентация, видимый cyan UI marker и возврат меню. Pixel oracle не заменяет этот пункт §5. До подтверждения полный IG-14 не помечается PASS; остальной перенос игры автоматически не разрешён.
+**Последующее сообщение пользователя: на экране всё время было меню ОС, демка не отображалась. Визуальная часть FAIL, полный IG-14 NOT PASS.** Native/post-blit readback не доказывает scanout на физическую панель. Прежний статус visual pending заменён этим фактическим наблюдением; программное evidence не удалено и не переименовано в полный PASS. Остальной перенос игры заблокирован.
+
+## Повтор через меню muOS — launcher установлен, graphics ожидает пользователя
+
+Пользователь разрешил повтор либо оставить `.sh` для самостоятельного запуска. Выбран отдельный manual launcher, без изменений renderer/binaries и без второго SSH graphics run.
+
+- Штатные firmware `frontend.sh`/`ext-general.sh` показывают: muOS вызывает Ports entry после выхода из menu-приложения и задаёт SDL display environment. Первый SSH-run происходил при активном menu process и чистом `env -i`, без этих SDL settings. **Это гипотеза причины, не доказанный диагноз и не обещание исправления.**
+- На первой карте добавлены только собственные новые `ROMS/Ports/H700 Integration Test.sh` и скрытая `ROMS/Ports/.h700-integration-test/`. Существующий Metroid/другие порты и их assignments не изменены. Binary/SDL/payload — тот же IG-13 archive SHA256 `43f31a20d4d31fb06ffaf4e1f083484d31710a300835cefca80e5d4f23bdaeb9`; sidecar launcher не выдаётся за часть исходного package manifest.
+- Entry source: `tools/h700_integration_driver/muos-launch.sh`. Запуск без аргументов из **Explore → SD1 → Ports → H700 Integration Test**. Если muOS запросит core, нужен штатный external/Ports shell handler, не emulator; автоматических изменений assignments нет.
+- Launcher сохраняет только allowlist SDL settings штатного handler: rotation/scaler/blitter/assert/controller-file. Остальной driver environment чистый: own HOME/XDG/TMPDIR, без inherited LD/renderer/debug overrides. Atomic lock запрещает одновременные запуски. Перед каждым run проверяются firmware baseline и payload checksums; после — повтор firmware hashes, исходный exit code и отдельная пометка visual acceptance required.
+- Исходный bounded scenario и app60s/watchdog90s не меняются; `setsid` отделяет timeout/driver от frontend. Не убивает menu, не правит framebuffer/sysfs/governors/firmware и не читает assets/cards. Выход0 сам по себе не закрывает physical-display criterion.
+- Каждый run пишет свежие `ROMS/Ports/.h700-integration-test/runs/run.*/{launcher.log,driver.log,driver.exit,result.txt,firmware-after.log,results/}`; `latest-run.txt` указывает последний. Старые результаты не удаляются. Установка оставлена по прямому запросу пользователя; это не забытый cleanup первого временного run.
+- Проверки: **7/7 новых CPU launcher tests и30/30 всех helper tests PASS** в прежнем offline ARM64 image; только shell stand-ins, не Aurora/GPU. На device проверены transfer/payload/baseline hashes, `sh -n`, help и отсутствие created run/lock на момент установки. Read-only review blockers не нашёл. Ignored installation evidence: `build/h700-integration-ig14/manual/`, без endpoint/session details в Git.
+- Удаление после приёмки: убрать только наш `H700 Integration Test.sh` и `.h700-integration-test/` после получения logs и проверки отсутствия активного diagnostic процесса. Сейчас они намеренно остаются для ручного запуска. **Физический вывод повторно не проверен; ждём наблюдение пользователя и новые logs.**
