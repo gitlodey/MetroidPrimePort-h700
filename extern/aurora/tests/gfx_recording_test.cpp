@@ -1,13 +1,18 @@
 #include <gtest/gtest.h>
 
 #include "gfx/frame_packet.hpp"
+#include "gfx/frame.hpp"
 #include "gfx/recording.hpp"
 #include "gfx/texture.hpp"
 #include "webgpu/gpu.hpp"
+#include "gfx/render_worker.hpp"
+#include "h700/wait.hpp"
 
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <atomic>
+#include <thread>
 
 namespace aurora::gfx {
 namespace {
@@ -18,6 +23,8 @@ constexpr auto DepthFormat = wgpu::TextureFormat::Depth24Plus;
 class GfxRecordingTest : public ::testing::Test {
 protected:
   void SetUp() override {
+    ASSERT_TRUE(render_worker::prepare_bootstrap());
+    ASSERT_TRUE(retire_cancelled_frames_after_quiescence());
     webgpu::g_graphicsConfig.surfaceConfiguration.format = ColorFormat;
     webgpu::g_graphicsConfig.depthFormat = DepthFormat;
     webgpu::g_graphicsConfig.msaaSamples = 1;
@@ -38,6 +45,10 @@ protected:
       detail::end_recording();
     }
     detail::shutdown_recording();
+    render_worker::set_wait_hooks({});
+    render_worker::shutdown();
+    EXPECT_TRUE(retire_cancelled_frames_after_quiescence());
+    EXPECT_TRUE(render_worker::prepare_bootstrap());
   }
 
   void seed(uint32_t width, uint32_t height) {
@@ -182,5 +193,56 @@ TEST_F(GfxRecordingTest, FinalizedPassesAreSealedOrDeliberatelyDiscarded) {
   recordingActive = false;
 }
 
+TEST_F(GfxRecordingTest, RejectedEndFrameCallsAbortButNeverSuccessCallback) {
+  // CPU recording fixture only: stopping the worker must reject before any Dawn call.
+  finish();
+  render_worker::initialize();
+  render_worker::shutdown();
+  int aborted = 0;
+  const bool accepted = end_frame([](wgpu::CommandEncoder&, std::vector<AfterSubmitCallback>) {
+    ADD_FAILURE() << "Rejected frame ran its graphics/success callback";
+  }, [&] { ++aborted; });
+  recordingActive = false;
+  EXPECT_FALSE(accepted);
+  EXPECT_EQ(aborted, 1);
+  EXPECT_FALSE(recording_active());
+}
+
+TEST(GfxFrameWaitOwnership, CancelledMapWaitKeepsSlotUntilInternalCompletion) {
+  render_worker::FrameSlotPool staging{1};
+  const auto slot = *staging.try_acquire();
+  int releases = 0;
+  auto ownership = std::make_shared<h700::MapSlotOwnership>(false, [&] { ++releases; staging.release(slot); });
+  auto callback = [ownership] { ownership->complete(); };
+  ownership->cancel_wait();
+  ownership.reset(); // completion, not the cancelled stack, owns the release obligation
+  EXPECT_EQ(staging.free_count(), 0u);
+  callback();
+  callback();
+  EXPECT_EQ(staging.free_count(), 1u);
+  EXPECT_EQ(releases, 1);
+}
+
+TEST(GfxFrameWaitOwnership, CompletionBeforeCancellationStillReleasesExactlyOnce) {
+  int releases = 0;
+  h700::MapSlotOwnership ownership(false, [&] { ++releases; });
+  ownership.complete();
+  EXPECT_EQ(releases, 0);
+  ownership.cancel_wait();
+  ownership.cancel_wait();
+  ownership.complete();
+  EXPECT_EQ(releases, 1);
+}
+
+TEST(GfxFrameWaitOwnership, ConcurrentMapCompletionAndCancellationDoNotLoseRelease) {
+  for (int i = 0; i < 50; ++i) {
+    std::atomic_int releases = 0;
+    h700::MapSlotOwnership ownership(false, [&] { ++releases; });
+    std::thread callback([&] { ownership.complete(); });
+    ownership.cancel_wait();
+    callback.join();
+    EXPECT_EQ(releases.load(), 1);
+  }
+}
 } // namespace
 } // namespace aurora::gfx

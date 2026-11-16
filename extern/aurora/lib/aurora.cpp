@@ -758,7 +758,11 @@ void end_frame() noexcept {
     TracyPlot("aurora: lastIndexSize", static_cast<int64_t>(stats.lastIndexSize));
     TracyPlot("aurora: lastStorageSize", static_cast<int64_t>(stats.lastStorageSize));
     TracyPlot("aurora: lastTextureUploadSize", static_cast<int64_t>(stats.lastTextureUploadSize));
-  });
+  }
+#ifdef AURORA_H700
+  , [nativeFrame = *nativeFrame] { (void)h700::abort_frame(nativeFrame); }
+#endif
+  );
 #ifdef AURORA_H700
   (void)h700::main_progress_once();
 #endif

@@ -986,6 +986,11 @@ static void release_h700_init_holders() {
 #endif
 
 bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+  // Explicit pre-worker window for a fresh device (including a normal second generation).
+  // This does not make enqueue-after-stop execute inline or reset a live graphics device.
+  if (!g_device && !g_instance && gfx::render_worker::is_quiescent()) {
+    if (!gfx::render_worker::prepare_bootstrap()) return false;
+  }
 #ifdef AURORA_H700
   // No backend/CPU retry: even a failed import may already have allocated a native alias.
   if (auroraBackend != BACKEND_OPENGLES || allowCpu || !h700::begin_dawn()) return false;
@@ -1722,7 +1727,7 @@ bool release_h700_device() {
 
 void shutdown() {
   g_initialized = false;
-  gfx::gpu_synchronize();
+  if (!gfx::gpu_synchronize()) return; // IG-11 owns failed-generation quiescence/release
   gpu_prof::shutdown();
   g_CopyBindGroupLayout = {};
   g_CopyPipeline = {};
@@ -1751,7 +1756,7 @@ void shutdown() {
 }
 
 void release_surface() noexcept {
-  gfx::gpu_synchronize();
+  if (!gfx::gpu_synchronize()) return;
   {
     window::SurfaceLock surfaceLock;
     release_surface_locked();
@@ -1824,7 +1829,7 @@ bool refresh_surface(bool recreate) {
   // Native SDL surfaces/storage are fixed for this generation. EFB resize is independent.
   return presentation_ready() && window::is_presentable();
 #else
-  gfx::gpu_synchronize();
+  if (!gfx::gpu_synchronize()) return false;
   if (!g_instance || !g_device || window::is_surface_changing()) {
     return false;
   }
@@ -1875,9 +1880,7 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t nativeWidth, uin
     return value != nullptr && value[0] == '1';
   }();
   const bool waits = force || surfaceChanged || !efbChanged || gfx::recording_active() || alwaysWait;
-  if (waits) {
-    gfx::gpu_synchronize();
-  }
+  if (waits && !gfx::gpu_synchronize()) return;
   const double waitMs = std::chrono::duration<double, std::milli>(clock::now() - start).count();
   resize_swapchain_internal(width, height, nativeWidth, nativeHeight, force);
   if (efbChanged) {
@@ -1897,7 +1900,7 @@ void set_quality(uint32_t msaaSamples, uint16_t anisotropy) {
     g_config.maxTextureAnisotropy = anisotropy;
     return;
   }
-  gfx::gpu_synchronize();
+  if (!gfx::gpu_synchronize()) return;
   g_config.msaa = msaaSamples;
   g_config.maxTextureAnisotropy = anisotropy;
   g_graphicsConfig.textureAnisotropy = effectiveAnisotropy;

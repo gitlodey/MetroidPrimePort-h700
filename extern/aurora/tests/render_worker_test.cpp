@@ -17,7 +17,12 @@ using aurora::gfx::render_worker::QueueItem;
 
 class RenderWorkerTest : public testing::Test {
 protected:
-  void TearDown() override { aurora::gfx::render_worker::shutdown(); }
+  void SetUp() override { ASSERT_TRUE(aurora::gfx::render_worker::prepare_bootstrap()); }
+  void TearDown() override {
+    aurora::gfx::render_worker::set_wait_hooks({});
+    aurora::gfx::render_worker::shutdown();
+    EXPECT_TRUE(aurora::gfx::render_worker::prepare_bootstrap());
+  }
 };
 
 TEST(RenderWorkerQueue, PreservesOrdering) {
@@ -103,5 +108,121 @@ TEST(RenderWorkerFrameSlots, RecyclesReleasedSlots) {
   future.wait();
   slots.release(second);
   EXPECT_EQ(slots.free_count(), 1u);
+}
+TEST_F(RenderWorkerTest, FullQueueProgressRunsWithoutQueueLock) {
+  namespace rw = aurora::gfx::render_worker;
+  BoundedQueue queue{1};
+  ASSERT_TRUE(queue.push({}));
+  int progress = 0;
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [] { return true; }, .progress = [&] {
+    ++progress;
+    EXPECT_EQ(queue.size(), 1u); // would deadlock if progress held the queue lock
+    bool closed = false;
+    EXPECT_TRUE(queue.pop_for(0ms, closed));
+  }});
+  EXPECT_EQ(queue.push_result({}), rw::Outcome::Completed);
+  EXPECT_EQ(progress, 1);
+}
+
+TEST_F(RenderWorkerTest, ResourceThreadDoesNotRunMainProgress) {
+  namespace rw = aurora::gfx::render_worker;
+  BoundedQueue queue{1};
+  ASSERT_TRUE(queue.push({}));
+  std::atomic_int progress = 0;
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [] { return true; }, .progress = [&] { ++progress; }});
+  auto producer = std::async(std::launch::async, [&] { return queue.push_result({}); });
+  EXPECT_EQ(producer.wait_for(10ms), std::future_status::timeout);
+  bool closed = false;
+  EXPECT_TRUE(queue.pop_for(0ms, closed));
+  EXPECT_EQ(producer.get(), rw::Outcome::Completed);
+  EXPECT_EQ(progress.load(), 0);
+}
+
+TEST_F(RenderWorkerTest, SyncProgressRunsWithoutSyncLock) {
+  namespace rw = aurora::gfx::render_worker;
+  std::promise<void> started, release;
+  auto released = release.get_future().share();
+  bool signalled = false;
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [] { return true; }, .progress = [&] {
+    if (!signalled) { signalled = true; release.set_value(); }
+  }});
+  rw::initialize();
+  rw::enqueue_work([&started, released] { started.set_value(); released.wait(); });
+  started.get_future().wait();
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Completed);
+  EXPECT_TRUE(signalled);
+}
+
+TEST_F(RenderWorkerTest, FailedWaitDoesNotDestroyExecutingJobCaptures) {
+  namespace rw = aurora::gfx::render_worker;
+  std::promise<void> started, release;
+  auto released = release.get_future().share();
+  auto payload = std::make_shared<int>(42);
+  std::weak_ptr<int> observed = payload;
+  std::atomic_bool healthy = true;
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [&] { return healthy.load(); },
+                     .progress = [&] { healthy.store(false); }});
+  rw::initialize();
+  rw::enqueue_work([&started, released, payload] { started.set_value(); released.wait(); EXPECT_EQ(*payload, 42); });
+  started.get_future().wait();
+  payload.reset();
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Failed);
+  EXPECT_FALSE(observed.expired());
+  EXPECT_FALSE(rw::is_quiescent());
+  release.set_value();
+  rw::shutdown();
+  EXPECT_TRUE(observed.expired());
+  EXPECT_TRUE(rw::is_quiescent());
+}
+
+TEST_F(RenderWorkerTest, ClosedQueueRejectsSyncAndGraphicsWithoutInlineFallback) {
+  namespace rw = aurora::gfx::render_worker;
+  rw::initialize();
+  rw::close_admission();
+  bool ran = false;
+  int cancelled = 0;
+  EXPECT_EQ(rw::enqueue_work([&] { ran = true; }, [&] { ++cancelled; }), rw::Outcome::Rejected);
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Rejected);
+  EXPECT_FALSE(ran);
+  EXPECT_EQ(cancelled, 1);
+  rw::shutdown();
+  EXPECT_EQ(rw::enqueue_work([&] { ran = true; }, [&] { ++cancelled; }), rw::Outcome::Rejected);
+  EXPECT_FALSE(ran);
+  EXPECT_EQ(cancelled, 2);
+}
+
+TEST_F(RenderWorkerTest, DrainingRootsPreservesAcceptedContinuations) {
+  namespace rw = aurora::gfx::render_worker;
+  rw::initialize();
+  rw::begin_draining();
+  EXPECT_FALSE(rw::root_admission_open());
+  std::atomic_int completed = 0;
+  EXPECT_EQ(rw::enqueue_begin_frame(1, [&] { ++completed; }), rw::Outcome::Completed);
+  EXPECT_EQ(rw::enqueue_encode_pass(1, 0, [&] { ++completed; }), rw::Outcome::Completed);
+  EXPECT_EQ(rw::enqueue_end_frame(1, [&] { ++completed; }), rw::Outcome::Completed);
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Completed);
+  rw::shutdown();
+  EXPECT_EQ(completed.load(), 3);
+}
+
+TEST_F(RenderWorkerTest, PartialSlotAcquireRollsBackAndProgressOwnsNoPoolLock) {
+  namespace rw = aurora::gfx::render_worker;
+  FrameSlotPool frames{1}, staging{1};
+  const auto busy = *staging.try_acquire();
+  std::atomic_bool healthy = true;
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [&] { return healthy.load(); }, .progress = [&] {
+    EXPECT_EQ(frames.free_count(), 0u);
+    EXPECT_EQ(staging.free_count(), 0u);
+    healthy.store(false);
+  }});
+  {
+    const auto acquired = frames.acquire_wait();
+    ASSERT_TRUE(acquired);
+    rw::SlotLease rollback(frames, *acquired);
+    EXPECT_FALSE(staging.acquire_wait());
+  }
+  EXPECT_EQ(frames.free_count(), 1u);
+  EXPECT_EQ(staging.free_count(), 0u);
+  staging.release(busy);
 }
 } // namespace

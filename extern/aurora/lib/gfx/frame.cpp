@@ -26,6 +26,10 @@
 #endif
 #include "../webgpu/gpu.hpp"
 #include "../webgpu/gpu_prof.hpp"
+#include "../h700/wait.hpp"
+#ifdef AURORA_H700
+#include "../h700/presentation.hpp"
+#endif
 
 #include <array>
 #include <atomic>
@@ -61,6 +65,7 @@ enum class BufferMapState {
   Unmapped,
   Mapping,
   Mapped,
+  Failed,
 };
 
 FrameBufferSizes g_bufferSizes;
@@ -75,6 +80,9 @@ std::array<std::atomic<BufferMapState>, StagingBufferCount> g_mappingStates;
 uint32_t g_frameIndex = UINT32_MAX;
 
 std::array<FramePacket, FrameSlotCount> g_framePackets;
+std::array<std::atomic_bool, FrameSlotCount> g_frameFailed{};
+std::array<std::atomic_bool, FrameSlotCount> g_frameOwned{};
+std::array<std::atomic<std::shared_ptr<h700::MapSlotOwnership>>, StagingBufferCount> g_mapOwnership;
 uint64_t g_nextFrameId = 1;
 render_worker::FrameSlotPool g_frameSlots{FrameSlotCount};
 render_worker::FrameSlotPool g_stagingSlots{StagingBufferCount};
@@ -312,14 +320,16 @@ void enqueue_process_events() {
   render_worker::enqueue_work([] {
     process_events();
     g_processEventsQueued.store(false, std::memory_order_release);
-  });
+  }, [] { g_processEventsQueued.store(false, std::memory_order_release); });
 }
 
-void wait_for_gpu_progress(std::chrono::nanoseconds sleepDuration) {
-  if (render_worker::is_idle()) {
-    enqueue_process_events();
-  }
+bool wait_for_gpu_progress(std::chrono::nanoseconds sleepDuration) {
+  if (!render_worker::progress_wait()) return false;
+#ifndef AURORA_H700
+  if (render_worker::is_idle()) enqueue_process_events();
+#endif
   std::this_thread::sleep_for(sleepDuration);
+  return render_worker::wait_healthy();
 }
 
 void pace_frame_start() {
@@ -348,36 +358,44 @@ void pace_frame_start() {
     const int64_t remainingNs = targetStartNs - nowNs;
     const auto sleepDuration =
         remainingNs > 1'000'000 ? std::chrono::milliseconds{1} : std::chrono::nanoseconds{remainingNs};
-    wait_for_gpu_progress(sleepDuration);
+    if (!wait_for_gpu_progress(sleepDuration)) return;
     nowNs = timestamp_ns(PresentClock::now());
   }
 }
 
-void map_staging_buffer(size_t slot, bool releaseSlotOnCompletion = false) {
+std::shared_ptr<h700::MapSlotOwnership> map_staging_buffer(size_t slot, bool releaseSlotOnCompletion = false) {
   auto expected = BufferMapState::Unmapped;
   if (!g_mappingStates[slot].compare_exchange_strong(expected, BufferMapState::Mapping, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
-    return;
+    return g_mapOwnership[slot].load(std::memory_order_acquire);
   }
-
+  auto ownership = std::make_shared<h700::MapSlotOwnership>(releaseSlotOnCompletion, [slot] { g_stagingSlots.release(slot); });
+  g_mapOwnership[slot].store(ownership, std::memory_order_release);
   g_stagingBuffers[slot].MapAsync(
       wgpu::MapMode::Write, 0, g_bufferSizes.staging(), wgpu::CallbackMode::AllowSpontaneous,
-      [slot, releaseSlotOnCompletion](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+      [slot, ownership](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+#ifdef AURORA_H700
+        if (status != wgpu::MapAsyncStatus::Success) {
+          g_mappingStates[slot].store(BufferMapState::Failed, std::memory_order_release);
+          if (auto state = h700::presentation_state()) state->fail(fmt::format("Staging map failed: {} {}", magic_enum::enum_name(status), message));
+          render_worker::notify_failure();
+          ownership->complete();
+          return;
+        }
+#else
         if (status == wgpu::MapAsyncStatus::CallbackCancelled || status == wgpu::MapAsyncStatus::Aborted) {
           Log.warn("Buffer mapping {}: {}", magic_enum::enum_name(status), message);
           g_mappingStates[slot].store(BufferMapState::Unmapped, std::memory_order_release);
-          if (releaseSlotOnCompletion) {
-            g_stagingSlots.release(slot);
-          }
+          ownership->complete();
           return;
         }
         AURORA_ASSERT(status == wgpu::MapAsyncStatus::Success, "Buffer mapping failed: {} {}",
                       magic_enum::enum_name(status), message);
+#endif
         g_mappingStates[slot].store(BufferMapState::Mapped, std::memory_order_release);
-        if (releaseSlotOnCompletion) {
-          g_stagingSlots.release(slot);
-        }
+        ownership->complete();
       });
+  return ownership;
 }
 } // namespace
 
@@ -583,6 +601,16 @@ void initialize() {
     std::lock_guard lock{g_presentStatsMutex};
     g_presentTimes.clear();
   }
+#ifdef AURORA_H700
+  auto presentation = h700::presentation_state();
+  render_worker::set_wait_hooks({
+      .main = std::this_thread::get_id(),
+      .healthy = [presentation] { const auto phase = presentation->snapshot().phase;
+        return phase == h700::PresentationPhase::Running || phase == h700::PresentationPhase::Draining; },
+      .progress = [] { (void)h700::main_progress_once(); },
+      .admitRoot = [presentation] { return presentation->snapshot().phase == h700::PresentationPhase::Running; },
+  });
+#endif
   render_worker::initialize();
   // This appears to take a while and blocks the render thread for periods of time
   // render_worker::set_event_pump([] {
@@ -882,6 +910,7 @@ void initialize() {
 void shutdown() {
   render_worker::synchronize();
   render_worker::shutdown();
+  if (!render_worker::is_quiescent()) return; // producer-side rejected work may still be unwinding
   g_processEventsQueued.store(false, std::memory_order_release);
   g_lastPresentNs.store(0, std::memory_order_release);
   g_presentPeriodNs.store(0, std::memory_order_release);
@@ -931,6 +960,7 @@ void shutdown() {
   for (auto& packet : g_framePackets) {
     packet = {};
   }
+  for (auto& owned : g_frameOwned) owned.store(false, std::memory_order_release);
   shutdown_recording();
   g_resources.staticBindGroup = {};
   g_resources.staticBindGroupLayout = {};
@@ -946,45 +976,54 @@ void shutdown() {
 
 bool wait_for_staging_buffer(size_t slot) {
   ZoneScopedN("Wait for buffer map");
-  map_staging_buffer(slot);
+  const auto initial = g_mappingStates[slot].load(std::memory_order_acquire);
+  if (initial == BufferMapState::Mapped && render_worker::wait_healthy()) return true;
+  if (initial == BufferMapState::Failed || !render_worker::wait_healthy()) {
+    if (initial == BufferMapState::Mapping) {
+      if (auto owner = g_mapOwnership[slot].load(std::memory_order_acquire)) owner->cancel_wait();
+    } else g_stagingSlots.release(slot);
+    return false;
+  }
+  const auto ownership = map_staging_buffer(slot);
   while (true) {
     const auto mappingState = g_mappingStates[slot].load(std::memory_order_acquire);
-    if (mappingState == BufferMapState::Mapped) {
-      return true;
-    }
-    if (mappingState == BufferMapState::Unmapped) {
+    if (mappingState == BufferMapState::Mapped && render_worker::wait_healthy()) return true;
+    if (mappingState == BufferMapState::Unmapped || mappingState == BufferMapState::Failed ||
+        !wait_for_gpu_progress(std::chrono::milliseconds{1})) {
+      if (ownership) ownership->cancel_wait();
+      else g_stagingSlots.release(slot);
       return false;
     }
-    wait_for_gpu_progress(std::chrono::milliseconds{1});
   }
 }
 
-size_t acquire_frame_slot() {
+std::optional<size_t> acquire_frame_slot() {
   ZoneScopedN("Acquire frame slot");
   const auto waitStart = PresentClock::now();
-  while (true) {
+  while (render_worker::wait_healthy()) {
     if (const auto slot = g_frameSlots.try_acquire()) {
       const auto waitDuration = PresentClock::now() - waitStart;
       const double waitMs = std::chrono::duration<double, std::milli>{waitDuration}.count();
       TracyPlot("aurora: frameSlotWaitMs", waitMs);
       return *slot;
     }
-    wait_for_gpu_progress(std::chrono::microseconds{100});
+    if (!wait_for_gpu_progress(std::chrono::microseconds{100})) break;
   }
+  return std::nullopt;
 }
 
 std::optional<size_t> acquire_mapped_staging_buffer() {
   ZoneScopedN("Acquire mapped staging buffer");
-  while (true) {
+  while (render_worker::wait_healthy()) {
     if (auto slot = g_stagingSlots.try_acquire()) {
       if (wait_for_staging_buffer(*slot)) {
         return *slot;
       }
-      g_stagingSlots.release(*slot);
-      return std::nullopt;
+      return std::nullopt; // map completion owns a cancelled waiter's release
     }
-    wait_for_gpu_progress(std::chrono::microseconds{100});
+    if (!wait_for_gpu_progress(std::chrono::microseconds{100})) break;
   }
+  return std::nullopt;
 }
 
 void request_staging_growth(StagingKind kind, uint64_t peak) noexcept {
@@ -994,12 +1033,16 @@ void request_staging_growth(StagingKind kind, uint64_t peak) noexcept {
   }
 }
 
-void grow_frame_buffer(StagingKind kind, uint64_t need, const wgpu::CommandEncoder& encoder) {
+bool grow_frame_buffer(StagingKind kind, uint64_t need, size_t frameSlot) {
   ZoneScopedN("Grow frame buffer");
   // On the render worker, after everything queued before: what this frame encoded so far reads
   // the old buffer, then the copy makes the new one hold all of it (resident region included,
   // which stays at the same offsets) before anything encoded later reads or writes it.
-  render_worker::enqueue_work([kind, need, &encoder] {
+  const auto accepted = render_worker::enqueue_work([kind, need, frameSlot] {
+    // Resolve only after the ordered BeginFrame job created it. A cancelled waiter
+    // leaves the packet owned, and this running job holds its own encoder reference.
+    const auto encoder = g_framePackets[frameSlot].encoder;
+    if (!encoder) { fail_frame_work(frameSlot); return; }
     const auto& shared = SharedBuffers[static_cast<size_t>(kind)];
     uint64_t& device = kind == StagingKind::Vertex    ? g_bufferSizes.deviceVertex
                        : kind == StagingKind::Uniform ? g_bufferSizes.deviceUniform
@@ -1038,23 +1081,20 @@ void grow_frame_buffer(StagingKind kind, uint64_t need, const wgpu::CommandEncod
     // the old buffer goes too.
     expire_unused_bind_groups_soon();
   });
-  render_worker::synchronize();
+  return accepted == render_worker::Outcome::Completed && try_gpu_synchronize();
 }
 
 namespace {
 // Grows the staging buffers a frame spilled out of, once every frame in flight is done with them.
-void grow_staging(const std::array<uint64_t, 4>& want) {
+bool grow_staging(const std::array<uint64_t, 4>& want) {
   ZoneScopedN("Grow staging");
-  render_worker::synchronize();
+  if (!try_gpu_synchronize()) return false;
+  std::array<std::optional<render_worker::SlotLease>, StagingBufferCount> leases;
   // Holding every staging slot means no frame or pending map uses a buffer.
   for (size_t n = 0; n < StagingBufferCount; ++n) {
-    while (true) {
-      if (const auto slot = g_stagingSlots.try_acquire()) {
-        (void)slot;
-        break;
-      }
-      wait_for_gpu_progress(std::chrono::microseconds{100});
-    }
+    const auto slot = g_stagingSlots.acquire_wait();
+    if (!slot) return false;
+    leases[n].emplace(g_stagingSlots, *slot);
   }
   struct Kind {
     const char* name;
@@ -1079,8 +1119,9 @@ void grow_staging(const std::array<uint64_t, 4>& want) {
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     // A buffer still mapping completes with an error; wait it out before replacing it.
     while (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapping) {
-      wait_for_gpu_progress(std::chrono::milliseconds{1});
+      if (!wait_for_gpu_progress(std::chrono::milliseconds{1})) return false;
     }
+    if (!render_worker::wait_healthy()) return false;
     if (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapped) {
       g_stagingBuffers[i].Unmap();
     }
@@ -1092,29 +1133,22 @@ void grow_staging(const std::array<uint64_t, 4>& want) {
     };
     g_stagingBuffers[i] = g_device.CreateBuffer(&descriptor);
   }
-  for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
-    g_stagingSlots.release(i);
-  }
+  return render_worker::wait_healthy(); // leases release every acquired slot, also on partial failure
 }
 
 // Takes the limits frameBuffersDeferred held back. With every staging slot held no frame is in
 // flight, so the device buffers are replaced whole at the new limits between two frames, with
 // nothing of any frame to copy: the mid-frame grow lost an Adreno 618's device (issue #165).
-void reserve_held_frame_buffers() {
+bool reserve_held_frame_buffers() {
   ZoneScopedN("Reserve frame buffers");
   auto& s = g_bufferSizes;
-  if (s.heldVertex == 0) {
-    return;
-  }
-  render_worker::synchronize();
+  if (s.heldVertex == 0) return true;
+  if (!try_gpu_synchronize()) return false;
+  std::array<std::optional<render_worker::SlotLease>, StagingBufferCount> leases;
   for (size_t n = 0; n < StagingBufferCount; ++n) {
-    while (true) {
-      if (const auto slot = g_stagingSlots.try_acquire()) {
-        (void)slot;
-        break;
-      }
-      wait_for_gpu_progress(std::chrono::microseconds{100});
-    }
+    const auto slot = g_stagingSlots.acquire_wait();
+    if (!slot) return false;
+    leases[n].emplace(g_stagingSlots, *slot);
   }
   s.maxVertex = s.deviceVertex = s.heldVertex;
   s.maxUniform = s.deviceUniform = s.heldUniform;
@@ -1122,7 +1156,7 @@ void reserve_held_frame_buffers() {
   s.maxStorage = s.deviceStorage = s.heldStorage;
   s.heldVertex = s.heldUniform = s.heldIndex = s.heldStorage = 0;
   g_heldFrameBuffersTaken = true;
-  render_worker::enqueue_work([] {
+  const auto accepted = render_worker::enqueue_work([] {
     for (const auto& buffer : SharedBuffers) {
       const wgpu::BufferDescriptor descriptor{
           .label = buffer.label,
@@ -1152,17 +1186,16 @@ void reserve_held_frame_buffers() {
     // Cached bind groups that hold the old buffers are no longer looked up.
     expire_unused_bind_groups_soon();
   });
-  render_worker::synchronize();
-  for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
-    g_stagingSlots.release(i);
-  }
+  if (accepted != render_worker::Outcome::Completed || !try_gpu_synchronize()) return false;
   Log.info("Frame buffers: took the held limits, device {}/{}/{}/{} MiB (vertex/uniform/index/storage)",
            s.deviceVertex >> 20, s.deviceUniform >> 20, s.deviceIndex >> 20, s.deviceStorage >> 20);
+  return true;
 }
 } // namespace
 
 bool begin_frame() {
   ZoneScoped;
+  if (!render_worker::root_admission_open()) return false;
   {
     std::array<uint64_t, 4> want{};
     bool grow = false;
@@ -1172,19 +1205,20 @@ bool begin_frame() {
       grow = grow || want[k] > sizes[k];
     }
     if (grow) {
-      grow_staging(want);
+      if (!grow_staging(want)) return false;
     }
   }
   if (g_reserveHeldFrameBuffers.exchange(false, std::memory_order_acq_rel)) {
-    reserve_held_frame_buffers();
+    if (!reserve_held_frame_buffers()) return false;
   }
   // pace_frame_start();
-  const size_t frameSlot = acquire_frame_slot();
+  const auto acquiredFrame = acquire_frame_slot();
+  if (!acquiredFrame) return false;
+  const size_t frameSlot = *acquiredFrame;
+  render_worker::SlotLease frameLease(g_frameSlots, frameSlot);
   const auto stagingSlot = acquire_mapped_staging_buffer();
-  if (!stagingSlot) {
-    g_frameSlots.release(frameSlot);
-    return false;
-  }
+  if (!stagingSlot) return false;
+  render_worker::SlotLease stagingLease(g_stagingSlots, *stagingSlot);
 
   auto& frame = g_framePackets[frameSlot];
   frame = {};
@@ -1208,19 +1242,30 @@ bool begin_frame() {
     mapBuffer(frame.textureUpload, g_bufferSizes.textureUpload);
   }
 
-  begin_recording(frame, frameSlot);
-  begin_pipeline_frame();
-  render_worker::enqueue_begin_frame(frame.frameId, [frameSlot] {
+  g_frameFailed[frameSlot].store(false, std::memory_order_release);
+  g_frameOwned[frameSlot].store(true, std::memory_order_release);
+  const auto accepted = render_worker::enqueue_begin_frame(frame.frameId, [frameSlot] {
     constexpr wgpu::CommandEncoderDescriptor EncoderDescriptor{.label = "Redraw encoder"};
     g_framePackets[frameSlot].encoder = g_device.CreateCommandEncoder(&EncoderDescriptor);
     webgpu::gpu_prof::frame_begin(g_framePackets[frameSlot].encoder);
     overdraw::frame_begin();
-  });
+  }, [frameSlot] { fail_frame_work(frameSlot); });
+  if (accepted != render_worker::Outcome::Completed) {
+    frame = {};
+    g_frameOwned[frameSlot].store(false, std::memory_order_release);
+    return false;
+  }
+  frameLease.disarm();
+  stagingLease.disarm();
+  // After acceptance, even a cancelled waiter cannot release a packet an executing job owns.
+  if (!render_worker::wait_healthy()) return false;
+  begin_recording(frame, frameSlot);
+  begin_pipeline_frame();
   g_cpuFrameStart = PresentClock::now();
   return true;
 }
 
-void end_frame(EndFrameCallback callback) {
+bool end_frame(EndFrameCallback callback, std::function<void()> preSubmitAbort) {
   ZoneScoped;
   if (g_cpuFrameStart.time_since_epoch().count() != 0) {
     const auto cpuFrameTime = PresentClock::now() - g_cpuFrameStart;
@@ -1236,7 +1281,13 @@ void end_frame(EndFrameCallback callback) {
   ++g_frameIndex;
 
   const size_t stagingSlot = frame.stagingBuffer;
-  render_worker::enqueue_end_frame(frameId, [frameSlot, stagingSlot, callback = std::move(callback)]() mutable {
+  auto cancel = [frameSlot, abort = std::move(preSubmitAbort)] {
+    fail_frame_work(frameSlot);
+    if (abort) abort(); // internal native reservation rollback, not a success callback
+  };
+  const auto accepted = render_worker::enqueue_end_frame(frameId,
+      [frameSlot, stagingSlot, callback = std::move(callback), cancel]() mutable {
+    if (frame_work_failed(frameSlot)) { cancel(); return; }
     auto& packet = g_framePackets[frameSlot];
     const uint32_t finishedFrame = packet.frameIndex;
     g_stagingBuffers[stagingSlot].Unmap();
@@ -1256,11 +1307,13 @@ void end_frame(EndFrameCallback callback) {
     if (callback) {
       callback(encoder, std::move(afterSubmitCallbacks));
     }
+    g_frameOwned[frameSlot].store(false, std::memory_order_release);
     g_frameSlots.release(frameSlot);
     expire_cached_bind_groups(finishedFrame);
-    map_staging_buffer(stagingSlot, true);
+    if (render_worker::wait_healthy()) map_staging_buffer(stagingSlot, true);
     process_events();
-  });
+  }, cancel);
+  return accepted == render_worker::Outcome::Completed;
 }
 
 uint32_t current_frame() noexcept { return g_frameIndex; }
@@ -1270,9 +1323,51 @@ void after_submit() noexcept {
   bloom::after_submit();
 }
 
-void gpu_synchronize() { render_worker::synchronize(); }
+bool try_gpu_synchronize() {
+  if (render_worker::is_quiescent()) return render_worker::wait_healthy();
+  return render_worker::synchronize() == render_worker::Outcome::Completed;
+}
+bool gpu_synchronize() { return try_gpu_synchronize(); }
 
-void synchronize() { render_worker::synchronize(); }
+void synchronize() { (void)try_gpu_synchronize(); } // public ABI; internal mutation sites use the status-bearing path
+
+bool frame_work_failed(size_t slot) noexcept {
+  return slot >= FrameSlotCount || g_frameFailed[slot].load(std::memory_order_acquire) || !render_worker::wait_healthy();
+}
+void fail_frame_work(size_t slot) noexcept {
+  if (slot < FrameSlotCount) g_frameFailed[slot].store(true, std::memory_order_release);
+#ifdef AURORA_H700
+  if (auto state = h700::presentation_state()) state->fail("Render frame continuation failed or was rejected");
+#endif
+  render_worker::notify_failure();
+}
+size_t pending_staging_maps() noexcept {
+  size_t count = 0;
+  for (const auto& state : g_mappingStates) if (state.load(std::memory_order_acquire) == BufferMapState::Mapping) ++count;
+  return count;
+}
+size_t pending_frame_packets() noexcept {
+  size_t count = 0;
+  for (const auto& owned : g_frameOwned) if (owned.load(std::memory_order_acquire)) ++count;
+  return count;
+}
+bool retire_cancelled_frames_after_quiescence() {
+  if (!render_worker::is_quiescent() || recording_active()) return false;
+  for (size_t i = 0; i < FrameSlotCount; ++i) {
+    if (!g_frameOwned[i].load(std::memory_order_acquire)) {
+      g_frameFailed[i].store(false, std::memory_order_release);
+      continue;
+    }
+    const auto staging = g_framePackets[i].stagingBuffer;
+    if (g_mappingStates[staging].load(std::memory_order_acquire) == BufferMapState::Mapping) return false;
+    g_framePackets[i] = {};
+    g_frameOwned[i].store(false, std::memory_order_release);
+    g_frameFailed[i].store(false, std::memory_order_release);
+    g_frameSlots.release(i);
+    g_stagingSlots.release(staging);
+  }
+  return true;
+}
 
 void after_present() noexcept {
   const auto now = PresentClock::now();

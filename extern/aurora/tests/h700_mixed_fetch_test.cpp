@@ -122,14 +122,14 @@ TEST(H700MixedFetch, SourceCurrentBufferAndMirrorLifecycle) {
   contains(binding, ".entryCount = entries.size()");
   contains(frame, ".format = wgpu::TextureFormat::R32Uint");
   contains(frame, "return AURORA_ALIGN(bytes, FetchTextureRowBytes)");
-  const auto grow = section(frame, "void grow_frame_buffer(", "void grow_staging(");
+  const auto grow = section(frame, "bool grow_frame_buffer(", "bool grow_staging(");
   contains(grow, "encoder.CopyBufferToBuffer(current, 0, buffer, 0, base + device)");
   EXPECT_LT(grow.find("current = std::move(buffer)"), grow.find("create_static_bind_group()"));
   contains(grow, "create_fetch_texture(kind, base + grown)");
   contains(grow, "upload_fetch_texture_rows(encoder, kind, 0, base + grown)");
   contains(grow, "expire_unused_bind_groups_soon()");
   for (const auto& block : {section(frame, "void initialize()", "void shutdown()"),
-                           section(frame, "void reserve_held_frame_buffers()", "bool begin_frame()")}) {
+                           section(frame, "bool reserve_held_frame_buffers()", "bool begin_frame()")}) {
     contains(block, "upload_fetch_texture_rows(encoder, StagingKind::Vertex, 0, vertexBytes)");
     contains(block, "upload_fetch_texture_rows(encoder, StagingKind::Storage, 0, storageBytes)");
     contains(block, "create_static_bind_group()");

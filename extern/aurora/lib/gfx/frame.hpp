@@ -34,10 +34,18 @@ RenderTargetLayout display_render_target_layout() noexcept;
 void initialize();
 void shutdown();
 bool begin_frame();
-void end_frame(EndFrameCallback callback);
+bool end_frame(EndFrameCallback callback, std::function<void()> preSubmitAbort = {});
+// Accepted packets are never cleared while queued/running work can still reference them.
+bool frame_work_failed(size_t slot) noexcept;
+void fail_frame_work(size_t slot) noexcept;
+size_t pending_frame_packets() noexcept;
+size_t pending_staging_maps() noexcept;
+// IG-11 only, after upstream producer quiescence, worker join and map retirement.
+bool retire_cancelled_frames_after_quiescence();
+bool try_gpu_synchronize();
 uint32_t current_frame() noexcept;
 void after_submit() noexcept;
-void gpu_synchronize();
+bool gpu_synchronize();
 void after_present() noexcept;
 float calculate_fps() noexcept;
 } // namespace aurora::gfx

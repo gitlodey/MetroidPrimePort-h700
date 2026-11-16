@@ -141,9 +141,9 @@ struct FrameBufferSizes {
 const FrameBufferSizes& frame_buffer_sizes() noexcept;
 // Grows a device buffer's per-frame part to hold `need` bytes of a frame (at most its limit)
 // in the middle of recording one: waits for the render worker, copies the old buffer whole into
-// a bigger one in `encoder` (the frame being recorded, after what it already encoded) and
-// rebuilds the bind groups that held it, so what is encoded before and after both read right.
-void grow_frame_buffer(StagingKind kind, uint64_t need, const wgpu::CommandEncoder& encoder);
+// a bigger one in the frame slot's encoder (after its BeginFrame job), and rebuilds the bind
+// groups. The slot remains owned until every queued/running continuation is quiescent.
+bool grow_frame_buffer(StagingKind kind, uint64_t need, size_t frameSlot);
 // A frame spilled (see SpillBuffer) after using `peak` bytes of this kind. At the next frame
 // start the staging buffers grow to the next power of two >= peak, capped at what a frame can
 // hold, so a scene that outgrows the starting size spills once and not every frame.

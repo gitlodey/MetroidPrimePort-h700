@@ -323,9 +323,15 @@ Range map(ByteBuffer& target, size_t length, size_t alignment) {
 
 // The device buffer's per-frame part grows, once and with a wait for the render worker, when
 // this frame needs more of it than it has.
-static void reserve_device_bytes(StagingKind kind, uint64_t end) {
-  if (end > frame_buffer_sizes().device(kind))
-    UNLIKELY { grow_frame_buffer(kind, end, current_frame_packet().encoder); }
+static bool reserve_device_bytes(StagingKind kind, uint64_t end) {
+  if (frame_work_failed(current_frame_slot())) return false;
+  if (end > frame_buffer_sizes().device(kind)) {
+    if (!grow_frame_buffer(kind, end, current_frame_slot())) {
+      fail_frame_work(current_frame_slot());
+      return false;
+    }
+  }
+  return true;
 }
 
 // Space for length bytes at the next alignment in a frame buffer: in its staging buffer while
@@ -341,7 +347,7 @@ static uint8_t* reserve_frame_bytes(ByteBuffer& target, SpillBuffer& spill, Stag
   const size_t cap = target.capacity();
   size_t begin = alignment != 0 ? AURORA_ALIGN(target.size() + spill.length, alignment) : target.size() + spill.length;
   if (spill.length == 0 && begin + length <= cap && begin + length + window <= limit) {
-    reserve_device_bytes(kind, begin + length + window);
+    if (!reserve_device_bytes(kind, begin + length + window)) return nullptr;
     if (begin > target.size()) {
       target.append_zeroes(begin - target.size());
     }
@@ -357,7 +363,7 @@ static uint8_t* reserve_frame_bytes(ByteBuffer& target, SpillBuffer& spill, Stag
     }
     return nullptr;
   }
-  reserve_device_bytes(kind, begin + length + window);
+  if (!reserve_device_bytes(kind, begin + length + window)) return nullptr;
   if (!spill.data) {
     spill.capacity = static_cast<size_t>(limit - cap);
     spill.data = std::unique_ptr<uint8_t[]>(new uint8_t[spill.capacity]);
@@ -687,13 +693,16 @@ void enqueue_op(FramePacket& frame, uint32_t opIndex) {
   if (g_recorder.suppressRenderWorker) {
     return;
   }
+  const auto slot = current_frame_slot();
+  if (frame_work_failed(slot)) return;
   auto op = frame.ops[opIndex];
-  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [packet = &frame, op = std::move(op)] {
+  render_worker::enqueue_encode_pass(frame.frameId, opIndex, [slot, packet = &frame, op = std::move(op)] {
+    if (frame_work_failed(slot)) return;
     if (op.renderPass == nullptr && op.textureCopy == nullptr && op.encoderTask == nullptr) {
       return;
     }
     encode_op(packet->encoder, *packet, op);
-  });
+  }, [slot] { fail_frame_work(slot); });
 }
 
 // Lets the GPU skip writing out attachments that nothing reads again, which saves a tile-based
