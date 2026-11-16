@@ -903,6 +903,9 @@ void end_frame(bool fifoDrained = false) noexcept {
     webgpu::gpu_prof::frame_end(encoder);
     gfx::overdraw::frame_end(encoder);
     gfx::vis_query::detail::frame_end(encoder);
+#ifdef AURORA_H700
+    if (!h700::diagnostic_copy_native(nativeFrame, encoder)) return;
+#endif
     const wgpu::CommandBufferDescriptor cmdBufDescriptor{.label = "Redraw command buffer"};
     const auto buffer = encoder.Finish(&cmdBufDescriptor);
     {

@@ -16,6 +16,10 @@
 #include "../gfx/volfog.hpp"
 #include "../gfx/texture.hpp"
 #include "gx_fmt.hpp"
+#ifdef AURORA_H700
+#include "../h700/diagnostics.hpp"
+#include "../gfx/pipeline_cache.hpp"
+#endif
 
 #include <absl/container/flat_hash_map.h>
 #include <tracy/Tracy.hpp>
@@ -466,7 +470,13 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
           },
       .fragment = &fragmentState,
   };
+#ifdef AURORA_H700
+  return h700::diagnostic::dawn_call(h700::diagnostic::Kind::Compiler,
+      xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),
+      [&] { return g_device.CreateRenderPipeline(&descriptor); }, config.shaderConfig.fogRangeEnabled);
+#else
   return g_device.CreateRenderPipeline(&descriptor);
+#endif
 }
 
 // Strips the draw's own shading from a shader config: no PBR, fog, lighting, indirect or TEV state reaches the shader.

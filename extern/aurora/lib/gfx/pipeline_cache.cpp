@@ -6,6 +6,7 @@
 #ifdef AURORA_H700
 #include "pipeline_wait.hpp"
 #include "../h700/presentation.hpp"
+#include "../h700/diagnostics.hpp"
 #endif
 #include "hash.hpp"
 #include "../gx/pipeline.hpp"
@@ -2226,7 +2227,28 @@ bool get_pipeline(PipelineRef ref, wgpu::RenderPipeline& pipeline) {
   pipeline = {};
   if (g_pipelineThreadsJoined.load(std::memory_order_acquire) || !g_pipelineWork.continuation_open()) return false;
 #endif
-  std::lock_guard guard{g_pipelineMutex};
+  std::unique_lock guard{g_pipelineMutex};
+#ifdef AURORA_H700
+  if (const auto observation = h700::diagnostic::current(); observation && render_worker::is_worker_thread() &&
+      !g_pipelines.contains(ref)) {
+    guard.unlock();
+    observation->renderWaitingKey.store(ref, std::memory_order_release);
+    observation->renderWaiting.fetch_add(1, std::memory_order_acq_rel);
+    observation->event(h700::diagnostic::Kind::RenderWait, ref, true);
+    guard.lock();
+    const auto outcome = detail::wait_pipeline(guard, g_pipelineReadyCv, [&] {
+      if (const auto found = g_pipelines.find(ref); found != g_pipelines.end())
+        return found->second.pipeline ? detail::PipelineWaitOutcome::Ready : detail::PipelineWaitOutcome::Failed;
+      return g_pendingPipelines.contains(ref) ? detail::PipelineWaitOutcome::Pending : detail::PipelineWaitOutcome::Failed;
+    });
+    guard.unlock();
+    observation->event(h700::diagnostic::Kind::RenderWait, ref, false);
+    observation->renderWaiting.fetch_sub(1, std::memory_order_acq_rel);
+    observation->renderWaitingKey.store(0, std::memory_order_release);
+    guard.lock();
+    if (outcome != detail::PipelineWaitOutcome::Ready) return false;
+  }
+#endif
   const auto it = g_pipelines.find(ref);
   // A failed build stays cached as a null pipeline so it isn't retried every draw; report it as
   // unavailable, or the caller binds null and Dawn invalidates the pass (other draws then render

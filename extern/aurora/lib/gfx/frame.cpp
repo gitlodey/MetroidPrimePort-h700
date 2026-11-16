@@ -32,6 +32,7 @@
 #include "../h700/wait.hpp"
 #ifdef AURORA_H700
 #include "../h700/presentation.hpp"
+#include "../h700/diagnostics.hpp"
 #endif
 
 #include <array>
@@ -1313,7 +1314,12 @@ bool begin_frame() {
   g_frameOwned[frameSlot].store(true, std::memory_order_release);
   const auto accepted = render_worker::enqueue_begin_frame(frame.frameId, [frameSlot] {
     constexpr wgpu::CommandEncoderDescriptor EncoderDescriptor{.label = "Redraw encoder"};
+#ifdef AURORA_H700
+    g_framePackets[frameSlot].encoder = h700::diagnostic::dawn_call(h700::diagnostic::Kind::RenderEncoder,
+        g_framePackets[frameSlot].frameIndex, [&] { return g_device.CreateCommandEncoder(&EncoderDescriptor); });
+#else
     g_framePackets[frameSlot].encoder = g_device.CreateCommandEncoder(&EncoderDescriptor);
+#endif
     webgpu::gpu_prof::frame_begin(g_framePackets[frameSlot].encoder);
     overdraw::frame_begin();
   }, [frameSlot] { fail_frame_work(frameSlot); });

@@ -31,6 +31,7 @@
 #include "gpu_prof.hpp"
 #ifdef AURORA_H700
 #include "../h700/presentation.hpp"
+#include "../h700/diagnostics.hpp"
 #endif
 
 #ifdef WEBGPU_DAWN
@@ -360,13 +361,18 @@ TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool m
   };
   auto view = texture.CreateView(&viewDescriptor);
 
-  constexpr wgpu::SamplerDescriptor samplerDescriptor{
+  const wgpu::SamplerDescriptor samplerDescriptor{
       .label = "Render sampler",
       .addressModeU = wgpu::AddressMode::ClampToEdge,
       .addressModeV = wgpu::AddressMode::ClampToEdge,
       .addressModeW = wgpu::AddressMode::ClampToEdge,
+#ifdef AURORA_H700
+      .magFilter = h700::diagnostic::nearest() ? wgpu::FilterMode::Nearest : wgpu::FilterMode::Linear,
+      .minFilter = h700::diagnostic::nearest() ? wgpu::FilterMode::Nearest : wgpu::FilterMode::Linear,
+#else
       .magFilter = wgpu::FilterMode::Linear,
       .minFilter = wgpu::FilterMode::Linear,
+#endif
       .mipmapFilter = wgpu::MipmapFilterMode::Linear,
       .lodMinClamp = 0.f,
       .lodMaxClamp = 1000.f,

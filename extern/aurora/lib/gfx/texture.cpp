@@ -10,6 +10,9 @@
 #include "texture_convert.hpp"
 #include "probe.hpp"
 #include "../gx/gx_fmt.hpp"
+#ifdef AURORA_H700
+#include "../h700/diagnostics.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -232,7 +235,12 @@ static TextureHandle new_texture_2d(uint32_t width, uint32_t height, uint32_t mi
       .mipLevelCount = mips,
       .sampleCount = 1,
   };
+#ifdef AURORA_H700
+  auto texture = h700::diagnostic::dawn_call(h700::diagnostic::Kind::ResourceTexture, 0,
+      [&] { return g_device.CreateTexture(&textureDescriptor); });
+#else
   auto texture = g_device.CreateTexture(&textureDescriptor);
+#endif
   const auto viewLabel = fmt::format("{} view", label);
   wgpu::TextureViewDescriptor textureViewDescriptor{
       .label = viewLabel.c_str(),

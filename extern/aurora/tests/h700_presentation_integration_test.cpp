@@ -164,11 +164,17 @@ TEST(H700PresentationIntegration, ActualMainProgressAndReverseOrderingNeverFakeC
   ordered(reverse, {"flight_for(flight->descriptor)", "*owned.reverse != reinterpret_cast<uintptr_t>(flight->reverse)",
                     "client_wait_sync(backend->display, flight->reverse, 0, 0)",
                     "EGL_TIMEOUT_EXPIRED_KHR", "EGL_CONDITION_SATISFIED_KHR", "destroy_sync(",
-                    "complete_reverse(", "recycle("});
+                    "complete_reverse(", "recycle_safe(flight)"});
+  const auto recycle = section(presentation, "void recycle_safe(", "void poll_reverse(");
+  ordered(recycle, {"flight_for(flight->descriptor)", "owned.reverse_complete", "owned.swap_succeeded",
+                    "observation->hold_credit", "backend->state->recycle(flight->descriptor)"});
   const auto transport = section(presentation, "void poll_forward(", "ContextSnapshot context_snapshot()");
-  for (const auto forbidden : {"glFinish(", "glReadPixels(", "WrapExternalEGLImage("}) {
+  for (const auto forbidden : {"glFinish(", "WrapExternalEGLImage("}) {
     EXPECT_EQ(transport.find(forbidden), std::string::npos) << forbidden;
   }
+  const auto diagnosticRead = section(present, "if (const auto observation = diagnostic::current())", "const EGLint attrs[]");
+  ordered(diagnosticRead, {"glReadPixels(", "glGetError()", "observation->pixels(pixels)"});
+  EXPECT_EQ(transport.find("glReadPixels("), transport.rfind("glReadPixels(")); // single opt-in observation site only
   EXPECT_NE(presentation.find("pending native ownership/futures/reverse fences (IG-11 retirement required)"), std::string::npos);
 }
 } // namespace

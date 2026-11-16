@@ -87,6 +87,8 @@ bool abort_frame(const FrameDescriptor& descriptor);
 // Render worker only: mark the irreversible boundary, Submit, then publish the real
 // WaitAnyOnly future. Never waits for main, forward completion or a free native slot.
 bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& commands);
+// Opt-in IG12 samples in this same frame command buffer; no extra Submit/CPU presentation path.
+bool diagnostic_copy_native(const FrameDescriptor& descriptor, const wgpu::CommandEncoder& encoder);
 // Main only, nonrecursive and lock-free at entry: internal events/completions, blit/swap,
 // reverse polling. No game callbacks/event pump/recording/resize/shutdown.
 bool main_progress_once();

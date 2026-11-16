@@ -5,6 +5,7 @@
 #include "webgpu/gpu.hpp"
 #ifdef AURORA_H700
 #include "h700/presentation.hpp"
+#include "h700/diagnostics.hpp"
 #endif
 #endif
 #include "input.hpp"
@@ -500,6 +501,7 @@ void show_window() {
 bool initialize() {
 #if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
   if (!h700::prepare_sdl()) return false;
+  if (h700::diagnostic::current()) g_frameBufferScale = 1.f; // each diagnostic generation starts at 640x480, before producers
 #endif
   /* We don't want to initialize anything input related here, otherwise the add events will get lost to the void */
   TRY(SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight"), "Error setting {}: {}", SDL_HINT_ORIENTATIONS,

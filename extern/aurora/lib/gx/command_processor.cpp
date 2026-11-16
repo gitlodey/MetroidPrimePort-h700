@@ -20,6 +20,9 @@
 #include "resident.hpp"
 #include "shader_info.hpp"
 #include "texture.hpp"
+#ifdef AURORA_H700
+#include "../h700/diagnostics.hpp"
+#endif
 
 #include <absl/container/flat_hash_map.h>
 #include <tracy/Tracy.hpp>
@@ -860,6 +863,14 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
   }
   if (cache.config.shaderConfig.fogRangeEnabled) {
     const auto key = fog_range_lut_key();
+#ifdef AURORA_H700
+    if (const auto observation = h700::diagnostic::current()) {
+      const auto expected = (observation->activeFrame.load(std::memory_order_acquire) & 1u) ? 128u : 64u;
+      if (state.fog.a != 1.f || state.fog.c != 0.f || (state.fog.type & 8u) == 0 ||
+          std::any_of(key.rangeK.begin(), key.rangeK.end(), [=](auto value) { return value != expected; }))
+        observation->cancel(); // never calibrate the oracle to wrong decoded GX coefficients/data
+    }
+#endif
     if (!cache.hasFogRange || cache.fogRangeKey != key) {
       cache.fogRange = push_fog_range_lut(key);
       if (drop_overflowed_draw(cache.fogRange, "storage")) {

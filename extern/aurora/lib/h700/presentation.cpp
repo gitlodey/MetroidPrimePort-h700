@@ -1,4 +1,5 @@
 #include "presentation.hpp"
+#include "diagnostics.hpp"
 
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
@@ -23,7 +24,14 @@ constexpr Module Log{"aurora::h700"};
 // A bounded diagnostic trace, not an unbounded per-frame allocation. Exhaustion fails the
 // generation instead of silently discarding evidence needed to prove context retirement.
 constexpr size_t MaxContextEvents = 65536;
+struct DiagnosticMap {
+  std::atomic_bool called{false};
+  std::atomic<wgpu::MapAsyncStatus> status{wgpu::MapAsyncStatus::Error};
+};
 struct NativeFlight {
+  wgpu::Buffer diagnostic_buffer;
+  wgpu::Future diagnostic_future{};
+  std::shared_ptr<DiagnosticMap> diagnostic_map;
   explicit NativeFlight(FrameDescriptor value) : descriptor(value) {}
   const FrameDescriptor descriptor;
   wgpu::Future forward{}; // written before the published release-store
@@ -343,6 +351,11 @@ bool import_slots(const wgpu::Device& device) {
     external.image = slot.image;
     slot.texture = wgpu::Texture::Acquire(dawn::native::opengl::WrapExternalEGLImage(device.Get(), &external));
     if (!slot.texture) return fail("H700 EGLImage import failed; retire whole Dawn generation, do not retry");
+    if (const auto observation = diagnostic::current()) {
+      ++observation->imports;
+      observation->storage(static_cast<unsigned>(&slot - backend->slots.data()), reinterpret_cast<uintptr_t>(slot.image),
+          slot.source, slot.framebuffer, slot.texture.GetWidth(), slot.texture.GetHeight());
+    }
     slot.view = slot.texture.CreateView();
     if (!slot.view) return fail("H700 imported texture view failed; retire whole Dawn generation");
     if (backend->state->snapshot().phase == PresentationPhase::Failed) return false;
@@ -410,8 +423,59 @@ void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
   }
   // A quarantined publication is still observed and retained, never converted into Ready.
 }
+bool poll_diagnostic_pixels(const std::shared_ptr<NativeFlight>& flight, bool teardown = false) {
+  if (!teardown && !flight->published.load(std::memory_order_acquire)) return false;
+  if (!flight->diagnostic_buffer) return true;
+  if (!flight->diagnostic_future.id) {
+    if (teardown) { flight->diagnostic_buffer = {}; return true; }
+    if (!flight->forward_observed || flight->status.load() != wgpu::QueueWorkDoneStatus::Success) return false;
+    flight->diagnostic_map = std::make_shared<DiagnosticMap>();
+    flight->diagnostic_future = flight->diagnostic_buffer.MapAsync(wgpu::MapMode::Read, 0,
+        diagnostic::Points.size() * 256, wgpu::CallbackMode::WaitAnyOnly,
+        [result = flight->diagnostic_map](wgpu::MapAsyncStatus status, wgpu::StringView) {
+          result->status.store(status, std::memory_order_relaxed);
+          result->called.store(true, std::memory_order_release);
+        });
+  }
+  wgpu::FutureWaitInfo info{.future = flight->diagnostic_future};
+  const auto wait = webgpu::g_instance.WaitAny(1, &info, 0);
+  if (wait == wgpu::WaitStatus::TimedOut) return false;
+  if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->diagnostic_map->called.load(std::memory_order_acquire)) {
+    quarantine_frame(flight->descriptor, "Diagnostic map callback ownership unresolved");
+    return false;
+  }
+  if (flight->diagnostic_map->status.load() == wgpu::MapAsyncStatus::Success) {
+    if (!teardown) {
+      diagnostic::Pixels pixels{.frame = flight->descriptor.frame, .presenter = false};
+      const auto* bytes = static_cast<const uint8_t*>(flight->diagnostic_buffer.GetConstMappedRange());
+      if (!bytes) return fail("Diagnostic map returned no pixels");
+      for (size_t i = 0; i < pixels.values.size(); ++i) std::memcpy(pixels.values[i].data(), bytes + i * 256, 4);
+      if (const auto observation = diagnostic::current()) observation->pixels(pixels);
+    }
+    flight->diagnostic_buffer.Unmap();
+  } else if (!teardown) {
+    quarantine_frame(flight->descriptor, "Diagnostic map failed");
+  }
+  flight->diagnostic_buffer = {};
+  flight->diagnostic_future = {}; // WaitAnyOnly callback has actually returned
+  flight->diagnostic_map.reset();
+  return true;
+}
+void recycle_safe(const std::shared_ptr<NativeFlight>& flight) {
+  if (flight_for(flight->descriptor) != flight) { backend->state->fail("Stale safe-credit descriptor"); return; }
+  const auto owned = backend->state->snapshot().slots[flight->descriptor.slot];
+  if (owned.status != SlotStatus::Retiring || !owned.reverse_complete || !owned.swap_succeeded) return;
+  if (const auto observation = diagnostic::current(); observation && observation->hold_credit(flight->descriptor.frame)) return;
+  if (!backend->state->recycle(flight->descriptor)) {
+    quarantine_frame(flight->descriptor, "H700 safe recycle transition failed");
+    return;
+  }
+  std::lock_guard lock(backend->flights_mutex);
+  if (backend->flights[flight->descriptor.slot] == flight) backend->flights[flight->descriptor.slot].reset();
+}
 void poll_reverse(const std::shared_ptr<NativeFlight>& flight) {
-  if (flight->reverse == EGL_NO_SYNC_KHR || flight->reverse_wait_failed) return;
+  if (flight->reverse == EGL_NO_SYNC_KHR) { recycle_safe(flight); return; }
+  if (flight->reverse_wait_failed) return;
   // Both the generation/frame/slot and current ownership must match before touching its fence.
   if (flight_for(flight->descriptor) != flight) {
     flight->reverse_wait_failed = true;
@@ -438,16 +502,18 @@ void poll_reverse(const std::shared_ptr<NativeFlight>& flight) {
   const auto ownership = backend->state->snapshot();
   const auto& slot = ownership.slots[flight->descriptor.slot];
   if (slot.status != SlotStatus::Retiring) return; // quarantine remains owned until generation teardown
-  if (!slot.reverse || !backend->state->complete_reverse(flight->descriptor, *slot.reverse) ||
-      !backend->state->recycle(flight->descriptor)) {
+  if (!slot.reverse || !backend->state->complete_reverse(flight->descriptor, *slot.reverse)) {
     quarantine_frame(flight->descriptor, "H700 reverse completion/recycle transition failed");
     return;
   }
-  std::lock_guard lock(backend->flights_mutex);
-  if (backend->flights[flight->descriptor.slot] == flight) backend->flights[flight->descriptor.slot].reset();
+  recycle_safe(flight);
 }
 void present_ready() {
   if (!window::is_presentable()) return;
+  if (const auto front = backend->state->front_submission()) {
+    const auto flight = flight_for(front->descriptor);
+    if (flight && flight->diagnostic_buffer) return; // real forward + map completion before reading/credit retirement
+  }
   const auto descriptor = backend->state->try_begin_read();
   if (!descriptor) return;
   const auto flight = flight_for(*descriptor);
@@ -459,6 +525,12 @@ void present_ready() {
   if (glGetError() != GL_NO_ERROR) {
     quarantine_frame(*descriptor, "H700 GL error before native blit");
     return;
+  }
+  if (const auto observation = diagnostic::current()) {
+    // Initial dimensions were checked at import; no Dawn call may disturb this raw presenter binding.
+    observation->storage(descriptor->slot,reinterpret_cast<uintptr_t>(slot->image),slot->source,slot->framebuffer,
+                         NativeWidth,NativeHeight);
+    if (!observation->healthy()) { quarantine_frame(*descriptor,"Diagnostic native storage changed"); return; }
   }
   glBindFramebuffer(GL_READ_FRAMEBUFFER, slot->framebuffer);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
@@ -473,6 +545,16 @@ void present_ready() {
   if (glGetError() != GL_NO_ERROR) {
     quarantine_frame(*descriptor, "H700 native blit failed");
     return;
+  }
+  if (const auto observation = diagnostic::current()) {
+    diagnostic::Pixels pixels{.frame = descriptor->frame, .presenter = true};
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    for (size_t i = 0; i < diagnostic::Points.size(); ++i) {
+      const auto point = diagnostic::Points[i];
+      glReadPixels(point.x, NativeHeight - 1 - point.y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixels.values[i].data());
+    }
+    if (glGetError() != GL_NO_ERROR) { quarantine_frame(*descriptor, "Diagnostic after-blit readback failed"); return; }
+    observation->pixels(pixels); // owned data only, never a driver/user callback from progress
   }
   const EGLint attrs[] = {EGL_NONE};
   flight->reverse = backend->create_sync(backend->display, EGL_SYNC_FENCE_KHR, attrs);
@@ -503,6 +585,7 @@ void present_ready() {
 
 std::optional<FrameDescriptor> acquire_frame() {
   if (!require_main() || !imports_ready() || backend->progressing) return std::nullopt;
+  if (backend->next_frame == 2) if (const auto observation = diagnostic::current()) observation->third_acquire();
   while (backend->state->snapshot().phase == PresentationPhase::Running) {
     if (backend->next_frame == UINT64_MAX) {
       fail("H700 frame identity exhausted");
@@ -537,6 +620,28 @@ bool abort_frame(const FrameDescriptor& descriptor) {
   return true;
 }
 
+bool diagnostic_copy_native(const FrameDescriptor& descriptor, const wgpu::CommandEncoder& encoder) {
+  const auto observation = diagnostic::current();
+  if (!observation) return true;
+  const auto flight = flight_for(descriptor);
+  const auto* slot = native_slot(descriptor);
+  if (!flight || !slot || flight->diagnostic_buffer) return fail("Diagnostic native copy descriptor mismatch");
+  const wgpu::BufferDescriptor desc{.label = "IG12 native samples", .usage = wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::MapRead,
+                                    .size = diagnostic::Points.size() * 256};
+  flight->diagnostic_buffer = diagnostic::dawn_call(diagnostic::Kind::ResourceBuffer, descriptor.frame,
+      [&] { return webgpu::g_device.CreateBuffer(&desc); });
+  if (!flight->diagnostic_buffer) return fail("Cannot create diagnostic sample buffer");
+  for (size_t i = 0; i < diagnostic::Points.size(); ++i) {
+    const auto point = diagnostic::Points[i];
+    const wgpu::TexelCopyTextureInfo from{.texture = slot->texture, .origin = {point.x, point.y, 0}};
+    const wgpu::TexelCopyBufferInfo to{.layout = {.offset = i * 256, .bytesPerRow = 256, .rowsPerImage = 1},
+                                     .buffer = flight->diagnostic_buffer};
+    const wgpu::Extent3D size{1, 1, 1};
+    encoder.CopyTextureToBuffer(&from, &to, &size);
+  }
+  return true;
+}
+
 bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& commands) {
   const auto flight = flight_for(descriptor);
   if (!flight || !commands || !gfx::render_worker::is_worker_thread()) {
@@ -558,6 +663,7 @@ bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& 
         flight->status.store(status, std::memory_order_relaxed);
         flight->callback_called.store(true, std::memory_order_release);
       });
+  if (const auto observation = diagnostic::current()) observation->event(diagnostic::Kind::Submitted, descriptor.frame, false);
   const bool published = backend->state->publish_submitted(descriptor, flight->forward.id);
   flight->published.store(true, std::memory_order_release);
   // Even after synchronous loss/error, the real future stays published/owned for main/IG-11.
@@ -574,10 +680,18 @@ bool main_progress_once() {
   backend->progressing = true;
   struct ProgressScope { ~ProgressScope() { backend->progressing = false; } } scope;
   if (!webgpu::g_instance) return false;
+  if (const auto observation = diagnostic::current()) {
+    observation->progress();
+    if (observation->failed.load()) backend->state->fail("IG12 diagnostic failure/deadline; own gates released");
+  }
   webgpu::g_instance.ProcessEvents(); // direct: never enqueue behind the worker we may be waiting for
   webgpu::poll_h700_device_events(); // only the internal WaitAnyOnly device-lost callback
+  if (backend->state->snapshot().phase == PresentationPhase::Failed)
+    if (const auto observation = diagnostic::current()) observation->cancel(); // release own gates on real Dawn failure too
   const auto flights = flights_snapshot();
   for (const auto& flight : flights) if (flight) poll_forward(flight);
+  if (backend->state->snapshot().phase != PresentationPhase::Failed)
+    for (const auto& flight : flights) if (flight) (void)poll_diagnostic_pixels(flight);
   for (const auto& flight : flights) if (flight) poll_reverse(flight);
   present_ready(); // PresentationState forbids new reads in Failed, but retirement above continues
   for (const auto& flight : flights_snapshot()) if (flight) poll_reverse(flight);
@@ -629,7 +743,9 @@ bool settle_native_callbacks() {
   if (!require_main()) return false;
   bool settled = true;
   for (const auto& flight : flights_snapshot()) {
-    if (!flight || !flight->published.load(std::memory_order_acquire)) continue;
+    if (!flight) continue;
+    if (!poll_diagnostic_pixels(flight, true)) settled = false;
+    if (!flight->published.load(std::memory_order_acquire)) continue;
     if (flight->callback_called.load(std::memory_order_acquire)) continue;
     if (!webgpu::g_instance || !flight->forward.id) {
       fail("Cannot settle native work-done callback; retaining generation/future");
