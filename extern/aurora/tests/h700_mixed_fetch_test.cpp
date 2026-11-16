@@ -128,7 +128,7 @@ TEST(H700MixedFetch, SourceCurrentBufferAndMirrorLifecycle) {
   contains(grow, "create_fetch_texture(kind, base + grown)");
   contains(grow, "upload_fetch_texture_rows(encoder, kind, 0, base + grown)");
   contains(grow, "expire_unused_bind_groups_soon()");
-  for (const auto& block : {section(frame, "void initialize()", "void shutdown()"),
+  for (const auto& block : {section(frame, "void initialize()", "bool shutdown()"),
                            section(frame, "bool reserve_held_frame_buffers()", "bool begin_frame()")}) {
     contains(block, "upload_fetch_texture_rows(encoder, StagingKind::Vertex, 0, vertexBytes)");
     contains(block, "upload_fetch_texture_rows(encoder, StagingKind::Storage, 0, storageBytes)");

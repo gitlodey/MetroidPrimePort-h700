@@ -228,6 +228,7 @@ if (AURORA_ENABLE_GX)
   gtest_discover_tests(texture_replacement_streaming_tests)
 
   add_executable(render_worker_tests
+    generation_lifecycle_test.cpp
     map_completion_test.cpp
     pipeline_wait_test.cpp
     render_worker_test.cpp

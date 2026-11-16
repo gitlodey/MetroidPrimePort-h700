@@ -23,7 +23,7 @@ enum class ItemType : uint8_t {
 };
 
 using WorkCallback = std::function<void()>;
-enum class Outcome { Completed, Rejected, Failed };
+enum class Outcome { Completed, Rejected, Failed, Pending };
 
 // Installed before starting producers, cleared only after their quiescence. All hooks run
 // without queue/sync/slot locks. Only the designated main thread may run progress.
@@ -66,6 +66,8 @@ public:
 
   bool push(QueueItem item);
   Outcome push_result(QueueItem item);
+  Outcome try_push(QueueItem& item); // Pending preserves item/captures; no progress or capacity wait
+  bool try_close();
   void notify_waiters();
   std::optional<QueueItem> pop_for(std::chrono::milliseconds timeout, bool& closed);
   void close();
@@ -80,6 +82,19 @@ private:
   std::deque<QueueItem> m_items;
   bool m_closed = false;
 };
+
+// A single already accepted main frame's final recording continuations. Capture performs
+// CPU recording only; the retained batch is admitted atomically without a capacity wait.
+// It is not a second worker queue or permission to run rejected graphics inline.
+class FrameTail {
+public:
+  bool capture(WorkCallback record);
+  Outcome poll(); // Completed means queue admission, NOT execution/GPU completion; Pending retains the tail
+private:
+  std::shared_ptr<std::vector<QueueItem>> m_items;
+  QueueItem m_submission;
+};
+bool capturing_frame_tail() noexcept;
 
 class FrameSlotPool {
 public:
@@ -112,7 +127,9 @@ private:
 };
 
 void initialize();
-void shutdown();
+bool shutdown(); // blocking compatibility wrapper
+void request_shutdown(); // close once; no join/wait
+Outcome poll_shutdown(); // Pending while active; join only after owner-thread exit/unbind ack
 
 Outcome enqueue_begin_frame(uint64_t frameId, WorkCallback work, WorkCallback cancel = {});
 Outcome enqueue_encode_pass(uint64_t frameId, uint32_t passIndex, WorkCallback work, WorkCallback cancel = {});

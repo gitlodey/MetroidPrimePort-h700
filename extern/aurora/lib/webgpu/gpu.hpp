@@ -72,12 +72,18 @@ extern bool g_textureComponentSwizzleSupported;
 extern bool g_dualSourceBlendingSupported;
 
 bool initialize(AuroraBackend backend, bool allowCpu);
-void shutdown();
+bool shutdown();
 // H700 readiness is independent of a WGPU window surface.
 bool presentation_ready() noexcept;
 #ifdef AURORA_H700
 // After external quiescence/holder retirement only. Final context proof precedes exports.
 bool release_h700_device();
+bool release_h700_app_holders();
+enum class DeviceReleaseStatus { Pending, Released, Unknown };
+DeviceReleaseStatus poll_h700_device_release();
+void poll_h700_device_events(); // main-only, zero-timeout public lost future, internal callback only
+enum class QueueDrainStatus { Pending, Complete, Failed };
+QueueDrainStatus poll_h700_queue_drain(); // one final work-done future, includes bootstrap; no Submit
 #endif
 void release_surface() noexcept;
 bool refresh_surface(bool recreate = true);

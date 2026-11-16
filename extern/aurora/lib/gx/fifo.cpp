@@ -2,6 +2,9 @@
 
 #include "../thread.hpp"
 #include "../gfx/render_worker.hpp"
+#ifdef AURORA_H700
+#include "../h700/presentation.hpp"
+#endif
 #include "command_processor.hpp"
 
 #include <algorithm>
@@ -42,6 +45,8 @@ std::atomic<uint32_t> sWorkerWake{0};
 thread::Thread sWorkerThread;
 std::atomic_bool sWorkerExited{true};
 std::atomic_bool sWorkerJoined{true};
+std::atomic_bool sWorkerUnbound{true};
+std::atomic_bool sShutdownRequested{false};
 std::atomic<DrawDoneCallback> sDrawDoneCallback{nullptr};
 
 void dispatch_draw_done() noexcept {
@@ -138,6 +143,10 @@ void worker_main(std::stop_token token) noexcept {
     }
     sWorkerWake.wait(event, std::memory_order_acquire);
   }
+#ifdef AURORA_H700
+  sWorkerUnbound.store(h700::unbind_current_dawn(), std::memory_order_release);
+  if (!sWorkerUnbound.load(std::memory_order_acquire)) (void)fail("FIFO EGL unbind failed");
+#endif
   sWorkerExited.store(true, std::memory_order_release);
 }
 
@@ -145,6 +154,11 @@ void start_worker() {
   if (kProcessingMode != ProcessingMode::Thread || sWorkerThread.joinable()) {
     return;
   }
+  sWorkerUnbound.store(false, std::memory_order_release);
+#ifndef AURORA_H700
+  sWorkerUnbound.store(true, std::memory_order_release);
+#endif
+  sShutdownRequested.store(false, std::memory_order_release);
   sWorkerExited.store(false, std::memory_order_release);
   sWorkerJoined.store(false, std::memory_order_release);
   sWorkerThread = thread::Thread{{
@@ -155,14 +169,14 @@ void start_worker() {
 }
 
 bool stop_worker() {
-  if (!sWorkerThread.joinable()) return true;
+  if (!sWorkerThread.joinable()) return sWorkerUnbound.load(std::memory_order_acquire);
   sWorkerThread.request_stop();
   while (!sWorkerExited.load(std::memory_order_acquire)) {
     if (!progress_wait()) return false;
   }
   sWorkerThread.join();
   sWorkerJoined.store(true, std::memory_order_release);
-  return true;
+  return sWorkerUnbound.load(std::memory_order_acquire);
 }
 } // namespace
 
@@ -200,6 +214,41 @@ bool shutdown() {
   if (!stop_worker()) return false;
   detail::sWritesOpen = false;
   return true;
+}
+void request_drain(DrainRequest& request) {
+  if (request.requested) return;
+  request.requested = true;
+  request.target = sStreamBase + detail::sBufferSize;
+  detail::sWritesOpen = false; // driver root boundary; accepted bytes remain owned and downstream stays open
+  if (healthy() && sWorkerThread.joinable()) {
+    sPublished.store(request.target, std::memory_order_release); // includes unpublished tail, even outside frame
+    wake_worker();
+  }
+}
+PollStatus poll_drain(DrainRequest& request) {
+  if (request.complete) return PollStatus::Complete;
+  if (!healthy()) return PollStatus::Failed;
+  if (!request.requested) return PollStatus::Pending;
+  if (kProcessingMode != ProcessingMode::Thread || !sWorkerThread.joinable()) return PollStatus::Failed;
+  if (sProcessed.load(std::memory_order_acquire) < request.target) return PollStatus::Pending;
+  std::unique_lock lock{sBufferMutex, std::try_to_lock};
+  if (!lock.owns_lock()) return PollStatus::Pending;
+  sStreamBase = request.target;
+  detail::sBufferSize = 0;
+  sPendingDraws = 0;
+  request.complete = true;
+  return PollStatus::Complete;
+}
+void request_shutdown() {
+  if (sShutdownRequested.exchange(true, std::memory_order_acq_rel)) return;
+  detail::sWritesOpen = false;
+  if (sWorkerThread.joinable()) sWorkerThread.request_stop();
+}
+PollStatus poll_shutdown() {
+  if (!sWorkerExited.load(std::memory_order_acquire)) return PollStatus::Pending;
+  if (sWorkerThread.joinable()) sWorkerThread.join();
+  sWorkerJoined.store(true, std::memory_order_release);
+  return sWorkerUnbound.load(std::memory_order_acquire) ? PollStatus::Complete : PollStatus::Failed;
 }
 bool is_quiescent() noexcept { return sWorkerJoined.load(std::memory_order_acquire); }
 bool failed() noexcept { return detail::sFailed.load(std::memory_order_acquire); }

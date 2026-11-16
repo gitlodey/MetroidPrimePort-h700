@@ -97,6 +97,9 @@ static detail::PipelineWorkControl g_pipelineWork;
 static std::atomic_size_t g_livePipelineThreads{0};
 static std::atomic_bool g_pipelineCacheWriterExited{true};
 static std::atomic_bool g_pipelineThreadsJoined{true};
+static std::atomic_bool g_pipelineThreadsUnbound{true};
+static bool g_pipelineCacheStarted = false;
+static bool g_pipelineShutdownRequested = false;
 
 static void pipeline_wait_failed(const char* reason) {
   if (auto state = h700::presentation_state()) state->fail(reason);
@@ -1421,7 +1424,13 @@ static void pipeline_worker() {
 #ifdef AURORA_H700
   struct ExitAck {
     bool threaded = g_hasPipelineThread;
-    ~ExitAck() { if (threaded) g_livePipelineThreads.fetch_sub(1, std::memory_order_acq_rel); }
+    ~ExitAck() {
+      if (!h700::unbind_current_dawn()) {
+        g_pipelineThreadsUnbound.store(false, std::memory_order_release);
+        pipeline_wait_failed("Compiler owner-thread EGL unbind failed");
+      }
+      if (threaded) g_livePipelineThreads.fetch_sub(1, std::memory_order_acq_rel);
+    }
   } exitAck;
 #endif
 #ifdef TRACY_ENABLE
@@ -1855,7 +1864,7 @@ static void stop_pipeline_cache_writer() {
     g_pipelineCacheWriterCv.notify_one();
 #ifdef AURORA_H700
     while (!g_pipelineCacheWriterExited.load(std::memory_order_acquire)) {
-      (void)render_worker::progress_wait();
+      if (h700::on_main_thread()) (void)h700::main_progress_once();
       std::this_thread::sleep_for(std::chrono::milliseconds{1});
     }
 #endif
@@ -1946,6 +1955,9 @@ void initialize_pipeline_cache() {
     return;
   }
   g_pipelineWork.reset();
+  g_pipelineThreadsUnbound.store(true, std::memory_order_release);
+  g_pipelineCacheStarted = true;
+  g_pipelineShutdownRequested = false;
   g_pipelineThreadsJoined.store(false, std::memory_order_release);
 #endif
   g_pipelineCacheBroken = false;
@@ -1992,14 +2004,8 @@ void initialize_pipeline_cache() {
 #ifdef AURORA_H700
 void begin_pipeline_cache_draining() {
   g_pipelineWork.begin_draining();
-  {
-    std::lock_guard lock{g_pipelineMutex};
-    for (const auto& pending : g_backgroundPipelineQueue) {
-      g_pendingPipelines.erase(pending.hash);
-      --queuedPipelines;
-    }
-    g_backgroundPipelineQueue.clear();
-  }
+  // The compiler removes optional backlog under its own cache lock. The main root
+  // boundary must not wait behind a writer/prefetch that currently holds that lock.
   g_pipelineQueueCv.notify_all();
   g_pipelineReadyCv.notify_all();
   g_pipelineCacheWriterCv.notify_all();
@@ -2028,25 +2034,58 @@ size_t active_pipeline_compiles() noexcept { return g_pipelineWork.active(); }
 bool pipeline_cache_threads_joined() noexcept {
   return g_pipelineThreadsJoined.load(std::memory_order_acquire);
 }
+
+void request_pipeline_cache_shutdown() {
+  if (!g_pipelineCacheStarted || g_pipelineShutdownRequested) return;
+  g_pipelineShutdownRequested = true;
+  g_pipelineWork.close_continuations(); // all accepted upstream producers have now finished
+  g_pipelineQueueCv.notify_all();
+  g_pipelineCacheWriterCv.notify_all(); // background_open is false: writer exits after its real active call
+}
+PipelineShutdownStatus poll_pipeline_cache_shutdown() {
+  if (!g_pipelineCacheStarted || g_pipelineThreadsJoined.load(std::memory_order_acquire))
+    return g_pipelineThreadsUnbound.load(std::memory_order_acquire) ? PipelineShutdownStatus::Complete : PipelineShutdownStatus::Failed;
+  if (!g_pipelineShutdownRequested) return PipelineShutdownStatus::Pending;
+  {
+    std::unique_lock lock{g_pipelineMutex, std::try_to_lock};
+    if (!lock.owns_lock()) return PipelineShutdownStatus::Pending;
+    // Healthy accepted builds must finish. Failure permits dropping queued builds later,
+    // but neither an empty queue nor failure proves an active driver call has returned.
+    if (render_worker::wait_healthy() && (!g_pipelineQueue.empty() || g_pipelineWork.active() != 0))
+      return PipelineShutdownStatus::Pending;
+    g_pipelineThreadEnd = true;
+  }
+  g_pipelineQueueCv.notify_all();
+  g_pipelineReadyCv.notify_all();
+  if (g_livePipelineThreads.load(std::memory_order_acquire) != 0 ||
+      !g_pipelineCacheWriterExited.load(std::memory_order_acquire)) return PipelineShutdownStatus::Pending;
+  for (auto& thread : g_pipelineThreads) thread.join(); // real exit/unbind acks precede joins
+  g_pipelineThreads.clear();
+  g_hasPipelineThread = false;
+  if (g_pipelineCacheWriterThread.joinable()) g_pipelineCacheWriterThread.join();
+  g_pipelineThreadsJoined.store(true, std::memory_order_release);
+  return g_pipelineThreadsUnbound.load(std::memory_order_acquire) ? PipelineShutdownStatus::Complete : PipelineShutdownStatus::Failed;
+}
+bool join_pipeline_cache_workers() {
+  request_pipeline_cache_shutdown();
+  while (true) {
+    const auto result = poll_pipeline_cache_shutdown();
+    if (result != PipelineShutdownStatus::Pending) return result == PipelineShutdownStatus::Complete;
+    if (h700::on_main_thread()) (void)h700::main_progress_once();
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+}
 #endif
 
-void shutdown_pipeline_cache() {
+bool shutdown_pipeline_cache() {
 #ifdef AURORA_H700
-  // This legacy void entry point cannot permit its caller to release device resources early.
-  // IG-11 can observe a failed drain separately, but still must settle actual thread ownership.
-  (void)drain_pipeline_cache();
-#endif
+  if (!g_pipelineCacheStarted) return g_pipelineThreadsUnbound.load(std::memory_order_acquire);
+  if (!join_pipeline_cache_workers()) return false;
+#else
   if (g_hasPipelineThread) {
     g_pipelineThreadEnd = true;
     g_pipelineQueueCv.notify_all();
     g_pipelineReadyCv.notify_all();
-#ifdef AURORA_H700
-    while (g_livePipelineThreads.load(std::memory_order_acquire) != 0) {
-      // Failure wakes waiters, not a driver call. Never clear holders/detach to escape this wait.
-      (void)render_worker::progress_wait();
-      std::this_thread::sleep_for(std::chrono::milliseconds{1});
-    }
-#endif
     for (auto& thread : g_pipelineThreads) {
       thread.join();
     }
@@ -2055,10 +2094,18 @@ void shutdown_pipeline_cache() {
   g_hasPipelineThread = false;
 
   stop_pipeline_cache_writer();
+#endif
+  return release_pipeline_cache_holders();
+}
+
+bool release_pipeline_cache_holders() {
 #ifdef AURORA_H700
-  g_pipelineThreadsJoined.store(true, std::memory_order_release);
+  if (!g_pipelineCacheStarted) return g_pipelineThreadsUnbound.load(std::memory_order_acquire);
+  if (!g_pipelineThreadsJoined.load(std::memory_order_acquire) ||
+      !g_pipelineThreadsUnbound.load(std::memory_order_acquire)) return false;
 #endif
   pipeline_cache_abort();
+  g_pipelineCacheWriteQueue.clear();
   g_pipelineCacheBroken = false;
   g_pipelinesPerFrame = 0;
   g_gpuCachePrunePending = false;
@@ -2079,6 +2126,10 @@ void shutdown_pipeline_cache() {
 
   queuedPipelines = 0;
   createdPipelines = 0;
+#ifdef AURORA_H700
+  g_pipelineCacheStarted = false;
+#endif
+  return true;
 }
 
 void drop_pipelines() { g_dropPipelines.store(true, std::memory_order_release); }

@@ -74,6 +74,8 @@ struct Backend {
 // No resolver callback may overlap that boundary (IG-11 quiescence contract).
 std::unique_ptr<Backend> backend;
 uint64_t next_generation = 1;
+bool allow_next_generation = true;
+std::array<std::optional<NativePending>, 2> retired_flights;
 
 bool fail(std::string message) {
   Log.error("{}", message);
@@ -203,7 +205,12 @@ bool contexts_retired() {
 }
 } // namespace
 
+bool can_start_generation() { return !backend && allow_next_generation; }
+void forbid_next_generation() { allow_next_generation = false; }
+bool on_main_thread() { return main_thread(); }
+
 bool prepare_sdl() {
+  if (!can_start_generation()) return fail("H700 previous generation not cleanly released");
   if (!SDL_IsMainThread() || SDL_GetVersion() != SDL_VERSION) return fail("H700 requires SDL main thread/matched shim");
   // The pinned shim reads this with libc getenv(), not SDL_GetHint().
   if (::setenv("SDL_VIDEODRIVER", "sdl2", 1) != 0 || ::setenv("SDL3SHIM_SDL2_VIDEODRIVER", "mali", 1) != 0 ||
@@ -214,7 +221,9 @@ bool prepare_sdl() {
 }
 
 bool initialize_presenter(SDL_Window* window) {
-  if (backend || !SDL_IsMainThread() || !window || next_generation == 0) return fail("H700 generation cannot be retried");
+  if (!can_start_generation() || !SDL_IsMainThread() || !window || next_generation == 0)
+    return fail("H700 generation cannot be retried");
+  for (auto& retired : retired_flights) retired.reset();
   backend = std::make_unique<Backend>(next_generation++);
   backend->window = window;
   const char* driver = SDL_GetCurrentVideoDriver();
@@ -382,9 +391,12 @@ void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
   wgpu::FutureWaitInfo info{.future = flight->forward};
   const auto wait = webgpu::g_instance.WaitAny(1, &info, 0);
   if (wait == wgpu::WaitStatus::TimedOut) return;
+  if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire)) {
+    quarantine_frame(flight->descriptor, "H700 forward wait unresolved; future/callback retained");
+    return;
+  }
   flight->forward_observed = true;
-  if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire) ||
-      flight->status.load(std::memory_order_relaxed) != wgpu::QueueWorkDoneStatus::Success) {
+  if (flight->status.load(std::memory_order_relaxed) != wgpu::QueueWorkDoneStatus::Success) {
     quarantine_frame(flight->descriptor, "H700 forward work-done wait/status failed");
     return;
   }
@@ -563,6 +575,7 @@ bool main_progress_once() {
   struct ProgressScope { ~ProgressScope() { backend->progressing = false; } } scope;
   if (!webgpu::g_instance) return false;
   webgpu::g_instance.ProcessEvents(); // direct: never enqueue behind the worker we may be waiting for
+  webgpu::poll_h700_device_events(); // only the internal WaitAnyOnly device-lost callback
   const auto flights = flights_snapshot();
   for (const auto& flight : flights) if (flight) poll_forward(flight);
   for (const auto& flight : flights) if (flight) poll_reverse(flight);
@@ -602,6 +615,73 @@ bool unbind_current_dawn() {
     if (!live_context(current)) return fail("Cannot unbind unobserved EGL context");
   }
   return observed_make_current(backend->display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT) == EGL_TRUE;
+}
+
+bool native_frames_drained() {
+  if (!backend) return true;
+  if (!require_main()) return false;
+  const auto flights = flights_snapshot();
+  return std::none_of(flights.begin(), flights.end(), [](const auto& flight) { return bool(flight); });
+}
+
+bool settle_native_callbacks() {
+  if (!backend) return true;
+  if (!require_main()) return false;
+  bool settled = true;
+  for (const auto& flight : flights_snapshot()) {
+    if (!flight || !flight->published.load(std::memory_order_acquire)) continue;
+    if (flight->callback_called.load(std::memory_order_acquire)) continue;
+    if (!webgpu::g_instance || !flight->forward.id) {
+      fail("Cannot settle native work-done callback; retaining generation/future");
+      return false;
+    }
+    wgpu::FutureWaitInfo info{.future = flight->forward};
+    const auto wait = webgpu::g_instance.WaitAny(1, &info, 0);
+    if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire))
+      settled = false;
+    // A failed work-done status never becomes a successful forward event or a reusable credit.
+  }
+  return settled;
+}
+
+std::array<std::optional<NativePending>, 2> retired_native_frames() {
+  std::array<std::optional<NativePending>, 2> result;
+  for (size_t i = 0; i < result.size(); ++i) if (retired_flights[i]) result[i].emplace(*retired_flights[i]);
+  return result;
+}
+
+bool retire_native_after_dawn_release() {
+  if (!backend) return true;
+  if (!require_main() || !backend->dawn_released || !contexts_retired()) return false;
+  const auto flights = flights_snapshot();
+  if (std::none_of(flights.begin(), flights.end(), [](const auto& flight) { return bool(flight); })) return true;
+  if (backend->state->snapshot().phase != PresentationPhase::Failed) return false;
+  for (const auto& flight : flights)
+    if (flight && flight->published.load(std::memory_order_acquire) &&
+        !flight->callback_called.load(std::memory_order_acquire)) return false;
+  if (!restore_presenter()) return false;
+  // Failure teardown only, never per-frame: settle presenter reads even if their fence/swap
+  // failed before acknowledgement. Whole Dawn share-group destruction is proven above.
+  if (glGetError() != GL_NO_ERROR) return fail("GL error before failed-generation presenter retirement");
+  glFinish();
+  if (glGetError() != GL_NO_ERROR) return fail("Presenter teardown completion unknown; exports retained");
+  for (const auto& flight : flights) {
+    if (!flight) continue;
+    const auto retired_reverse = flight->reverse;
+    if (flight->reverse != EGL_NO_SYNC_KHR) {
+      if (backend->destroy_sync(backend->display, flight->reverse) != EGL_TRUE)
+        return fail("Failed-generation reverse sync release unknown; exports retained");
+      flight->reverse = EGL_NO_SYNC_KHR;
+    }
+    retired_flights[flight->descriptor.slot].emplace(NativePending{
+        flight->descriptor, flight->forward, flight->published.load(std::memory_order_acquire), flight->forward_observed,
+        flight->callback_called.load(std::memory_order_acquire), flight->status.load(std::memory_order_relaxed),
+        retired_reverse, flight->reverse_wait_failed, true});
+    std::lock_guard lock{backend->flights_mutex};
+    if (backend->flights[flight->descriptor.slot] == flight) backend->flights[flight->descriptor.slot].reset();
+  }
+  // PresentationState retains quarantined slot/future/mailbox metadata; no recycle/complete_swap.
+  return true;
 }
 
 bool release_dawn_imports() {
@@ -702,6 +782,13 @@ bool finish_shutdown() {
     return fail("H700 shutdown incomplete; retaining resolver/libraries and forbidding next generation");
   }
   if (SDL_WasInit(SDL_INIT_VIDEO) != 0) return fail("H700 resolver release must follow SDL video shutdown");
+  if (!backend->exports_released || !native_frames_drained() || eglGetCurrentContext() != EGL_NO_CONTEXT)
+    return fail("H700 final ownership/binding proof incomplete");
+  const auto ownership = backend->state->snapshot();
+  if (ownership.phase != PresentationPhase::Failed &&
+      (ownership.mailbox_size || std::any_of(ownership.slots.begin(), ownership.slots.end(),
+                                            [](const auto& slot) { return slot.status != SlotStatus::Free; })))
+    return fail("H700 logical ownership remains at final resolver boundary");
   bool ok = true;
   if (backend->gles_library) {
     if (dlclose(backend->gles_library) != 0) ok = false;
@@ -712,6 +799,12 @@ bool finish_shutdown() {
     else backend->egl_library = nullptr;
   }
   if (!ok) return fail("H700 runtime library release failed");
+  if (backend->state->snapshot().phase == PresentationPhase::Failed) {
+    allow_next_generation = false;
+    if (!backend->state->stop_after_teardown()) return false;
+  } else if (!backend->state->try_stop()) {
+    return fail("H700 presentation ownership not stopped after teardown");
+  }
   backend.reset();
   return true;
 }

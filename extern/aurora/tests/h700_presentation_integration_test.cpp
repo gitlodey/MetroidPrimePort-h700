@@ -109,7 +109,7 @@ TEST(H700PresentationIntegration, FailedLatePublicationRetainsBothFuturesWithout
 
 TEST(H700PresentationIntegration, ActualAdmissionAndCompositionCaptureAreIndependentOfPacket) {
   const auto aurora = source("aurora.cpp");
-  const auto admission = section(aurora, "bool begin_frame() noexcept", "void end_frame() noexcept");
+  const auto admission = section(aurora, "bool begin_frame() noexcept", "void end_frame(bool fifoDrained");
   ordered(admission, {"h700::acquire_frame()", "g_nativeFrame.emplace(*nativeFrame)", "if (!gfx::begin_frame())",
                       "h700::abort_frame(*g_nativeFrame)", "imgui::new_frame"});
   const auto callback = section(aurora, "gfx::end_frame([", "TracyPlotConfig(\"aurora: lastVertSize\"");

@@ -86,6 +86,20 @@ bool g_lightmapBinding = false;
 bool g_astcTexturesSupported = false;
 bool g_textureComponentSwizzleSupported = false;
 bool g_dualSourceBlendingSupported = false;
+#ifdef AURORA_H700
+static std::shared_ptr<std::atomic_bool> g_deviceLostObserved;
+static bool g_destroyRequested = false;
+static wgpu::Future g_deviceLostFuture{};
+static bool g_deviceLostSettled = false;
+static bool g_deviceReleaseUnknown = false;
+struct QueueDrain {
+  wgpu::Future future{};
+  std::atomic_bool callback_called{false};
+  std::atomic<wgpu::QueueWorkDoneStatus> status{wgpu::QueueWorkDoneStatus::Error};
+  bool settled = false; // main-owned, only after WaitAny and callback return
+};
+static std::shared_ptr<QueueDrain> g_queueDrain;
+#endif
 static std::atomic_bool g_initialized = false;
 static std::atomic_bool g_vsyncEnabled = true;
 
@@ -965,8 +979,8 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu);
 
 #ifdef AURORA_H700
 static bool release_h700_init_holders() {
-  // Bootstrap has not entered gfx::initialize or admitted jobs/maps. EFB publication
-  // runs inline before the render worker starts, so no queued targets remain to drain.
+  // Partial bootstrap has no gfx jobs/maps; runtime calls this only after producer/worker
+  // joins, map retirement and native drain. Neither path may leave queued EFB targets.
   g_initialized = false;
   if (!gpu_prof::shutdown()) return false;
   g_CopyBindGroup = {};
@@ -1559,15 +1573,24 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     });
 #ifdef AURORA_H700
     auto state = h700::presentation_state();
+    g_deviceLostObserved = std::make_shared<std::atomic_bool>(false);
+    g_destroyRequested = false;
+    g_deviceLostFuture = {};
+    g_deviceLostSettled = false;
+    g_deviceReleaseUnknown = false;
     deviceDescriptor.SetUncapturedErrorCallback(
         [](const wgpu::Device&, wgpu::ErrorType type, wgpu::StringView message, h700::PresentationState* state) {
           state->fail(fmt::format("WebGPU error {}: {}", underlying(type), message));
+          gfx::render_worker::notify_failure();
         }, state.get());
     deviceDescriptor.SetDeviceLostCallback(
-        wgpu::CallbackMode::AllowSpontaneous,
-        [state](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
-          if (reason == wgpu::DeviceLostReason::Destroyed && state->snapshot().phase != h700::PresentationPhase::Running) return;
-          state->fail(fmt::format("H700 device lost: {}", message));
+        wgpu::CallbackMode::WaitAnyOnly,
+        [state, observed = g_deviceLostObserved](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {
+          if (reason != wgpu::DeviceLostReason::Destroyed || state->snapshot().phase == h700::PresentationPhase::Running) {
+            state->fail(fmt::format("H700 device lost: {}", message));
+            gfx::render_worker::notify_failure();
+          }
+          observed->store(true, std::memory_order_release);
         });
     struct DeviceResult { wgpu::Device device; bool success = false; };
     auto result = std::make_shared<DeviceResult>();
@@ -1714,27 +1737,118 @@ bool presentation_ready() noexcept {
 }
 
 #ifdef AURORA_H700
-bool release_h700_device() {
-  if (!h700::release_dawn_imports()) return false;
-  if (!h700::unbind_current_dawn()) return false;
+void poll_h700_device_events() {
+  if (!g_device || !g_instance || g_deviceLostSettled || g_deviceReleaseUnknown) return;
+  if (!g_deviceLostFuture.id) g_deviceLostFuture = g_device.GetLostFuture();
+  wgpu::FutureWaitInfo info{.future = g_deviceLostFuture};
+  const auto wait = g_instance.WaitAny(1, &info, 0);
+  if (wait == wgpu::WaitStatus::TimedOut) return;
+  if (wait != wgpu::WaitStatus::Success || !info.completed || !g_deviceLostObserved ||
+      !g_deviceLostObserved->load(std::memory_order_acquire)) {
+    g_deviceReleaseUnknown = true;
+    if (auto state = h700::presentation_state()) state->fail("Device lost future/callback completion unknown");
+    gfx::render_worker::notify_failure();
+    return;
+  }
+  g_deviceLostSettled = true; // WaitAnyOnly callback AND its temporary Device argument have returned
+}
+
+QueueDrainStatus poll_h700_queue_drain() {
+  if (g_deviceReleaseUnknown) return QueueDrainStatus::Failed;
+  if (!g_queueDrain) {
+    if (!g_queue) return QueueDrainStatus::Complete; // partial bootstrap, no queue operations
+    g_queueDrain = std::make_shared<QueueDrain>();
+    g_queueDrain->future = g_queue.OnSubmittedWorkDone(
+        wgpu::CallbackMode::WaitAnyOnly,
+        [completion = g_queueDrain](wgpu::QueueWorkDoneStatus status, wgpu::StringView) {
+          completion->status.store(status, std::memory_order_relaxed);
+          completion->callback_called.store(true, std::memory_order_release);
+        });
+  }
+  if (!g_queueDrain->settled) {
+    if (!g_instance || !g_queueDrain->future.id) {
+      g_deviceReleaseUnknown = true;
+    } else {
+      wgpu::FutureWaitInfo info{.future = g_queueDrain->future};
+      const auto wait = g_instance.WaitAny(1, &info, 0);
+      if (wait == wgpu::WaitStatus::TimedOut) return QueueDrainStatus::Pending;
+      if (wait == wgpu::WaitStatus::Success && info.completed &&
+          g_queueDrain->callback_called.load(std::memory_order_acquire)) {
+        g_queueDrain->settled = true;
+      } else {
+        g_deviceReleaseUnknown = true;
+      }
+    }
+  }
+  if (g_deviceReleaseUnknown || g_queueDrain->status.load(std::memory_order_relaxed) != wgpu::QueueWorkDoneStatus::Success) {
+    if (auto state = h700::presentation_state()) state->fail("Final queue work-done failed or completion unknown");
+    gfx::render_worker::notify_failure();
+    return QueueDrainStatus::Failed;
+  }
+  return QueueDrainStatus::Complete;
+}
+
+DeviceReleaseStatus poll_h700_device_release() {
+  if (g_deviceReleaseUnknown) return DeviceReleaseStatus::Unknown;
+  const auto unknown = [] {
+    g_deviceReleaseUnknown = true;
+    return DeviceReleaseStatus::Unknown;
+  };
+  if (!h700::release_dawn_imports() || !h700::unbind_current_dawn()) return unknown();
+  if (g_device && !g_destroyRequested) {
+    g_destroyRequested = true;
+    g_device.Destroy(); // lifecycle event, NOT proof of native device/context destruction
+  }
+  if (g_instance) g_instance.ProcessEvents();
+  poll_h700_device_events();
+  if (!h700::unbind_current_dawn()) return unknown(); // Destroy/events can rebind main
+  if (g_deviceReleaseUnknown) return unknown();
+  if (g_device && (!g_deviceLostSettled || !g_deviceLostObserved->load(std::memory_order_acquire)))
+    return DeviceReleaseStatus::Pending;
+  // Normal drain already settled this final future, including bootstrap-only submissions.
+  // After failure, Destroy may settle it with Error: that is callback retirement, not GPU success.
+  if (g_queueDrain) {
+    (void)poll_h700_queue_drain();
+    if (g_deviceReleaseUnknown) return unknown();
+    if (!g_queueDrain->settled) return DeviceReleaseStatus::Pending;
+  }
+  if (!h700::settle_native_callbacks()) return DeviceReleaseStatus::Pending;
+  g_graphicsConfig.surfaceConfiguration.device = {};
+  g_surface = {};
   g_queue = {};
-  if (g_device) g_device.Destroy();
   g_device = {};
+  if (g_instance) g_instance.ProcessEvents();
+  if (!h700::unbind_current_dawn()) return unknown();
   g_adapterInfo = {};
   g_adapter = {};
+  if (!h700::unbind_current_dawn()) return unknown();
   g_instance = {};
-  // Destroy/lifecycle processing may have made the context current again on this thread.
-  if (!h700::unbind_current_dawn()) return false;
-  return h700::acknowledge_dawn_release();
+  if (!h700::unbind_current_dawn()) return unknown(); // final release may rebind too
+  cache_shutdown(); // all callbacks/compiler/writer calls are settled before platform/cache lifetime ends
+  g_deviceLostObserved.reset();
+  g_deviceLostFuture = {};
+  g_queueDrain.reset(); // callback returned; no future is dropped to force final release
+  if (!h700::acknowledge_dawn_release()) return unknown(); // WHOLE observed group, not Destroy()
+  return DeviceReleaseStatus::Released;
+}
+
+bool release_h700_device() { return poll_h700_device_release() == DeviceReleaseStatus::Released; }
+
+bool release_h700_app_holders() {
+  if (!release_h700_init_holders()) return false;
+  g_surface = {};
+  g_graphicsConfig.surfaceConfiguration.device = {};
+  window::set_surface_held(false);
+  return true;
 }
 #endif
 
-void shutdown() {
+bool shutdown() {
   g_initialized = false;
-  if (!gfx::gpu_synchronize()) return; // IG-11 owns failed-generation quiescence/release
+  if (!gfx::gpu_synchronize()) return false; // IG-11 owns failed-generation quiescence/release
   if (!gpu_prof::shutdown()) {
     Log.error("GPU profiler maps not retired; device holders retained");
-    return;
+    return false;
   }
   g_CopyBindGroupLayout = {};
   g_CopyPipeline = {};
@@ -1753,13 +1867,17 @@ void shutdown() {
   g_surface = {};
   window::set_surface_held(false);
 #ifdef AURORA_H700
-  if (!release_h700_device()) Log.error("H700 Dawn release incomplete; native exports must remain alive");
+  if (!release_h700_device()) {
+    Log.error("H700 Dawn release incomplete; native exports must remain alive");
+    return false;
+  }
 #else
   g_device = {};
   g_adapter = {};
   g_instance = {};
 #endif
   cache_shutdown();
+  return true;
 }
 
 void release_surface() noexcept {

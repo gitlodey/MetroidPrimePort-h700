@@ -50,12 +50,18 @@ enum class PipelinePriority {
 using NewPipelineCallback = std::function<wgpu::RenderPipeline()>;
 
 void initialize_pipeline_cache();
-void shutdown_pipeline_cache();
+bool shutdown_pipeline_cache(); // driver calls returned, compiler/writer joined, EGL unbound
+bool release_pipeline_cache_holders(); // requires actual joins; never waits for workers
 #ifdef AURORA_H700
 // IG-11: close roots first, but keep accepted FIFO/render continuations open until their
 // producers finish. Only then call drain (closes compiler continuations). False is not quiescence.
 void begin_pipeline_cache_draining();
 bool drain_pipeline_cache();
+bool join_pipeline_cache_workers(); // blocking wrapper; preserves cache holders
+void request_pipeline_cache_shutdown(); // after accepted FIFO/render producers finish
+// Pending while real calls/compiler/writer are active; no locks held across driver work.
+enum class PipelineShutdownStatus { Pending, Complete, Failed };
+PipelineShutdownStatus poll_pipeline_cache_shutdown();
 size_t active_pipeline_compiles() noexcept;
 bool pipeline_cache_threads_joined() noexcept; // actual joins, not a cancelled waiter/empty queue
 #endif

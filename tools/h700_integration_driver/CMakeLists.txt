@@ -94,7 +94,8 @@ add_executable(h700_integration_driver main.cpp ../../platform/glibc_compat.c)
 target_link_libraries(h700_integration_driver PRIVATE aurora::main
   "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi,aurora::mtx,aurora::os>")
 target_compile_options(h700_integration_driver PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(h700_integration_driver PRIVATE H700_DRIVER_REVISION="IG-01")
+target_compile_definitions(h700_integration_driver PRIVATE H700_DRIVER_REVISION="IG-01"
+  $<$<BOOL:${AURORA_H700}>:AURORA_H700>)
 set_target_properties(h700_integration_driver PROPERTIES BUILD_RPATH_USE_ORIGIN ON)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/artifacts.json" CONTENT
   "{\"executable\":\"$<TARGET_FILE:h700_integration_driver>\",\"sdl\":\"$<TARGET_FILE:SDL3::SDL3>\"}\n")

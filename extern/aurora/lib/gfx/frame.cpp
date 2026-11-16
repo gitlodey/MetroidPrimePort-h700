@@ -89,6 +89,9 @@ std::array<std::atomic<std::shared_ptr<h700::MapSlotOwnership>>, StagingBufferCo
 std::array<std::atomic<std::shared_ptr<MapCompletion>>, StagingBufferCount> g_mapCompletions;
 std::thread::id g_frameOwner;
 bool g_mapsRetiring = false;
+#ifdef AURORA_H700
+bool g_frameInitialized = false;
+#endif
 
 bool staging_callback_pending(size_t slot) {
   const auto completion = g_mapCompletions[slot].load(std::memory_order_acquire);
@@ -615,6 +618,9 @@ void initialize() {
     render_worker::notify_failure();
     return;
   }
+#ifdef AURORA_H700
+  g_frameInitialized = true;
+#endif
   g_frameOwner = std::this_thread::get_id();
   g_mapsRetiring = false;
   g_frameIndex = 0;
@@ -933,17 +939,32 @@ void initialize() {
   initialize_pipeline_cache();
 }
 
-void shutdown() {
+bool shutdown() {
+#ifdef AURORA_H700
+  if (!g_frameInitialized) return true;
+#endif
   render_worker::synchronize();
-  render_worker::shutdown();
-  if (!render_worker::is_quiescent()) return; // producer-side rejected work may still be unwinding
+  if (!render_worker::shutdown()) return false;
+  if (!render_worker::is_quiescent()) return false; // producer-side rejected work may still be unwinding
   while (!retire_frame_resources_after_quiescence()) {
     if (!render_worker::progress_wait()) {
       Log.error("Frame retirement incomplete; maps/packets/holders retained for IG-11");
-      return;
+      return false;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
+#ifdef AURORA_H700
+  if (!join_pipeline_cache_workers()) return false;
+#endif
+  return release_frame_holders_after_quiescence();
+}
+
+bool release_frame_holders_after_quiescence() {
+#ifdef AURORA_H700
+  if (!g_frameInitialized) return true;
+  if (!gx::fifo::is_quiescent() || !render_worker::is_quiescent() || !pipeline_cache_threads_joined() ||
+      pending_internal_maps() != 0) return false;
+#endif
   g_processEventsQueued.store(false, std::memory_order_release);
   g_lastPresentNs.store(0, std::memory_order_release);
   g_presentPeriodNs.store(0, std::memory_order_release);
@@ -953,8 +974,12 @@ void shutdown() {
     std::lock_guard lock{g_presentStatsMutex};
     g_presentTimes.clear();
   }
-  shutdown_pipeline_cache();
-  if (!vis_query::detail::shutdown()) return;
+#ifdef AURORA_H700
+  if (!release_pipeline_cache_holders()) return false;
+#else
+  if (!shutdown_pipeline_cache()) return false;
+#endif
+  if (!vis_query::detail::shutdown()) return false;
   depth_peek::shutdown();
   tex_copy_conv::shutdown();
   probe::shutdown();
@@ -1006,6 +1031,10 @@ void shutdown() {
   for (auto& state : g_mappingStates) {
     state.store(BufferMapState::Unmapped, std::memory_order_release);
   }
+#ifdef AURORA_H700
+  g_frameInitialized = false;
+#endif
+  return true;
 }
 
 bool wait_for_staging_buffer(size_t slot) {
@@ -1115,7 +1144,11 @@ bool grow_frame_buffer(StagingKind kind, uint64_t need, size_t frameSlot) {
     // the old buffer goes too.
     expire_unused_bind_groups_soon();
   });
-  return accepted == render_worker::Outcome::Completed && try_gpu_synchronize();
+  // The shutdown tail retains these ordered growth jobs ahead of its encoding. CPU
+  // recording uses base/limit, not the not-yet-grown device size; no waiter may depend
+  // on a tail that has not been admitted yet. Ordinary recording keeps its old sync.
+  return accepted == render_worker::Outcome::Completed &&
+         (render_worker::capturing_frame_tail() || try_gpu_synchronize());
 }
 
 namespace {

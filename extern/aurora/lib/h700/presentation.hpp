@@ -64,6 +64,9 @@ struct ContextSnapshot {
 };
 
 // SDL video init/window and every presenter/export operation belong to the SDL main thread.
+bool can_start_generation(); // false after failed/unknown teardown; no live recovery
+void forbid_next_generation(); // main-only terminal gate, including failure before presenter bootstrap
+bool on_main_thread();
 bool prepare_sdl();
 bool initialize_presenter(SDL_Window* window);
 std::shared_ptr<PresentationState> presentation_state();
@@ -97,10 +100,15 @@ struct NativePending {
   wgpu::QueueWorkDoneStatus forward_status;
   EGLSyncKHR reverse;
   bool reverse_wait_failed;
+  bool retired_after_teardown = false;
 };
 // IG-11 inventory, not a release/drain claim. Failed/late publications and reverse
 // fences remain owned here. Exports cannot be released while these records remain.
 std::array<std::optional<NativePending>, 2> pending_native_frames();
+bool native_frames_drained();
+bool settle_native_callbacks(); // producer joins first; poll real WaitAnyOnly callbacks, no fake completion
+bool retire_native_after_dawn_release(); // failed flights need whole-group proof + presenter teardown completion
+std::array<std::optional<NativePending>, 2> retired_native_frames();
 
 ContextSnapshot context_snapshot();
 bool unbind_current_dawn(); // must run on EACH owning thread, not just main

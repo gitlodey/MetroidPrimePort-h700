@@ -429,6 +429,77 @@ protected:
   }
 };
 
+TEST_F(GXFifoWaitTest, ShutdownDrainPollReturnsPendingWithDownstreamStallAndUnpublishedTail) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(block_draw());
+  const std::array<u8, 5> tail{GX_LOAD_BP_REG, 0x41, 0x65, 0x43, 0x21};
+  write_data(tail.data(), tail.size());
+  const auto* buffer = get_buffer_data();
+  const auto bytes = get_buffer_size();
+  DrainRequest request;
+  request_drain(request);
+  const auto published = published_bytes();
+  request_drain(request); // one frozen target, not a growing/latest-only boundary
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{10};
+  size_t polls = 0;
+  do {
+    EXPECT_EQ(poll_drain(request), PollStatus::Pending);
+    EXPECT_EQ(get_buffer_data(), buffer);
+    EXPECT_EQ(get_buffer_size(), bytes);
+    EXPECT_EQ(published_bytes(), published);
+    EXPECT_FALSE(request.complete);
+    ++polls;
+  } while (std::chrono::steady_clock::now() < deadline);
+  EXPECT_GT(polls, 1u);
+  install_progress();
+  ASSERT_TRUE(aurora::gfx::render_worker::progress_wait()); // outside poll/buffer lock, like cursor main progress
+  auto result = PollStatus::Pending;
+  const auto finishDeadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while ((result = poll_drain(request)) == PollStatus::Pending && std::chrono::steady_clock::now() < finishDeadline)
+    std::this_thread::yield();
+  ASSERT_EQ(result, PollStatus::Complete);
+  EXPECT_EQ(g_gxState.bpRegCache[0x41], 0x41654321u);
+  EXPECT_EQ(get_buffer_size(), 0u);
+  EXPECT_EQ(processed_bytes(), request.target);
+  EXPECT_TRUE(progressSawUnlockedBuffer);
+  request_shutdown();
+  while ((result = poll_shutdown()) == PollStatus::Pending && std::chrono::steady_clock::now() < finishDeadline)
+    std::this_thread::yield();
+  EXPECT_EQ(result, PollStatus::Complete);
+  EXPECT_TRUE(is_quiescent());
+}
+
+TEST_F(GXFifoWaitTest, ShutdownPollDoesNotJoinWhileAcceptedCallbackStillOwnsBuffer) {
+  using namespace aurora::gx::fifo;
+  sBlockingCallbackEntered.store(false);
+  sBlockingCallbackMayReturn.store(false);
+  sBlockingCallbackReturned.store(false);
+  ASSERT_TRUE(begin_frame());
+  GXSetDrawDoneCallback(blocking_draw_done_callback);
+  GXSetDrawDone();
+  ASSERT_TRUE(wait_for(sBlockingCallbackEntered, true));
+  const auto* buffer = get_buffer_data();
+  request_shutdown();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{10};
+  size_t polls = 0;
+  do {
+    EXPECT_EQ(poll_shutdown(), PollStatus::Pending);
+    EXPECT_FALSE(is_quiescent());
+    EXPECT_EQ(get_buffer_data(), buffer);
+    EXPECT_FALSE(sBlockingCallbackReturned.load());
+    ++polls;
+  } while (std::chrono::steady_clock::now() < deadline);
+  EXPECT_GT(polls, 1u);
+  sBlockingCallbackMayReturn.store(true, std::memory_order_release);
+  auto result = PollStatus::Pending;
+  const auto finishDeadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+  while ((result = poll_shutdown()) == PollStatus::Pending && std::chrono::steady_clock::now() < finishDeadline)
+    std::this_thread::yield();
+  EXPECT_EQ(result, PollStatus::Complete);
+  EXPECT_TRUE(is_quiescent());
+  EXPECT_TRUE(sBlockingCallbackReturned.load());
+}
+
 TEST_F(GXFifoWaitTest, GrowthProgressUnblocksActualDownstreamOutsideBufferLock) {
   using namespace aurora::gx::fifo;
   ASSERT_TRUE(block_draw());

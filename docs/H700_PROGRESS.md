@@ -2,9 +2,11 @@
 
 **Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-10 PASS, следующий шаг IG-11.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
+**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-11 PASS, следующий шаг IG-12.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
 
 ## Что готово
+
+- **IG-11:** ordered generation teardown, bounded worker/capacity polling, owner-thread unbind/joins и полный holder/Dawn/native release с запретом reinit после Failed/Unknown. **11 lifecycle +85 H700 cases PASS**, non-H70066/FIFO262 и compile/link PASS. Реальный teardown двух поколений — IG-14. [Результат](H700_INTEGRATION_PLAN.md#ig-11--pass-2026-11-16).
 
 - **IG-10:** request-owned maps, guarded profiler/vis-query reset и полный recorder reset после joins/maps без дополнительного Submit; source inventory12 групп holders. **10/10 новых cases**, regressions/link/compile PASS. Реальный GPU release не заявляется. [Результат](H700_INTEGRATION_PLAN.md#ig-10--pass-2026-11-16).
 
@@ -43,7 +45,7 @@
 
 ## Следующий шаг и согласование
 
-Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-11 после commit/push IG-10. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
+Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-12 после commit/push IG-11. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
 
 **В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
 

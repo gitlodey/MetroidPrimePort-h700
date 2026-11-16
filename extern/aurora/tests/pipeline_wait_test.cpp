@@ -173,11 +173,14 @@ TEST(PipelineCompilerSource, ActualCompilerKeepsPriorityQueuesIndependentAndJoin
                                        source.find("if (blocking && !pipelineReady)"));
   EXPECT_NE(lookup.find("detail::wait_pipeline(lock, g_pipelineReadyCv"), std::string::npos);
   EXPECT_NE(lookup.find("outcome != detail::PipelineWaitOutcome::Ready"), std::string::npos);
-  const auto shutdown = source.substr(source.find("void shutdown_pipeline_cache()"),
-                                     source.find("void drop_pipelines()") - source.find("void shutdown_pipeline_cache()"));
-  EXPECT_LT(shutdown.find("drain_pipeline_cache()"), shutdown.find("g_pipelineThreadEnd = true"));
-  EXPECT_LT(shutdown.find("g_livePipelineThreads.load"), shutdown.find("thread.join()"));
-  EXPECT_LT(shutdown.find("thread.join()"), shutdown.find("g_pipelines.clear()"));
+  const auto shutdown = source.substr(source.find("bool shutdown_pipeline_cache()"),
+                                     source.find("void drop_pipelines()") - source.find("bool shutdown_pipeline_cache()"));
+  const auto join = source.substr(source.find("PipelineShutdownStatus poll_pipeline_cache_shutdown()"),
+                                  source.find("bool join_pipeline_cache_workers()") - source.find("PipelineShutdownStatus poll_pipeline_cache_shutdown()"));
+  EXPECT_LT(join.find("!g_pipelineQueue.empty() || g_pipelineWork.active() != 0"), join.find("g_pipelineThreadEnd = true"));
+  EXPECT_LT(join.find("g_livePipelineThreads.load"), join.find("thread.join()"));
+  EXPECT_LT(join.find("g_pipelineCacheWriterExited.load"), join.find("g_pipelineCacheWriterThread.join()"));
+  EXPECT_LT(shutdown.find("join_pipeline_cache_workers()"), shutdown.find("g_pipelines.clear()"));
   EXPECT_LT(shutdown.find("stop_pipeline_cache_writer()"), shutdown.find("pipeline_cache_abort()"));
   const auto count = source.substr(source.find("static size_t pipeline_thread_count()"), 750);
   EXPECT_LT(count.find("wgpu::BackendType::OpenGLES"), count.find("return 1;"));

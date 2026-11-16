@@ -1,6 +1,9 @@
 #include "render_worker.hpp"
 
 #include "../thread.hpp"
+#ifdef AURORA_H700
+#include "../h700/presentation.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -18,11 +21,14 @@ std::atomic_bool g_running = false;
 std::atomic_bool g_started = false;
 std::atomic_bool g_joined = true;
 std::atomic_bool g_exited = true;
+std::atomic_bool g_unbound = true;
+std::atomic_bool g_shutdownRequested = false;
 std::atomic_bool g_rootsOpen = true;
 std::atomic_bool g_failed = false;
 std::atomic_size_t g_pendingItems = 0;
 std::atomic<std::shared_ptr<const WaitHooks>> g_hooks;
 thread_local bool g_onWorker = false;
+thread_local std::vector<QueueItem>* g_frameTail = nullptr;
 
 void complete_sync(const std::shared_ptr<SyncState>& sync, Outcome outcome) {
   if (!sync) return;
@@ -60,12 +66,20 @@ void worker_main(std::stop_token token) {
     g_pendingItems.fetch_sub(1, std::memory_order_acq_rel);
     complete_sync(sync, outcome);
   }
+#ifdef AURORA_H700
+  g_unbound.store(h700::unbind_current_dawn(), std::memory_order_release);
+  if (!g_unbound.load(std::memory_order_acquire)) notify_failure();
+#endif
   g_onWorker = false;
   g_running.store(false, std::memory_order_release);
   g_exited.store(true, std::memory_order_release);
 }
 Outcome enqueue(QueueItem item) {
   ZoneScoped;
+  if (g_frameTail) {
+    g_frameTail->push_back(std::move(item)); // owned by the accepted producer until actual admission
+    return Outcome::Completed;
+  }
   if (!wait_healthy()) {
     cancel_item(item, Outcome::Failed);
     return Outcome::Failed;
@@ -129,11 +143,12 @@ bool is_quiescent() noexcept {
   return g_joined.load(std::memory_order_acquire) && g_pendingItems.load(std::memory_order_acquire) == 0;
 }
 bool prepare_bootstrap() {
-  if (!is_quiescent()) return false;
+  if (!is_quiescent() || !g_unbound.load(std::memory_order_acquire)) return false;
   g_hooks.store({}, std::memory_order_release);
   g_failed.store(false, std::memory_order_release);
   g_rootsOpen.store(true, std::memory_order_release);
   g_started.store(false, std::memory_order_release);
+  g_shutdownRequested.store(false, std::memory_order_release);
   return true;
 }
 
@@ -156,6 +171,25 @@ Outcome BoundedQueue::push_result(QueueItem item) {
     lock.lock();
     m_notFull.wait_for(lock, IdlePumpInterval, [&] { return m_closed || m_items.size() < m_capacity; });
   }
+}
+Outcome BoundedQueue::try_push(QueueItem& item) {
+  if (!wait_healthy()) return Outcome::Failed;
+  std::unique_lock lock{m_mutex, std::try_to_lock};
+  if (!lock.owns_lock()) return Outcome::Pending;
+  if (m_closed) return Outcome::Rejected;
+  if (m_items.size() >= m_capacity) return Outcome::Pending;
+  m_items.emplace_back(std::move(item));
+  lock.unlock();
+  m_notEmpty.notify_one();
+  return Outcome::Completed;
+}
+bool BoundedQueue::try_close() {
+  std::unique_lock lock{m_mutex, std::try_to_lock};
+  if (!lock.owns_lock()) return false;
+  m_closed = true;
+  lock.unlock();
+  notify_waiters();
+  return true;
 }
 std::optional<QueueItem> BoundedQueue::pop_for(std::chrono::milliseconds timeout, bool& closed) {
   std::unique_lock lock{m_mutex};
@@ -190,6 +224,46 @@ void BoundedQueue::reset() {
 size_t BoundedQueue::size() const {
   std::lock_guard lock{m_mutex};
   return m_items.size();
+}
+
+bool capturing_frame_tail() noexcept { return g_frameTail != nullptr; }
+bool FrameTail::capture(WorkCallback record) {
+  if (m_items || g_frameTail || is_worker_thread()) return false;
+  m_items = std::make_shared<std::vector<QueueItem>>();
+  g_frameTail = m_items.get();
+  struct Scope { ~Scope() { g_frameTail = nullptr; } } scope;
+  record();
+  m_submission.work = [items = m_items] {
+    for (auto& item : *items) {
+      if (wait_healthy()) {
+        if (item.work) item.work();
+        complete_sync(item.sync, Outcome::Completed);
+      } else {
+        cancel_item(item, Outcome::Failed);
+      }
+      item = {}; // release each capture only after its actual work/cancel returned
+    }
+  };
+  m_submission.cancel = [items = m_items] {
+    for (auto& item : *items) { cancel_item(item, Outcome::Failed); item = {}; }
+  };
+  return true;
+}
+Outcome FrameTail::poll() {
+  if (!m_items) return Outcome::Completed;
+  if (!wait_healthy()) {
+    cancel_item(m_submission, Outcome::Failed);
+    m_submission = {};
+    m_items.reset();
+    return Outcome::Failed;
+  }
+  if (!g_started.load(std::memory_order_acquire) || !g_running.load(std::memory_order_acquire))
+    return Outcome::Rejected; // caller retains the batch; NEVER inline execution
+  g_pendingItems.fetch_add(1, std::memory_order_acq_rel);
+  const auto result = g_queue.try_push(m_submission);
+  if (result == Outcome::Completed) m_items.reset(); // queue/job now owns every capture
+  else g_pendingItems.fetch_sub(1, std::memory_order_acq_rel);
+  return result;
 }
 
 FrameSlotPool::FrameSlotPool(size_t slotCount) : m_freeSlots(slotCount, true) {}
@@ -246,24 +320,41 @@ void initialize() {
   if (g_running.exchange(true, std::memory_order_acq_rel)) return;
   g_started.store(true, std::memory_order_release);
   g_joined.store(false, std::memory_order_release);
+#ifdef AURORA_H700
+  g_unbound.store(false, std::memory_order_release);
+#endif
   g_exited.store(false, std::memory_order_release);
+  g_shutdownRequested.store(false, std::memory_order_release);
   g_rootsOpen.store(true, std::memory_order_release);
   g_failed.store(false, std::memory_order_release);
   g_queue.reset();
   g_pendingItems.store(0, std::memory_order_release);
   g_thread = thread::Thread{{.name = "Aurora render worker", .affinity = thread::Affinity::SharedCache}, worker_main};
 }
-void shutdown() {
-  if (!g_started.load(std::memory_order_acquire) || g_joined.load(std::memory_order_acquire)) return;
+void request_shutdown() {
+  if (g_shutdownRequested.exchange(true, std::memory_order_acq_rel)) return;
   begin_draining();
-  close_admission(); // queue close drains accepted items; it does not discard them
-  while (!g_exited.load(std::memory_order_acquire)) {
+  g_queue.notify_waiters();
+}
+Outcome poll_shutdown() {
+  if (!g_started.load(std::memory_order_acquire) || g_joined.load(std::memory_order_acquire))
+    return g_unbound.load(std::memory_order_acquire) ? Outcome::Completed : Outcome::Failed;
+  if (!g_shutdownRequested.load(std::memory_order_acquire)) return Outcome::Pending;
+  if (!g_queue.try_close()) return Outcome::Pending; // drains accepted items, never discards them
+  if (!g_exited.load(std::memory_order_acquire)) return Outcome::Pending;
+  if (g_thread.joinable()) g_thread.join(); // exit ack follows actual jobs/capture release and EGL unbind
+  g_joined.store(true, std::memory_order_release);
+  return g_unbound.load(std::memory_order_acquire) ? Outcome::Completed : Outcome::Failed;
+}
+bool shutdown() {
+  request_shutdown();
+  while (true) {
+    const auto result = poll_shutdown();
+    if (result != Outcome::Pending) return result == Outcome::Completed;
     const auto hooks = g_hooks.load(std::memory_order_acquire);
     if (hooks && hooks->main == std::this_thread::get_id() && hooks->progress) hooks->progress();
     std::this_thread::sleep_for(IdlePumpInterval);
   }
-  if (g_thread.joinable()) g_thread.join();
-  g_joined.store(true, std::memory_order_release);
 }
 
 Outcome enqueue_begin_frame(uint64_t frameId, WorkCallback work, WorkCallback cancel) {

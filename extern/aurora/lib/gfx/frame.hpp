@@ -32,7 +32,8 @@ namespace aurora::gfx {
 // The 8-bit display EFB (g_frameBuffer), whichever target scene_render_target_layout() reports.
 RenderTargetLayout display_render_target_layout() noexcept;
 void initialize();
-void shutdown();
+bool shutdown(); // blocking compatibility wrapper
+bool release_frame_holders_after_quiescence(); // no worker waits; false retains holders
 bool begin_frame();
 bool end_frame(EndFrameCallback callback, std::function<void()> preSubmitAbort = {});
 // Accepted packets are never cleared while queued/running work can still reference them.

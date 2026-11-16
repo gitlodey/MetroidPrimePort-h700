@@ -33,6 +33,16 @@ bool init();
 // IG-11: finish accepted producers/drain BEFORE shutdown, keeping downstream admission open.
 // This joins the worker, not an unpublished tail. False retains processor/callback inputs.
 bool shutdown();
+enum class PollStatus { Pending, Complete, Failed };
+struct DrainRequest {
+  uint64_t target = 0;
+  bool requested = false;
+  bool complete = false;
+};
+void request_drain(DrainRequest& request); // freeze/publish accepted tail once; no buffer lock/wait
+PollStatus poll_drain(DrainRequest& request); // try-lock only after actual processed watermark
+void request_shutdown();
+PollStatus poll_shutdown(); // join only after worker exit/unbind acknowledgement
 bool is_quiescent() noexcept; // worker joined only; not FIFO/frame/compiler/map retirement
 bool failed() noexcept;
 uint64_t published_bytes() noexcept;

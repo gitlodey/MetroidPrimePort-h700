@@ -21,6 +21,7 @@
 #include "webgpu/gpu_prof.hpp"
 #ifdef AURORA_H700
 #include "h700/presentation.hpp"
+#include "h700/lifecycle.hpp"
 #endif
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -234,9 +235,43 @@ constexpr std::array<AuroraBackend, 0> PreferredBackendOrder{};
 bool g_initialFrame = false;
 #if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
 std::optional<h700::FrameDescriptor> g_nativeFrame;
+h700::GenerationLifecycle g_generationLifecycle;
+std::thread::id g_lifecycleMain;
+bool g_lifecyclePolling = false;
+bool g_gfxStarted = false;
+bool g_fifoStarted = false;
+bool g_uiStarted = false;
+bool g_inputStarted = false;
+bool g_shutdownRootsRequested = false;
+bool g_shutdownTailCaptured = false;
+gx::fifo::DrainRequest g_shutdownFifoDrain;
+gfx::render_worker::FrameTail g_shutdownFrameTail;
+#ifdef AURORA_ENABLE_RMLUI
+bool g_rmlStarted = false;
+#endif
+void end_frame(bool fifoDrained) noexcept;
 #endif
 
 AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexcept {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  if (!h700::can_start_generation() || !g_generationLifecycle.begin()) {
+    Log.error("H700 initialization refused: previous generation failed or release is unknown/incomplete");
+    return {.backend = BACKEND_AUTO};
+  }
+  g_lifecycleMain = std::this_thread::get_id();
+  g_gfxStarted = g_fifoStarted = g_uiStarted = g_inputStarted = false;
+  g_shutdownRootsRequested = g_shutdownTailCaptured = false;
+  g_shutdownFifoDrain = {};
+  g_shutdownFrameTail = {};
+#ifdef AURORA_ENABLE_RMLUI
+  g_rmlStarted = false;
+#endif
+  bool initialized = false;
+  struct InitOutcome {
+    bool& initialized;
+    ~InitOutcome() { if (!initialized) g_generationLifecycle.fail(); }
+  } initOutcome{initialized};
+#endif
   g_config = config;
   Log.info("Aurora initializing");
   log_system_information();
@@ -291,7 +326,7 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   if (!requestedBackend || config.allowCpuAdapter || !window::create_window(BACKEND_OPENGLES) ||
       !webgpu::initialize(BACKEND_OPENGLES, false)) {
     // No fallback/retry, nor destruction of a display still borrowed by a live Dawn group.
-    window::shutdown();
+    // The driver calls the same status-bearing lifecycle for partial init; never retry here.
     Log.error("H700 initialization failed; graphics runtime remains unavailable");
     return {.backend = BACKEND_AUTO};
   }
@@ -359,6 +394,9 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   });
 
 #ifdef AURORA_ENABLE_GX
+#ifdef AURORA_H700
+  g_gfxStarted = true; // includes partially created bootstrap holders
+#endif
   gfx::initialize();
   if (!gx::fifo::init()) {
 #ifdef AURORA_H700
@@ -367,6 +405,9 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
     Log.error("FIFO initialization failed; resources retained for quiescence");
     return {.backend = BACKEND_AUTO};
   }
+#ifdef AURORA_H700
+  g_fifoStarted = true;
+#endif
   imgui::create_context();
 #endif
   const auto size = window::get_window_size();
@@ -376,14 +417,29 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
     g_config.imGuiInitCallback(&size);
   }
   imgui::initialize();
+#ifdef AURORA_H700
+  g_uiStarted = true;
+#endif
 #endif
 
 #ifdef AURORA_ENABLE_RMLUI
   rmlui::initialize(size);
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  g_rmlStarted = true;
+#endif
 #endif
 
   g_initialFrame = true;
   g_config.desiredBackend = selectedBackend;
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  const auto state = h700::presentation_state();
+  if (!state || state->snapshot().phase != h700::PresentationPhase::Running ||
+      !gfx::render_worker::wait_healthy()) {
+    Log.error("H700 initialization became terminal; retaining created owners for ordered shutdown");
+    return {.backend = BACKEND_AUTO};
+  }
+  initialized = true;
+#endif
   return {
       .backend = selectedBackend,
       .userPath = g_config.userPath,
@@ -393,7 +449,159 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
   };
 }
 
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+void request_h700_shutdown() noexcept {
+  if (g_lifecycleMain != std::thread::id{} && g_lifecycleMain != std::this_thread::get_id()) return;
+  g_generationLifecycle.request_stop();
+  if (g_generationLifecycle.stage() != h700::ShutdownStage::Producers || g_shutdownRootsRequested) return;
+  g_shutdownRootsRequested = true;
+  if (auto state = h700::presentation_state()) state->begin_draining();
+  gfx::render_worker::begin_draining(); // roots only; accepted downstream work remains admissible
+  if (g_gfxStarted) gfx::begin_pipeline_cache_draining();
+  if (g_fifoStarted) gx::fifo::request_drain(g_shutdownFifoDrain);
+}
+
+h700::ShutdownResult poll_h700_shutdown() noexcept {
+  using Stage = h700::ShutdownStage;
+  using Status = h700::ShutdownStatus;
+  if (g_lifecycleMain != std::thread::id{} && g_lifecycleMain != std::this_thread::get_id())
+    return {Status::Unknown, g_generationLifecycle.stage()};
+  if (g_lifecyclePolling) return {Status::Unknown, g_generationLifecycle.stage()};
+  g_lifecyclePolling = true;
+  struct PollScope { ~PollScope() { g_lifecyclePolling = false; } } scope;
+  request_h700_shutdown();
+  if (g_generationLifecycle.stage() == Stage::Done || g_generationLifecycle.stage() == Stage::Unknown)
+    return g_generationLifecycle.result();
+  const auto unknown = [](const char* reason) {
+    Log.error("H700 teardown unknown: {}. Retaining remaining ownership; no next generation", reason);
+    if (auto state = h700::presentation_state()) state->fail(reason);
+    h700::forbid_next_generation();
+    g_generationLifecycle.unknown();
+    return g_generationLifecycle.result();
+  };
+  if (auto state = h700::presentation_state()) {
+    if (state->snapshot().first_error) g_generationLifecycle.fail();
+    if (webgpu::g_instance) (void)h700::main_progress_once();
+    if (state->snapshot().first_error) g_generationLifecycle.fail();
+  }
+  const auto stage = g_generationLifecycle.stage();
+  switch (stage) {
+  case Stage::Running: return g_generationLifecycle.result();
+  case Stage::Producers: {
+    if (g_fifoStarted && !g_generationLifecycle.failed()) {
+      const auto drain = gx::fifo::poll_drain(g_shutdownFifoDrain);
+      if (drain == gx::fifo::PollStatus::Pending) return g_generationLifecycle.result();
+      if (drain == gx::fifo::PollStatus::Failed) {
+        g_generationLifecycle.fail();
+        if (auto state = h700::presentation_state()) state->fail("FIFO tail drain failed during shutdown");
+      }
+    }
+    if (g_nativeFrame) {
+      if (!g_generationLifecycle.failed() && gfx::recording_active()) {
+        // FIFO has acknowledged its whole tail. Retain final recording jobs instead of
+        // waiting for render capacity on main; normal accepted frames are not cancelled.
+        if (!g_shutdownFrameTail.capture([] { end_frame(true); })) return unknown("Frame tail capture failed");
+        g_shutdownTailCaptured = true;
+      } else { (void)h700::abort_frame(*g_nativeFrame); g_nativeFrame.reset(); }
+    }
+    if (g_shutdownTailCaptured) {
+      const auto tail = g_shutdownFrameTail.poll();
+      if (tail == gfx::render_worker::Outcome::Pending) return g_generationLifecycle.result();
+      if (tail != gfx::render_worker::Outcome::Completed) {
+        g_generationLifecycle.fail();
+        if (auto state = h700::presentation_state()) state->fail("Accepted frame tail admission failed");
+        gfx::render_worker::notify_failure();
+        (void)g_shutdownFrameTail.poll(); // explicit failure cancellation, never a healthy drain substitute
+      }
+    }
+    break;
+  }
+  case Stage::Fifo:
+    if (g_fifoStarted) {
+      gx::fifo::request_shutdown();
+      const auto result = gx::fifo::poll_shutdown();
+      if (result == gx::fifo::PollStatus::Pending) return g_generationLifecycle.result();
+      if (result == gx::fifo::PollStatus::Failed) return unknown("FIFO owner-thread unbind failed");
+    }
+    g_fifoStarted = false;
+    break;
+  case Stage::Render: {
+    // Only now may downstream admission close: FIFO and the main producer have finished.
+    gfx::render_worker::request_shutdown();
+    const auto result = gfx::render_worker::poll_shutdown();
+    if (result == gfx::render_worker::Outcome::Pending) return g_generationLifecycle.result();
+    if (result != gfx::render_worker::Outcome::Completed) return unknown("Render owner-thread unbind failed");
+    break;
+  }
+  case Stage::Compiler:
+    if (g_gfxStarted) {
+      gfx::request_pipeline_cache_shutdown();
+      const auto result = gfx::poll_pipeline_cache_shutdown();
+      if (result == gfx::PipelineShutdownStatus::Pending) return g_generationLifecycle.result();
+      if (result == gfx::PipelineShutdownStatus::Failed) return unknown("Compiler owner-thread unbind/join failed");
+    }
+    break;
+  case Stage::Maps:
+    if (g_gfxStarted && !gfx::retire_frame_resources_after_quiescence()) return g_generationLifecycle.result();
+    break;
+  case Stage::Native: {
+    // One final future covers ALL queue operations, including bootstrap with zero native frames.
+    // No Submit is added. On failure retain the obligation through Destroy/callback settlement.
+    const auto queue = webgpu::poll_h700_queue_drain();
+    if (queue == webgpu::QueueDrainStatus::Failed) g_generationLifecycle.fail();
+    if (!g_generationLifecycle.failed() &&
+        (queue == webgpu::QueueDrainStatus::Pending || !h700::native_frames_drained()))
+      return g_generationLifecycle.result();
+    break;
+  }
+  case Stage::Holders:
+#ifdef AURORA_ENABLE_RMLUI
+    if (g_rmlStarted) { rmlui::shutdown(); g_rmlStarted = false; }
+#endif
+    if (g_uiStarted) { imgui::shutdown(); g_uiStarted = false; }
+    if (g_gfxStarted) {
+      if (!gfx::release_frame_holders_after_quiescence()) return unknown("Frame/bootstrap holders not retired");
+      g_gfxStarted = false;
+    }
+    if (!webgpu::release_h700_app_holders()) return g_generationLifecycle.result();
+    break;
+  case Stage::Device: {
+    const auto result = webgpu::poll_h700_device_release();
+    if (result == webgpu::DeviceReleaseStatus::Pending) return g_generationLifecycle.result();
+    if (result == webgpu::DeviceReleaseStatus::Unknown) return unknown("Dawn final release/context proof failed");
+    break;
+  }
+  case Stage::Exports:
+    if (!h700::retire_native_after_dawn_release() || !h700::release_exports())
+      return unknown("Native failure ownership or export teardown incomplete");
+    break;
+  case Stage::Window:
+    if (g_inputStarted) { input::shutdown(); g_inputStarted = false; }
+    if (!window::can_destroy_window()) return unknown("Window/display release refused");
+    window::shutdown(); // SDL owns presenter/context/surface; resolver/libraries released last
+    if (h700::presentation_state()) return unknown("SDL/resolver final release incomplete");
+    g_initialFrame = false;
+    if (g_generationLifecycle.failed()) h700::forbid_next_generation();
+    break;
+  case Stage::Done: case Stage::Unknown: return g_generationLifecycle.result();
+  }
+  (void)g_generationLifecycle.advance(stage);
+  return g_generationLifecycle.result();
+}
+#endif
+
 void shutdown() noexcept {
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+  request_h700_shutdown();
+  while (true) {
+    const auto result = poll_h700_shutdown();
+    if (result.status != h700::ShutdownStatus::Pending) {
+      if (result.status != h700::ShutdownStatus::Released) Log.error("H700 shutdown ended with failure/unknown status");
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+#else
 #ifdef AURORA_ENABLE_GX
   if (!gx::fifo::shutdown()) {
     Log.error("FIFO processor/callback still owns resources; shutdown is incomplete");
@@ -409,6 +617,7 @@ void shutdown() noexcept {
 #endif
   input::shutdown();
   window::shutdown();
+#endif
 }
 
 const AuroraEvent* update() noexcept {
@@ -417,6 +626,9 @@ const AuroraEvent* update() noexcept {
   if (g_initialFrame) {
     g_initialFrame = false;
     input::initialize();
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+    g_inputStarted = true;
+#endif
   }
 #ifdef AURORA_ENABLE_GX
   gx::update();
@@ -525,7 +737,7 @@ bool begin_frame() noexcept {
   return true;
 }
 
-void end_frame() noexcept {
+void end_frame(bool fifoDrained = false) noexcept {
   ZoneScoped;
   // The frames just after an EFB resize, timed for its log line (webgpu::resize_swapchain).
   struct ResizeFrameTimer {
@@ -550,7 +762,7 @@ void end_frame() noexcept {
   }
 #endif
   phase::set(phase::Main, "end_frame (recording and queueing the frame)");
-  if (!gx::fifo::drain() || !gx::fifo::end_frame()) {
+  if ((!fifoDrained && !gx::fifo::drain()) || !gx::fifo::end_frame()) {
     // The FIFO processor may still reference the active recorder/packet. IG-11
     // retires those only after producer and downstream quiescence, never here.
     gfx::render_worker::notify_failure();
@@ -793,6 +1005,11 @@ void end_frame() noexcept {
 #endif
 }
 } // namespace
+
+#if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
+h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }
+#endif
 
 void request_screenshot() noexcept {
 #ifdef AURORA_ENABLE_GX
