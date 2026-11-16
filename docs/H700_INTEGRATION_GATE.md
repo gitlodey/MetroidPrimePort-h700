@@ -1,8 +1,8 @@
-# H700 integration gate — IG‑13 local PASS / IG‑14 physical display FAIL
+# H700 integration gate — IG‑13 local PASS / IG‑14 manual-run PASS с ограничениями
 
 **Дата:** 2026-11-16. **Source revision:** `6a58db6e3a71dac843a02eb616cc8e149ec0f72c` (IG‑12 accepted).
 
-**IG‑13: LOCAL READINESS PASS. IG‑14: NOT PASS — physical display FAIL.** Программные readback/threading/lifetime checks исходного SSH-run прошли, но пользователь видел только меню ОС. Это не отсутствие подтверждения: видимый вывод не состоялся. По новому запросу оставлен отдельный manual Ports launcher; его graphics run пока не выполнен агентом.
+**IG‑13: LOCAL READINESS PASS. IG‑14: последний корректный manual run — PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил нормальный видимый запуск; последний сохранённый run завершил оба поколения с exit0. Из четырёх сохранённых ручных runs три остаются incomplete (`real_overlap=0`, exit1), не переименованы в PASS. Успех одного прогона не означает повторяемость4/4, готовность полной игры или30FPS.
 
 Ни один runtime-критерий §5 не объявлялся выполненным только по локальной сборке IG-13. Subsequent actual device run и доказательства IG-14 приведены ниже; это не приёмка полной игры или FPS.
 
@@ -117,7 +117,7 @@ Ignored `build/h700-integration-ig14/`: `device-run.log`, `run-exit.json`, `tech
 
 **Последующее сообщение пользователя: на экране всё время было меню ОС, демка не отображалась. Визуальная часть FAIL, полный IG-14 NOT PASS.** Native/post-blit readback не доказывает scanout на физическую панель. Прежний статус visual pending заменён этим фактическим наблюдением; программное evidence не удалено и не переименовано в полный PASS. Остальной перенос игры заблокирован.
 
-## Повтор через меню muOS — launcher установлен, graphics ожидает пользователя
+## Повтор через меню muOS — launcher и результаты ручных запусков
 
 Пользователь разрешил повтор либо оставить `.sh` для самостоятельного запуска. Выбран отдельный manual launcher, без изменений renderer/binaries и без второго SSH graphics run.
 
@@ -128,4 +128,19 @@ Ignored `build/h700-integration-ig14/`: `device-run.log`, `run-exit.json`, `tech
 - Исходный bounded scenario и app60s/watchdog90s не меняются; `setsid` отделяет timeout/driver от frontend. Не убивает menu, не правит framebuffer/sysfs/governors/firmware и не читает assets/cards. Выход0 сам по себе не закрывает physical-display criterion.
 - Каждый run пишет свежие `ROMS/Ports/.h700-integration-test/runs/run.*/{launcher.log,driver.log,driver.exit,result.txt,firmware-after.log,results/}`; `latest-run.txt` указывает последний. Старые результаты не удаляются. Установка оставлена по прямому запросу пользователя; это не забытый cleanup первого временного run.
 - Проверки: **7/7 новых CPU launcher tests и30/30 всех helper tests PASS** в прежнем offline ARM64 image; только shell stand-ins, не Aurora/GPU. На device проверены transfer/payload/baseline hashes, `sh -n`, help и отсутствие created run/lock на момент установки. Read-only review blockers не нашёл. Ignored installation evidence: `build/h700-integration-ig14/manual/`, без endpoint/session details в Git.
-- Удаление после приёмки: убрать только наш `H700 Integration Test.sh` и `.h700-integration-test/` после получения logs и проверки отсутствия активного diagnostic процесса. Сейчас они намеренно остаются для ручного запуска. **Физический вывод повторно не проверен; ждём наблюдение пользователя и новые logs.**
+- Удаление после приёмки: убрать только наш `H700 Integration Test.sh` и `.h700-integration-test/` после получения logs и проверки отсутствия активного diagnostic процесса. Сейчас они намеренно остаются для ручного запуска. На момент установки graphics не запускался агентом; последующие ручные наблюдения и logs приведены ниже.
+
+### Ручная проверка logs и уточнение пользователя
+
+Пользователь сообщил, что первый раз запускал script без выбранного PortMaster, затем после назначения всё было нормально. Этот initial frontend invocation не следует считать проверкой корректного штатного launcher path. При этом **три сохранённых exit1 не приписываются автоматически неверному core**: в каждом есть120rendered/Presented frames и2400successful native/post-blit samples; их конкретная причина неполного сценария — отсутствие тройного actual API overlap. Сопоставление каждого такого run с действиями по выбору core не установлено.
+
+| Сохранённый manual run | Итог |
+| --- | --- |
+| Последний, по `latest-run.txt` | exit0; gen1=120frames,4coldvariants,2imports,pressure4passes,real_overlap1; gen2=2frames,2imports,normal pending-stop завершён;2440samples PASS |
+| Остальные3, включая run со скриншотом | exit1 после gen1:120frames/Presented,4coldvariants,2imports,pressure4,pixels_ok1, но real_overlap0. Gen2 не запускался, эти runs **не PASS** |
+
+- Parent прочитал `driver.log`/`result.txt` и TSV; read-only reviewer отдельно проверил все4runs. В последнем actual3-thread API overlap **271947ns (~0.272ms)** после barrier-leave. Независимый pixel oracle —0LSB error, все markers exact; pending-stop того же compiler/render pipeline key и destruction6context lifetimes(1temporary+5Dawn) каждого поколения подтверждены.
+- Во всех4runs нет validation/EGL/GL errors/device-loss/timeout; firmware-after=unchanged. Остались известные slow-compilation/dynamic-limit/screensaver warnings. После завершения test process отсутствует, lock released, menu process работает. Запуски выполнял пользователь вручную; агент не делал новую graphics-серию для получения PASS.
+- По прямой срочной просьбе пользователя `fbgrab` снял demo с framebuffer, PNG скачан в ignored `build/h700-integration-ig14/manual/screen.png`. Это уже не меню ОС. Снимок не является дополнительным полным pixel oracle: на нём не видны все expected markers (верхний левый red/нижний центральный frame marker), причина отличия от GL/native samples не установлена. **Pixel-perfect физический scanout по одному `fbgrab` не заявляется.** Пользователь сообщил, что после правильного PortMaster запуска всё нормально; evidence screenshot сохраняется без ретуши/подмены.
+- Таким образом есть **один полный технический manual PASS + пользовательское подтверждение видимого штатного запуска**, но не4/4PASS и не гарантия детерминированного overlap. Исходный SSH physical-display failure остаётся историческим фактом, не доказывающим неработоспособность корректного Ports path. Повторные запуски/ослабление overlap criterion автоматически не выполняются.
+- Скачанные raw manual logs: ignored `build/h700-integration-ig14/manual/user-runs/`; очищенные `manual-runs-summary.json`/`latest-audit-summary.json`. Unique run paths/endpoint в Git не включены. Диагностическая установка остаётся по прежнему прямому запросу; после неё нужен отдельно согласованный план подключения полной игры.
