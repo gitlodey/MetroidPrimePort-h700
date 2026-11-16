@@ -864,6 +864,23 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
 }
 
 void initialize() noexcept {
+  const auto validateMixedTextureBudget = [](std::span<const wgpu::BindGroupLayoutEntry> textures,
+                                            const char* label) {
+    if constexpr (gfx::g_mixedFetch) {
+      const auto staticEntries = gfx::detail::static_bind_group_layout_entries(gfx::g_vertexFetchTexture);
+      const auto fragmentTextures = gfx::detail::sampled_texture_count(textures, wgpu::ShaderStage::Fragment);
+      const auto vertexTextures = gfx::detail::sampled_texture_count(textures, wgpu::ShaderStage::Vertex) +
+                                  gfx::detail::sampled_texture_count(staticEntries, wgpu::ShaderStage::Vertex);
+      if (webgpu::g_lightmapBinding || fragmentTextures != gfx::MixedSampledTextureBudget ||
+          vertexTextures > gfx::MixedSampledTextureBudget ||
+          gfx::detail::sampled_texture_count(staticEntries, wgpu::ShaderStage::Fragment) != 0) {
+        FATAL("H700 mixed {} texture budget mismatch: vertex {}, fragment {}, lightmap {}", label,
+              vertexTextures, fragmentTextures, webgpu::g_lightmapBinding);
+      }
+      Log.info("H700 mixed {} layout: {} vertex / {} fragment sampled textures, group2 bindings {}",
+               label, vertexTextures, fragmentTextures, textures.size());
+    }
+  };
   {
     std::array<wgpu::BindGroupLayoutEntry, kTextureBindings> textureEntries;
     // The PBR environment probe (GX_AURORA_COPY_PROBE_FACE)
@@ -949,6 +966,7 @@ void initialize() noexcept {
         .entryCount = texture_binding_count(),
         .entries = textureEntries.data(),
     };
+    validateMixedTextureBudget({textureEntries.data(), texture_binding_count()}, "normal");
     sTextureBindGroupLayout = g_device.CreateBindGroupLayout(&descriptor);
     // A shadow receiver's: the sun's shadow map and its comparison sampler in the froxel's slots
     textureEntries[kShadowMapBinding] = {
@@ -970,6 +988,7 @@ void initialize() noexcept {
         .entryCount = texture_binding_count(),
         .entries = textureEntries.data(),
     };
+    validateMixedTextureBudget({textureEntries.data(), texture_binding_count()}, "shadow receiver");
     sShadowTextureBindGroupLayout = g_device.CreateBindGroupLayout(&shadowDescriptor);
   }
   {

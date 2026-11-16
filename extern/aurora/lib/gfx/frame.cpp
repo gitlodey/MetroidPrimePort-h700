@@ -117,6 +117,17 @@ uint64_t fetch_aligned_buffer_size(StagingKind kind, uint64_t bytes) noexcept {
   return AURORA_ALIGN(bytes, FetchTextureRowBytes);
 }
 
+// Also covers the whole-buffer fragment binding after growth/resident/deferred sizing.
+void validate_mixed_buffer_size(uint64_t bytes, bool storageBinding, const char* label) {
+  if constexpr (g_mixedFetch) {
+    if (bytes > g_resources.limits.maxBufferSize ||
+        (storageBinding && bytes > g_resources.limits.maxStorageBufferBindingSize)) {
+      FATAL("H700 mixed buffer {} ({} bytes) exceeds granted buffer/binding limits {}/{}", label, bytes,
+            g_resources.limits.maxBufferSize, g_resources.limits.maxStorageBufferBindingSize);
+    }
+  }
+}
+
 // Creates the fetch texture mirroring `kind`'s device buffer of `bytes` bytes.
 void create_fetch_texture(StagingKind kind, uint64_t bytes) {
   const bool vertex = kind == StagingKind::Vertex;
@@ -145,16 +156,19 @@ void create_fetch_texture(StagingKind kind, uint64_t bytes) {
 }
 
 void create_static_bind_group() {
-  std::array<wgpu::BindGroupEntry, 2> entries{};
+  std::array<wgpu::BindGroupEntry, g_mixedFetch ? 3 : 2> entries{};
   for (size_t i = 0; i < entries.size(); ++i) {
     entries[i].binding = static_cast<uint32_t>(i);
   }
-  if (g_vertexFetchTexture) {
+  if (g_vertexFetchTexture || g_mixedFetch) {
     entries[0].textureView = g_resources.vertexFetchTextureView;
     entries[1].textureView = g_resources.storageFetchTextureView;
   } else {
     entries[0].buffer = g_resources.vertexBuffer;
     entries[1].buffer = g_resources.storageBuffer;
+  }
+  if constexpr (g_mixedFetch) {
+    entries[MixedFragmentStorageBinding].buffer = g_resources.storageBuffer;
   }
   const wgpu::BindGroupDescriptor bindGroupDescriptor{
       .label = "Static bind group",
@@ -582,6 +596,11 @@ void initialize() {
 
   // For uniform & storage buffer offset alignments
   g_device.GetLimits(&g_resources.limits);
+  if constexpr (g_mixedFetch) {
+    if (!g_vertexFetchTexture) {
+      FATAL("H700 mixed fetch requires both vertex texture mirrors");
+    }
+  }
 
   // The vertex and array buffers are bound whole as storage, and one staging buffer holds
   // a frame of everything, so the scale stops where the device does.
@@ -776,6 +795,7 @@ void initialize() {
     if (size <= 0) {
       return;
     }
+    validate_mixed_buffer_size(size, (usage & wgpu::BufferUsage::Storage) != wgpu::BufferUsage::None, label);
     const wgpu::BufferDescriptor descriptor{
         .label = label,
         .usage = usage,
@@ -820,30 +840,7 @@ void initialize() {
   }
 
   {
-    // The vertex and storage data as either whole read-only storage buffers or, in texture vertex
-    // fetch mode, textures the shaders textureLoad words from (resources.hpp).
-    const auto makeEntry = [](uint32_t binding, wgpu::ShaderStage visibility) {
-      wgpu::BindGroupLayoutEntry entry{
-          .binding = binding,
-          .visibility = visibility,
-      };
-      if (g_vertexFetchTexture) {
-        entry.texture =
-            wgpu::TextureBindingLayout{
-                .sampleType = wgpu::TextureSampleType::Uint,
-                .viewDimension = wgpu::TextureViewDimension::e2D,
-            };
-      } else {
-        entry.buffer =
-            wgpu::BufferBindingLayout{
-                .type = wgpu::BufferBindingType::ReadOnlyStorage,
-            };
-      }
-      return entry;
-    };
-    // Vertex data, then storage data.
-    const std::array layoutEntries{makeEntry(0, wgpu::ShaderStage::Vertex),
-                                   makeEntry(1, wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment)};
+    const auto layoutEntries = static_bind_group_layout_entries(g_vertexFetchTexture);
     const wgpu::BindGroupLayoutDescriptor layoutDesc{
         .label = "Static bind group layout",
         .entryCount = layoutEntries.size(),
@@ -1018,6 +1015,7 @@ void grow_frame_buffer(StagingKind kind, uint64_t need, const wgpu::CommandEncod
         .usage = shared.usage,
         .size = fetch_aligned_buffer_size(kind, base + grown),
     };
+    validate_mixed_buffer_size(descriptor.size, kind == StagingKind::Storage, shared.label);
     wgpu::Buffer buffer = g_device.CreateBuffer(&descriptor);
     wgpu::Buffer& current = g_resources.*shared.member;
     encoder.CopyBufferToBuffer(current, 0, buffer, 0, base + device);
@@ -1132,6 +1130,7 @@ void reserve_held_frame_buffers() {
           .size = fetch_aligned_buffer_size(buffer.kind,
                                             g_bufferSizes.base(buffer.kind) + g_bufferSizes.device(buffer.kind)),
       };
+      validate_mixed_buffer_size(descriptor.size, buffer.kind == StagingKind::Storage, buffer.label);
       g_resources.*buffer.member = g_device.CreateBuffer(&descriptor);
     }
     if (g_vertexFetchTexture) {

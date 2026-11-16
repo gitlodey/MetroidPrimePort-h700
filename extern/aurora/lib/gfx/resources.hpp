@@ -2,6 +2,9 @@
 
 #include "types.hpp"
 
+#include <array>
+#include <span>
+
 namespace aurora::gfx {
 inline constexpr bool UseTextureBuffer = true;
 inline constexpr uint64_t UniformBufferSize = 25165824; // 24 MiB
@@ -28,11 +31,25 @@ enum class StagingKind : uint8_t { Vertex, Uniform, Index, Storage };
 // creation (webgpu::initialize) from AURORA_VERTEX_FETCH_TEXTURE=1 or from the adapter's
 // compatibility-mode limits, and never changes after.
 extern bool g_vertexFetchTexture;
+// H700's permanent stage-specific contract. IG-05 uses this same immutable flag for
+// shader generation/cache identity; it is not a runtime fallback or an environment override.
+#ifdef AURORA_H700
+inline constexpr bool g_mixedFetch = true;
+#else
+inline constexpr bool g_mixedFetch = false;
+#endif
+inline constexpr uint32_t MixedSampledTextureBudget = 16;
+inline constexpr uint32_t MixedFragmentStorageBinding = 2;
+// A scale-1 frame's full staging allocation, including texture uploads (not a probe buffer).
+inline constexpr uint64_t MixedMinimumBufferSize =
+    VertexBufferSize + UniformBufferSize + IndexBufferSize + StorageBufferSize +
+    (UseTextureBuffer ? TextureUploadSize : 0);
 // Compute shaders: OpenGL 3.3 has none, so the two compute passes (the volumetric fog's froxels and
 // the depth peek readback) run as render passes over the same per-pixel math instead. Off by
 // default; fixed once at device creation (webgpu::initialize) from AURORA_NO_COMPUTE=1 or from the
 // adapter reporting no compute (0 workgroups per dimension or 0 invocations per workgroup), and
-// never changes after. Nothing may create a compute pipeline or a storage binding while it is set.
+// never changes after. Nothing may create a compute pipeline while it is set. In the H700
+// mixed profile the fragment storage binding is still required, independently of compute.
 extern bool g_noCompute;
 
 
@@ -142,6 +159,72 @@ Range resident_region(ResidentBuffer kind) noexcept;
 bool queue_resident_upload(ResidentBuffer kind, uint32_t offset, const uint8_t* data, size_t size);
 
 namespace detail {
+// Shared by the real layout creation and CPU contract tests. Both mirrors remain vertex-visible;
+// the fragment stage reads the original array buffer, never a third mirrored allocation.
+inline auto static_bind_group_layout_entries(bool textureFetch) {
+  std::array<wgpu::BindGroupLayoutEntry, g_mixedFetch ? 3 : 2> entries{};
+  for (uint32_t i = 0; i < 2; ++i) {
+    auto& entry = entries[i];
+    entry.binding = i;
+    entry.visibility = i == 0 || g_mixedFetch ? wgpu::ShaderStage::Vertex
+                                            : wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment;
+    if (textureFetch || g_mixedFetch) {
+      entry.texture = {.sampleType = wgpu::TextureSampleType::Uint,
+                       .viewDimension = wgpu::TextureViewDimension::e2D};
+    } else {
+      entry.buffer = {.type = wgpu::BufferBindingType::ReadOnlyStorage};
+    }
+  }
+  if constexpr (g_mixedFetch) {
+    entries[MixedFragmentStorageBinding] = {
+        .binding = MixedFragmentStorageBinding,
+        .visibility = wgpu::ShaderStage::Fragment,
+        .buffer = {.type = wgpu::BufferBindingType::ReadOnlyStorage},
+    };
+  }
+  return entries;
+}
+
+inline uint32_t sampled_texture_count(std::span<const wgpu::BindGroupLayoutEntry> entries,
+                                      wgpu::ShaderStage stage) noexcept {
+  uint32_t count = 0;
+  for (const auto& entry : entries) {
+    if ((entry.visibility & stage) != wgpu::ShaderStage::None &&
+        entry.texture.sampleType != wgpu::TextureSampleType::BindingNotUsed) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+// Checked on the adapter AND on the device's granted limits. Undefined is not evidence
+// of support. The baseline must fit before gfx's scale/resident sizing runs.
+inline bool mixed_fetch_limits_supported(const wgpu::Limits& limits,
+                                         const wgpu::CompatibilityModeLimits& compatibility,
+                                         bool noCompute) noexcept {
+  return limits.maxSampledTexturesPerShaderStage != WGPU_LIMIT_U32_UNDEFINED &&
+         limits.maxSampledTexturesPerShaderStage >= MixedSampledTextureBudget &&
+         limits.maxStorageBuffersPerShaderStage != WGPU_LIMIT_U32_UNDEFINED &&
+         limits.maxStorageBuffersPerShaderStage >= (noCompute ? 1u : 2u) &&
+         compatibility.maxStorageBuffersInVertexStage != WGPU_LIMIT_U32_UNDEFINED &&
+         compatibility.maxStorageBuffersInFragmentStage != WGPU_LIMIT_U32_UNDEFINED &&
+         compatibility.maxStorageBuffersInFragmentStage >= 1 &&
+         limits.maxStorageBufferBindingSize != WGPU_LIMIT_U64_UNDEFINED &&
+         limits.maxStorageBufferBindingSize >= StorageBufferSize &&
+         limits.maxBufferSize != WGPU_LIMIT_U64_UNDEFINED && limits.maxBufferSize >= MixedMinimumBufferSize &&
+         limits.maxTextureDimension2D != WGPU_LIMIT_U32_UNDEFINED && limits.maxTextureDimension2D >= 4096;
+}
+
+inline void request_mixed_fetch_limits(wgpu::Limits& limits, wgpu::CompatibilityModeLimits& compatibility,
+                                       bool noCompute) noexcept {
+  compatibility.maxStorageBuffersInVertexStage = 0;
+  compatibility.maxStorageBuffersInFragmentStage = 1;
+  limits.maxSampledTexturesPerShaderStage = MixedSampledTextureBudget;
+  limits.maxStorageBuffersPerShaderStage = noCompute ? 1u : 2u;
+  // Keep the supported binding-size/buffer limits requested by U: scaled, resident and
+  // growable buffers are sized against these, not against a synthetic 64 KiB window.
+}
+
 struct Resources {
   wgpu::Buffer vertexBuffer;
   wgpu::Buffer uniformBuffer;

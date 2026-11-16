@@ -1228,22 +1228,30 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     // compatibility-mode limit decides. Fixed for the life of the device, so the generated WGSL and
     // the bind group layout agree with it.
     uint32_t adapterVertexStorageBuffers = WGPU_LIMIT_U32_UNDEFINED;
+    wgpu::CompatibilityModeLimits probeCompatibility{wgpu::CompatibilityModeLimits::Init{}};
     {
       wgpu::Limits probeLimits{};
-      wgpu::CompatibilityModeLimits probeCompatibility{wgpu::CompatibilityModeLimits::Init{}};
       probeLimits.nextInChain = &probeCompatibility;
+#ifdef AURORA_H700
+      if (g_adapter.GetLimits(&probeLimits) != wgpu::Status::Success) {
+        Log.error("H700 mixed fetch: cannot query adapter compatibility limits");
+        return false;
+      }
+#else
       g_adapter.GetLimits(&probeLimits);
+#endif
       adapterVertexStorageBuffers = probeCompatibility.maxStorageBuffersInVertexStage;
     }
     const char* forceFetchTexture = std::getenv("AURORA_VERTEX_FETCH_TEXTURE");
     const bool forced = forceFetchTexture != nullptr && forceFetchTexture[0] == '1' && forceFetchTexture[1] == '\0';
     const bool adapterHasNone = adapterVertexStorageBuffers != WGPU_LIMIT_U32_UNDEFINED &&
                                 adapterVertexStorageBuffers < 2;
-    gfx::g_vertexFetchTexture = forced || adapterHasNone;
+    gfx::g_vertexFetchTexture = gfx::g_mixedFetch || forced || adapterHasNone;
     if (gfx::g_vertexFetchTexture) {
       Log.info("Vertex data from textures instead of vertex-stage storage buffers ({})",
-               forced ? "AURORA_VERTEX_FETCH_TEXTURE=1"
-                      : fmt::format("the adapter allows {} of them", adapterVertexStorageBuffers));
+               gfx::g_mixedFetch ? "h700-mixed-v1"
+               : forced ? "AURORA_VERTEX_FETCH_TEXTURE=1"
+                        : fmt::format("the adapter allows {} of them", adapterVertexStorageBuffers));
     } else {
       if (adapterVertexStorageBuffers == WGPU_LIMIT_U32_UNDEFINED) {
         Log.info("Vertex data from storage buffers (the adapter does not report vertex-stage storage buffers)");
@@ -1276,14 +1284,22 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     if (g_anisotropyCap < 16) {
       Log.info("Anisotropic filtering capped at {}x (OpenGL adapter without compute shaders)", g_anisotropyCap);
     }
-    // Storage buffers hold the vertex data and feed the compute passes; with both on their fallbacks
-    // nothing binds one, so require none (OpenGL 3.3 has no shader storage buffers at all).
-    const bool needStorageBuffers = !gfx::g_vertexFetchTexture || !gfx::g_noCompute;
+    // H700 always binds the fragment array SSBO, even without compute. Other profiles
+    // with both fallbacks need no SSBO (OpenGL 3.3 has none).
+    const bool needStorageBuffers = gfx::g_mixedFetch || !gfx::g_vertexFetchTexture || !gfx::g_noCompute;
+    if constexpr (gfx::g_mixedFetch) {
+      if (!gfx::detail::mixed_fetch_limits_supported(supportedLimits, probeCompatibility, gfx::g_noCompute)) {
+        Log.error("H700 mixed fetch unsupported: need vertex mirrors (4096-wide), 16 sampled textures, "
+                  "fragment SSBO >=1, storage binding >= {} bytes and buffer >= {} bytes; no fallback",
+                  gfx::StorageBufferSize, gfx::MixedMinimumBufferSize);
+        return false;
+      }
+    }
     wgpu::CompatibilityModeLimits compatibilityModeLimits{wgpu::CompatibilityModeLimits::Init{
         .maxStorageBuffersInVertexStage = gfx::g_vertexFetchTexture ? 0u : 2u,
         .maxStorageBuffersInFragmentStage = gfx::g_vertexFetchTexture ? 0u : 2u,
     }};
-    const wgpu::Limits requiredLimits{
+    wgpu::Limits requiredLimits{
         .nextInChain = &compatibilityModeLimits,
         // Use "best" supported limits
         .maxTextureDimension1D = supportedLimits.maxTextureDimension1D == 0 ? WGPU_LIMIT_U32_UNDEFINED
@@ -1309,6 +1325,9 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
             supportedLimits.maxBufferSize == 0 ? WGPU_LIMIT_U64_UNDEFINED : supportedLimits.maxBufferSize,
         .maxImmediateSize = sizeof(gx::DrawImmediateData),
     };
+    if constexpr (gfx::g_mixedFetch) {
+      gfx::detail::request_mixed_fetch_limits(requiredLimits, compatibilityModeLimits, gfx::g_noCompute);
+    }
     Log.info(
         "Using limits:"
         "\n  maxTextureDimension1D: {}"
@@ -1589,6 +1608,27 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     if (!g_device) {
       return false;
     }
+#endif
+#ifdef AURORA_H700
+    wgpu::Limits grantedLimits{};
+    wgpu::CompatibilityModeLimits grantedCompatibility{wgpu::CompatibilityModeLimits::Init{}};
+    grantedLimits.nextInChain = &grantedCompatibility;
+    if (g_device.GetLimits(&grantedLimits) != wgpu::Status::Success ||
+        !gfx::detail::mixed_fetch_limits_supported(grantedLimits, grantedCompatibility, gfx::g_noCompute) ||
+        grantedCompatibility.maxStorageBuffersInVertexStage != 0 ||
+        grantedLimits.maxStorageBufferBindingSize < requiredLimits.maxStorageBufferBindingSize ||
+        grantedLimits.maxBufferSize < requiredLimits.maxBufferSize ||
+        grantedLimits.maxTextureDimension2D < requiredLimits.maxTextureDimension2D) {
+      Log.error("H700 device did not grant the mixed-fetch resource contract; no fallback");
+      return false;
+    }
+    Log.info("Resource profile h700-mixed-v1: group0 b0/b1 vertex R32Uint mirrors, b2 fragment "
+             "ReadOnlyStorage (current U storageBuffer); group2 normal/shadow 16 textures, no lightmap. "
+             "Granted: sampled {}/stage, SSBO vertex {}/fragment {}, storage binding {} bytes, buffer {} bytes; "
+             "U scale-1 storage {} bytes, full staging ceiling {} bytes",
+             grantedLimits.maxSampledTexturesPerShaderStage, grantedCompatibility.maxStorageBuffersInVertexStage,
+             grantedCompatibility.maxStorageBuffersInFragmentStage, grantedLimits.maxStorageBufferBindingSize,
+             grantedLimits.maxBufferSize, gfx::StorageBufferSize, gfx::MixedMinimumBufferSize);
 #endif
     g_device.SetLoggingCallback(wgpu_log);
   }

@@ -32,6 +32,18 @@ target_compile_features(h700_presentation_state_tests PRIVATE cxx_std_20)
 target_link_libraries(h700_presentation_state_tests PRIVATE gtest_main Threads::Threads)
 gtest_discover_tests(h700_presentation_state_tests PROPERTIES TIMEOUT 10)
 
+if (AURORA_H700)
+  # Descriptor/limit helpers and source lifecycle hooks only: never creates a WebGPU device.
+  add_executable(h700_mixed_fetch_tests h700_mixed_fetch_test.cpp)
+  target_include_directories(h700_mixed_fetch_tests PRIVATE ../include ../lib)
+  target_compile_features(h700_mixed_fetch_tests PRIVATE cxx_std_20)
+  target_compile_definitions(h700_mixed_fetch_tests PRIVATE AURORA_H700 AURORA TARGET_PC
+    H700_MIXED_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../lib")
+  target_link_libraries(h700_mixed_fetch_tests PRIVATE
+    gtest_main fmt::fmt xxHash::xxhash dawn::dawncpp_headers ${AURORA_SDL3_TARGET})
+  gtest_discover_tests(h700_mixed_fetch_tests PROPERTIES TIMEOUT 10)
+endif ()
+
 add_executable(io_tests
   io_test.cpp
   ../lib/card/FileIO.cpp
