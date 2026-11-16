@@ -153,6 +153,7 @@ if (AURORA_ENABLE_GX)
     ../lib/gx/command_processor.cpp
     ../lib/gx/regs.cpp
     ../lib/gx/resident.cpp
+    ../lib/gfx/render_worker.cpp
     ../lib/thread.cpp
     # Display list reader/optimizer
     ../lib/gx/attr_fmt.cpp
@@ -169,7 +170,7 @@ if (AURORA_ENABLE_GX)
     ../lib/dolphin/gx
   )
 
-  target_compile_definitions(gx_fifo_tests PRIVATE AURORA TARGET_PC)
+  target_compile_definitions(gx_fifo_tests PRIVATE AURORA TARGET_PC AURORA_FIFO_TESTING)
 
   target_link_libraries(gx_fifo_tests PRIVATE
     gtest

@@ -713,7 +713,7 @@ void draw(const DrawDesc& desc, const Vertex* verts, uint32_t vertexCount, const
   // Before the textures resolve: the texture cache and the recorder belong to the FIFO thread (see
   // vfx.cpp draw_prims). The GX state the draw sees, and the scene it snapshots, are also those
   // after everything recorded so far.
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return;
   bool ok = true;
   const uint32_t normalId = register_texture(desc.normalMap, ok);
   const uint32_t sourceFlowId = register_texture(desc.sourceFlow, ok);

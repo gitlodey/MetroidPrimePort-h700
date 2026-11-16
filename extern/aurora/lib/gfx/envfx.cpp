@@ -477,7 +477,7 @@ bool draw(const DrawDesc& desc, const Instance* instances, uint32_t count) {
     return false;
   }
   // The GX state the draw sees is the one after everything recorded so far (vfx.cpp draw_prims).
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   if (!scene_hdr_pass_active()) {
     return false;
   }

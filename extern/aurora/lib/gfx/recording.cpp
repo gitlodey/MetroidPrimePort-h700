@@ -1355,7 +1355,7 @@ bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize) 
     return false;
   }
 
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
 
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("push_custom_draw: called outside an active render pass");
@@ -1400,7 +1400,7 @@ bool create_pass(uint32_t width, uint32_t height) {
     return false;
   }
 
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
 
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("create_pass: called outside an active render pass");
@@ -1453,7 +1453,7 @@ size_t current_frame_slot() noexcept { return g_recorder.frameSlot; }
 
 bool resolve_pass(const ResolveDesc& desc, ResolvedTargets& out) {
   out = {};
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
 
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("resolve_pass: called outside an active render pass");
@@ -1519,7 +1519,7 @@ bool push_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSi
     return false;
   }
 
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   return record_encoder_task(type, payload, payloadSize);
 }
 

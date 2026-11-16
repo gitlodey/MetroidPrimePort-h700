@@ -12,6 +12,7 @@
 #include "gfx/resources.hpp"
 #include "gfx/depth_peek.hpp"
 #include "gfx/recording.hpp"
+#include "gfx/render_worker.hpp"
 #include "gfx/tex_copy_conv.hpp"
 #include "gfx/tex_palette_conv.hpp"
 #include "gfx/texture.hpp"
@@ -265,9 +266,19 @@ bool touch_pipeline(PipelineRef ref) { return false; }
 gx::DrawData g_testLastDraw{};
 uint32_t g_testDrawCount = 0;
 std::atomic<uint32_t> g_testProcessedDrawCount{0};
+// Only the drawing endpoint is stubbed: FIFO backpressure tests use the real queue/wait hooks.
+std::atomic<render_worker::BoundedQueue*> g_testDownstreamQueue{nullptr};
+std::atomic_bool g_testDownstreamEntered{false};
+std::atomic_bool g_testDownstreamReturned{false};
 
 template <>
 void push_draw_command<gx::DrawData>(gx::DrawData data) {
+  if (auto* queue = g_testDownstreamQueue.load(std::memory_order_acquire)) {
+    g_testDownstreamEntered.store(true, std::memory_order_release);
+    const auto result = queue->push_result({});
+    g_testDownstreamReturned.store(true, std::memory_order_release);
+    if (result != render_worker::Outcome::Completed) return;
+  }
   g_testLastDraw = data;
   ++g_testDrawCount;
   g_testProcessedDrawCount.fetch_add(1, std::memory_order_release);

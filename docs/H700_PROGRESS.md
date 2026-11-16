@@ -2,9 +2,11 @@
 
 **Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-07 PASS, следующий шаг IG-08.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
+**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01…IG-08 PASS, следующий шаг IG-09.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код раннего slice меняется только в рамках утверждённых итераций; устройство в них не использовалось.
 
 ## Что готово
+
+- **IG-08:** FIFO drain/growth с progress вне buffer lock и честными failure outcomes; accepted continuations, tokens и draw-done порядок сохранены. **260/260 FIFO tests в обоих профилях**, H70031/non-H70025 regressions и compile/link PASS. [Результат](H700_INTEGRATION_PLAN.md#ig-08--pass-2026-11-16).
 
 - **IG-07:** progress-aware queue/frame/staging/growth waits вне locks, terminal outcomes и safe partial-acquire/map ownership. Accepted continuations не теряются; rejected jobs после stop не исполняются inline. **54/54 H700 +25/25 non-H700 CPU tests**, H700 link/full non-H700 compile PASS. [Результат](H700_INTEGRATION_PLAN.md#ig-07--pass-2026-11-16).
 
@@ -37,7 +39,7 @@
 
 ## Следующий шаг и согласование
 
-Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-08 после commit/push IG-07. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
+Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-09 после commit/push IG-08. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
 
 **В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
 

@@ -602,7 +602,7 @@ bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32
     }
   }
   // The sources' creates and the target's last reads must be in before the target changes.
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   BlendJob job;
   job.count = count;
   uint32_t size = 0;

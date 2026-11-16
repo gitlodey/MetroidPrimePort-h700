@@ -894,7 +894,7 @@ bool aurora_gpu_selftest_run(bool warmup) {
     results[i].recordMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     Cases[i].expect(expected[i]);
   }
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
 
   std::vector<gfx::TextureHandle> handles(CaseCount);
   for (size_t i = 0; i < CaseCount; ++i) {

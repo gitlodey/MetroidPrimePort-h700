@@ -360,7 +360,13 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
 
 #ifdef AURORA_ENABLE_GX
   gfx::initialize();
-  gx::fifo::init();
+  if (!gx::fifo::init()) {
+#ifdef AURORA_H700
+    if (auto state = h700::presentation_state()) state->fail("FIFO initialization failed");
+#endif
+    Log.error("FIFO initialization failed; resources retained for quiescence");
+    return {.backend = BACKEND_AUTO};
+  }
   imgui::create_context();
 #endif
   const auto size = window::get_window_size();
@@ -389,7 +395,10 @@ AuroraInfo initialize(int argc, char* argv[], const AuroraConfig& config) noexce
 
 void shutdown() noexcept {
 #ifdef AURORA_ENABLE_GX
-  gx::fifo::shutdown();
+  if (!gx::fifo::shutdown()) {
+    Log.error("FIFO processor/callback still owns resources; shutdown is incomplete");
+    return;
+  }
   gfx::render_worker::synchronize();
 #ifdef AURORA_ENABLE_RMLUI
   rmlui::shutdown();
@@ -489,12 +498,19 @@ bool begin_frame() noexcept {
     if (auto state = h700::presentation_state()) state->fail("H700 begin_frame while another frame is recording");
     return false;
   }
+#endif
+  if (!gx::fifo::begin_frame()) return false;
+#ifdef AURORA_H700
   const auto nativeFrame = h700::acquire_frame(); // reserve native credit BEFORE CPU recording/admission
-  if (!nativeFrame) return false;
+  if (!nativeFrame) {
+    (void)gx::fifo::end_frame();
+    return false;
+  }
   g_nativeFrame.emplace(*nativeFrame);
 #endif
   phase::set(phase::Main, "begin_frame (waiting for a frame slot)");
   if (!gfx::begin_frame()) {
+    (void)gx::fifo::end_frame();
 #ifdef AURORA_H700
     if (!h700::abort_frame(*g_nativeFrame)) {
       if (auto state = h700::presentation_state()) state->fail("H700 native admission rollback failed");
@@ -505,7 +521,6 @@ bool begin_frame() noexcept {
   }
   // A failed staging-buffer acquisition must not leave an ImGui frame open.
   imgui::new_frame(window::get_window_size());
-  gx::fifo::begin_frame();
 #endif
   return true;
 }
@@ -535,8 +550,16 @@ void end_frame() noexcept {
   }
 #endif
   phase::set(phase::Main, "end_frame (recording and queueing the frame)");
-  gx::fifo::drain();
-  gx::fifo::end_frame();
+  if (!gx::fifo::drain() || !gx::fifo::end_frame()) {
+    // The FIFO processor may still reference the active recorder/packet. IG-11
+    // retires those only after producer and downstream quiescence, never here.
+    gfx::render_worker::notify_failure();
+#ifdef AURORA_H700
+    (void)h700::abort_frame(*nativeFrame);
+    if (auto state = h700::presentation_state()) state->fail("FIFO frame drain failed before Submit");
+#endif
+    return;
+  }
   gx::texture::end_frame();
   gfx::finish();
   auto imguiDrawData = imgui::freeze();

@@ -8,6 +8,7 @@
 #include "gx/fifo.hpp"
 #include "gx/command_processor.hpp"
 #include "gfx/depth_peek.hpp"
+#include "gfx/render_worker.hpp"
 
 #include <cstring>
 #include <vector>
@@ -18,6 +19,8 @@ extern "C" void __GXSetDirtyState();
 class GXFifoTest : public ::testing::Test {
 protected:
   void SetUp() override {
+    ASSERT_TRUE(aurora::gfx::render_worker::prepare_bootstrap());
+    ASSERT_TRUE(aurora::gx::fifo::init());
     GXInit(nullptr, 0);
     aurora::gx::fifo::clear_buffer();
     aurora::gx::g_gxState = aurora::gx::GXState{};

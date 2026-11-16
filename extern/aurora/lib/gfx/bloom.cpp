@@ -1013,7 +1013,7 @@ bool measure_scene(float exposure) {
     }
   }
   // Pending FIFO commands first, so the measure reads what they draw.
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   if (!scene_hdr_pass_active() || !(exposure > 0.f)) {
     return false;
   }

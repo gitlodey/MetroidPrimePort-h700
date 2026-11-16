@@ -2,11 +2,14 @@
 
 #include "../internal.hpp"
 
+#include <atomic>
 #include <cstring>
 
 namespace aurora::gx::fifo {
 
 namespace detail {
+extern std::atomic_bool sFailed;
+extern bool sWritesOpen;
 extern uint8_t* sBufferData;
 extern uint32_t sBufferSize;
 extern uint32_t sBufferCapacity;
@@ -26,19 +29,26 @@ enum class ProcessingMode : uint8_t {
 };
 ProcessingMode processing_mode() noexcept;
 
-void init();
-void shutdown();
+bool init();
+// IG-11: finish accepted producers/drain BEFORE shutdown, keeping downstream admission open.
+// This joins the worker, not an unpublished tail. False retains processor/callback inputs.
+bool shutdown();
+bool is_quiescent() noexcept; // worker joined only; not FIFO/frame/compiler/map retirement
+bool failed() noexcept;
+uint64_t published_bytes() noexcept;
+uint64_t processed_bytes() noexcept;
 
-void begin_frame() noexcept;
-void end_frame() noexcept;
+bool begin_frame() noexcept;
+bool end_frame() noexcept;
 
 // Whether a frame is currently being recorded, i.e. publish() will be honored.
 bool frame_active() noexcept;
 
 // Out-of-line slow path: grows internal buffer then appends data
-void write_data_grow(const void* data, uint32_t length);
+bool write_data_grow(const void* data, uint32_t length);
 
 inline void write_data(const void* data, const uint32_t length) {
+  if (detail::sFailed.load(std::memory_order_acquire) || !detail::sWritesOpen) return;
   if (!detail::sInDisplayList)
     LIKELY {
       if (length <= detail::sBufferCapacity - detail::sBufferSize)
@@ -56,6 +66,7 @@ inline void write_data(const void* data, const uint32_t length) {
 }
 
 inline void write_u8(const uint8_t val) {
+  if (detail::sFailed.load(std::memory_order_acquire) || !detail::sWritesOpen) return;
   if (!detail::sInDisplayList)
     LIKELY {
       if (detail::sBufferSize < detail::sBufferCapacity)
@@ -107,12 +118,19 @@ void begin_display_list(uint8_t* buf, uint32_t size);
 uint32_t end_display_list();
 bool in_display_list();
 
-// Ensure all buffered commands have been processed.
-void drain();
+// Includes the unpublished tail. False preserves the buffer and watermarks for quiescence;
+// callers must not proceed with recorder/state mutation as if the range had completed.
+bool drain();
 
 // Internal buffer inspection
 const uint8_t* get_buffer_data();
 uint32_t get_buffer_size();
-void clear_buffer();
+bool clear_buffer();
+
+#ifdef AURORA_FIFO_TESTING
+namespace testing {
+bool try_buffer_lock();
+}
+#endif
 
 } // namespace aurora::gx::fifo

@@ -1960,7 +1960,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   // Before the slots resolve: the texture cache and the recorder belong to the FIFO thread, and a
   // texture created while it is between sealing a pass and starting the next one aborts the frame.
   // The GX state the draw sees is also the one after everything recorded so far.
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return;
   const Texture none{};
   uint32_t ids[SlotCount];
   bool ready = true;
@@ -2179,7 +2179,7 @@ void draw_indexed_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t 
 }
 
 void capture_scene(bool again) {
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return;
   if (is_offscreen()) {
     return;
   }
@@ -2233,7 +2233,7 @@ void capture_scene(bool again) {
 }
 
 bool begin_visor_effects() {
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   g_state.afterPost = false;
   if (is_offscreen() || scene_hdr_pass_active()) {
     return false;
@@ -2264,7 +2264,7 @@ bool begin_visor_effects() {
 }
 
 void end_visor_effects() {
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return;
   g_state.afterPost = false;
 }
 
@@ -2279,12 +2279,15 @@ wgpu::TextureView scene_copy_view(bool hdr) noexcept {
 }
 
 bool scene_copy_available() {
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return false;
   return static_cast<bool>(scene_copy_view(scene_hdr_pass_active()));
 }
 
 void render_target_size(uint32_t& width, uint32_t& height) {
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) {
+    width = height = 0;
+    return;
+  }
   const auto target = get_render_target_size();
   width = target.x;
   height = target.y;

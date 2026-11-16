@@ -153,9 +153,9 @@ void draw(uint64_t key, const float (*verts)[3], uint32_t vertexCount, bool dept
       return;
     }
   }
-  g_active.store(true, std::memory_order_release);
   // The matrices queued in the FIFO (SetModelMatrix's load) land in g_gxState only when it drains.
-  gx::fifo::drain();
+  if (!gx::fifo::drain()) return;
+  g_active.store(true, std::memory_order_release);
   // The vfx transform: clip = proj x pn x pos, the projection's z taken to the target's range.
   const auto& gx = gx::g_gxState;
   Mat4x4<float> proj = gx.proj;

@@ -206,7 +206,7 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-IG-01…IG-07 **PASS**; следующий шаг IG-08, IG-08…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01…IG-08 **PASS**; следующий шаг IG-09, IG-09…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
@@ -275,3 +275,10 @@ IG-01…IG-07 **PASS**; следующий шаг IG-08, IG-08…IG-13 не на
 - Hooks следующих итераций: `wait_healthy/progress_wait`, status-bearing `synchronize/try_gpu_synchronize`, `begin_draining/close_admission/is_quiescent`, packet/map inventory и explicit bootstrap reset. `is_quiescent` относится только к joined worker и его obligations, не всему поколению. Public afterSubmit/GX draw-done semantics не заменены.
 - **54/54 H700 targeted CPU/source tests PASS** (11 новых cases), **25/25 non-H700 CPU regressions PASS**; actual H700 driver compile/link и full non-H700 core/GX recompile (16+60 TU) PASS. Parent повторил H70054/54; independent read-only review blockers не нашёл. CLI help/version0, graphics/default2, diff check PASS.
 - Evidence: ignored `build/h700-integration-ig03/ig07-final-{handoff,commands,nonh700-inventory}.json`, соответствующие logs. Exact offline image, без GPU/device. Fixtures/stubs не доказывают Mali threading/runtime. Actual FIFO/compiler waits и full generation retirement остаются IG-08/09/11. Следующий шаг — IG-08.
+
+### IG-08 — PASS, 2026-11-16
+
+- Настоящие FIFO drain/growth/reset возвращают status; main try-lock/retry вызывает progress вне `sBufferMutex`. Terminal failure запрещает дальнейшие append/patch/publication, не очищает используемый buffer и не выдаёт незавершённый range за processed. Необходимые Aurora/recording/effect callers прекращают зависимый путь при failed drain.
+- Draining закрывает следующий frame root, сохраняя accepted frame continuations. Token ordering/unpublished tail и draw-done return-before-drain сохранены; processor публикует watermark только после callback return. `shutdown()` не освобождает inputs до фактического выхода processor, `is_quiescent()` означает только FIFO join. Для IG-11: accepted FIFO producers/tail drain завершаются до downstream close.
+- **260/260 FIFO CPU tests PASS в обоих профилях**, включая6 новых cases и настоящий FIFO→BoundedQueue backpressure/progress-outside-lock; H700 wait/source31/31 и non-H700 wait25/25 PASS. H700 driver compile/link, full non-H700 core/GX recompile16+60TU PASS. Parent повторил FIFO260/260; independent read-only review blockers не нашёл. CLI0/0/2 и diff check PASS.
+- Evidence: ignored `build/h700-integration-ig03/ig08-reviewed-{handoff,commands,nonh700-inventory}.json`, logs. Exact offline image; GPU/device не запускались. Game skinning не затронут, compiler waits/full teardown — IG-09/11, runtime доказательств пока нет. Следующий шаг — IG-09.

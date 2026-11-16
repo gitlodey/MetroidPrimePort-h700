@@ -21,6 +21,9 @@ namespace aurora::gfx {
 extern uint32_t g_testDrawCount;
 extern bool g_testStorageFull;
 extern std::atomic<uint32_t> g_testProcessedDrawCount;
+extern std::atomic<render_worker::BoundedQueue*> g_testDownstreamQueue;
+extern std::atomic_bool g_testDownstreamEntered;
+extern std::atomic_bool g_testDownstreamReturned;
 namespace testing {
 extern std::atomic<uint32_t> beginOffscreenCount;
 extern std::atomic<uint32_t> endOffscreenCount;
@@ -357,6 +360,210 @@ TEST_F(GXFifoTest, DisplayListCallPublishesAtCompleteBoundary) {
   aurora::gx::fifo::shutdown();
 
   EXPECT_EQ(g_gxState.bpRegCache[0x41], 0x41123456u);
+}
+
+// A real FIFO processor feeds a real bounded render queue here; only the draw endpoint
+// is a CPU stub. No device/context is created, and this is not GPU execution evidence.
+class GXFifoWaitTest : public GXFifoTest {
+protected:
+  std::atomic_bool healthy{true};
+  std::unique_ptr<aurora::gfx::render_worker::BoundedQueue> downstream;
+  uint32_t progressCount = 0;
+  bool progressSawUnlockedBuffer = false;
+
+  void install_progress(bool failWait = false) {
+    const auto main = std::this_thread::get_id();
+    aurora::gfx::render_worker::set_wait_hooks({
+        .main = main,
+        .healthy = [this] { return healthy.load(std::memory_order_acquire); },
+        .progress = [this, main, failWait] {
+          EXPECT_EQ(std::this_thread::get_id(), main);
+          ++progressCount;
+          if (failWait) {
+            healthy.store(false, std::memory_order_release);
+            return;
+          }
+          bool closed = false;
+          (void)downstream->pop_for(std::chrono::milliseconds{0}, closed);
+          EXPECT_TRUE(wait_for(aurora::gfx::g_testDownstreamReturned, true));
+          const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+          // The processor initially holds the mutex. Let it finish the published batch,
+          // then prove that this progress invocation itself does not own that mutex.
+          while (!(progressSawUnlockedBuffer = aurora::gx::fifo::testing::try_buffer_lock()) &&
+                 std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+          EXPECT_TRUE(progressSawUnlockedBuffer);
+        },
+    });
+  }
+
+  bool block_draw() {
+    using namespace aurora;
+    downstream = std::make_unique<gfx::render_worker::BoundedQueue>(1);
+    if (!downstream->push({})) return false;
+    gfx::g_testDownstreamEntered.store(false, std::memory_order_relaxed);
+    gfx::g_testDownstreamReturned.store(false, std::memory_order_relaxed);
+    gfx::g_testDownstreamQueue.store(downstream.get(), std::memory_order_release);
+    if (!gx::fifo::begin_frame()) return false;
+    GXClearVtxDesc();
+    GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+    GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_U8, 0);
+    GXBegin(GX_TRIANGLES, GX_VTXFMT0, 3);
+    GXPosition3u8(0, 1, 2);
+    GXPosition3u8(3, 4, 5);
+    GXPosition3u8(6, 7, 8);
+    GXEnd();
+    return wait_for(gfx::g_testDownstreamEntered, true);
+  }
+
+  void TearDown() override {
+    // Even an assertion failure must not destroy a queue/callback capture still in use.
+    sBlockingCallbackMayReturn.store(true, std::memory_order_release);
+    if (downstream) downstream->close();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{2};
+    while (!aurora::gx::fifo::shutdown() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    ASSERT_TRUE(aurora::gx::fifo::is_quiescent());
+    aurora::gx::fifo::set_draw_done_callback(nullptr);
+    aurora::gfx::g_testDownstreamQueue.store(nullptr, std::memory_order_release);
+    EXPECT_TRUE(aurora::gfx::render_worker::prepare_bootstrap());
+  }
+};
+
+TEST_F(GXFifoWaitTest, GrowthProgressUnblocksActualDownstreamOutsideBufferLock) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(block_draw());
+  install_progress();
+  const auto published = published_bytes();
+  const std::vector<u8> nops(70 * 1024, GX_NOP);
+  ASSERT_TRUE(write_data_grow(nops.data(), static_cast<u32>(nops.size())));
+  EXPECT_GT(progressCount, 0u);
+  EXPECT_TRUE(progressSawUnlockedBuffer);
+  EXPECT_EQ(published_bytes(), published); // growth never publishes its unfinished tail
+  const std::array<u8, 5> tail{GX_LOAD_BP_REG, 0x41, 0x12, 0x34, 0x56};
+  write_data(tail.data(), tail.size());
+  EXPECT_FALSE(g_gxState.bpRegValid.test(0x41));
+  ASSERT_TRUE(drain());
+  EXPECT_EQ(g_gxState.bpRegCache[0x41], 0x41123456u);
+  EXPECT_EQ(processed_bytes(), published_bytes());
+  EXPECT_TRUE(end_frame());
+}
+
+TEST_F(GXFifoWaitTest, DrainProgressUnblocksActualDownstreamAndUnpublishedTail) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(block_draw());
+  install_progress();
+  const std::array<u8, 5> tail{GX_LOAD_BP_REG, 0x41, 0x65, 0x43, 0x21};
+  write_data(tail.data(), tail.size());
+  ASSERT_TRUE(drain());
+  EXPECT_GT(progressCount, 0u);
+  EXPECT_TRUE(progressSawUnlockedBuffer);
+  EXPECT_EQ(g_gxState.bpRegCache[0x41], 0x41654321u);
+  EXPECT_EQ(get_buffer_size(), 0u);
+  EXPECT_EQ(processed_bytes(), published_bytes());
+  EXPECT_TRUE(end_frame());
+}
+
+TEST_F(GXFifoWaitTest, FailedGrowthRetainsBufferAndDoesNotAcknowledgeOrAppend) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(block_draw());
+  const auto* buffer = get_buffer_data();
+  const auto size = get_buffer_size();
+  const auto capacity = detail::sBufferCapacity;
+  const auto published = published_bytes();
+  const auto processed = processed_bytes();
+  install_progress(true);
+  const std::vector<u8> nops(70 * 1024, GX_NOP);
+  EXPECT_FALSE(write_data_grow(nops.data(), static_cast<u32>(nops.size())));
+  EXPECT_GT(progressCount, 0u);
+  EXPECT_TRUE(failed());
+  EXPECT_FALSE(drain());
+  EXPECT_FALSE(clear_buffer());
+  EXPECT_FALSE(end_frame());
+  write_u8(GX_NOP);
+  write_data(nops.data(), 1);
+  patch_u32(UINT32_MAX, 0); // a failed partial command must not be patched/published
+  publish();
+  EXPECT_EQ(get_buffer_data(), buffer);
+  EXPECT_EQ(get_buffer_size(), size);
+  EXPECT_EQ(detail::sBufferCapacity, capacity);
+  EXPECT_EQ(published_bytes(), published);
+  EXPECT_EQ(processed_bytes(), processed);
+}
+
+TEST_F(GXFifoWaitTest, FailedDrainRetainsRunningCallbackUntilActualJoin) {
+  using namespace aurora::gx::fifo;
+  sBlockingCallbackEntered.store(false, std::memory_order_relaxed);
+  sBlockingCallbackMayReturn.store(false, std::memory_order_relaxed);
+  sBlockingCallbackReturned.store(false, std::memory_order_relaxed);
+  ASSERT_TRUE(begin_frame());
+  GXSetDrawDoneCallback(blocking_draw_done_callback);
+  GXSetDrawDone();
+  ASSERT_TRUE(wait_for(sBlockingCallbackEntered, true));
+  const auto* buffer = get_buffer_data();
+  const auto size = get_buffer_size();
+  const auto published = published_bytes();
+  const auto processed = processed_bytes();
+  install_progress(true);
+  EXPECT_FALSE(drain());
+  EXPECT_FALSE(shutdown());
+  EXPECT_FALSE(is_quiescent());
+  EXPECT_FALSE(init());
+  EXPECT_EQ(get_buffer_data(), buffer);
+  EXPECT_EQ(get_buffer_size(), size);
+  EXPECT_EQ(published_bytes(), published);
+  EXPECT_EQ(processed_bytes(), processed);
+  EXPECT_FALSE(sBlockingCallbackReturned.load(std::memory_order_acquire));
+  sBlockingCallbackMayReturn.store(true, std::memory_order_release);
+  ASSERT_TRUE(wait_for(sBlockingCallbackReturned, true));
+  // TearDown performs the real join; callback return is not a false success watermark.
+  EXPECT_EQ(processed_bytes(), processed);
+}
+
+TEST_F(GXFifoWaitTest, WorkerJoinProgressPreservesUnpublishedTailAndRejectsNewRoot) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(block_draw());
+  install_progress();
+  const std::array<u8, 5> tail{GX_LOAD_BP_REG, 0x41, 0xAB, 0xCD, 0xEF};
+  write_data(tail.data(), tail.size());
+  const auto* buffer = get_buffer_data();
+  const auto size = get_buffer_size();
+  const auto published = published_bytes();
+  ASSERT_TRUE(shutdown());
+  EXPECT_TRUE(is_quiescent());
+  EXPECT_GT(progressCount, 0u);
+  EXPECT_TRUE(progressSawUnlockedBuffer);
+  EXPECT_EQ(processed_bytes(), published); // accepted published work drained before join
+  EXPECT_FALSE(g_gxState.bpRegValid.test(0x41));
+  EXPECT_FALSE(begin_frame());
+  write_u8(GX_NOP);
+  write_data(tail.data(), tail.size());
+  publish();
+  EXPECT_FALSE(drain()); // stopped worker cannot falsely acknowledge (or wait forever on) the tail
+  EXPECT_EQ(get_buffer_data(), buffer);
+  EXPECT_EQ(get_buffer_size(), size);
+  EXPECT_EQ(published_bytes(), published);
+  EXPECT_EQ(processed_bytes(), published);
+}
+
+TEST_F(GXFifoWaitTest, DrainingPreservesAcceptedTokensAndTailButClosesNextRoot) {
+  using namespace aurora::gx::fifo;
+  ASSERT_TRUE(begin_frame());
+  aurora::gfx::render_worker::begin_draining();
+  for (u16 token = 1; token <= 100; ++token) GXSetDrawSync(token);
+  const std::array<u8, 5> tail{GX_LOAD_BP_REG, 0x41, 0xAB, 0xCD, 0xEF};
+  write_data(tail.data(), tail.size());
+  ASSERT_TRUE(drain());
+  EXPECT_EQ(GXReadDrawSync(), 100u);
+  EXPECT_EQ(g_gxState.bpRegCache[0x41], 0x41ABCDEFu);
+  ASSERT_TRUE(end_frame());
+  EXPECT_FALSE(begin_frame());
+  const auto published = published_bytes();
+  write_u8(GX_NOP);
+  write_data(tail.data(), tail.size());
+  EXPECT_EQ(get_buffer_size(), 0u);
+  EXPECT_EQ(published_bytes(), published);
+  EXPECT_TRUE(drain());
+  EXPECT_FALSE(failed());
 }
 
 // ============================================================================
