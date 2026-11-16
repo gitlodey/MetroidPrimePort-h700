@@ -2,6 +2,7 @@
 
 #include "../internal.hpp"
 #include "gpu.hpp"
+#include "../gfx/map_completion.hpp"
 
 #include <tracy/Tracy.hpp>
 
@@ -16,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -70,6 +72,7 @@ struct Slot {
   uint32_t queryCount = 0; // queries resolved into the readback
   int64_t submitNs = 0;
   std::atomic<SlotState> state{SlotState::Free};
+  std::shared_ptr<gfx::detail::MapCompletion> completion;
 };
 
 struct TimestampBounds {
@@ -93,6 +96,8 @@ size_t g_recordSlot = 0;
 size_t g_emitSlot = 0;
 bool g_frameActive = false;
 bool g_framePending = false;
+std::array<wgpu::PassTimestampWrites, 4> g_passWrites;
+size_t g_passWritesIndex = 0;
 uint32_t g_zoneCount = 0;
 
 struct Accum {
@@ -429,20 +434,55 @@ void initialize() {
   Log.info("GPU profiling enabled ({} zones max)", MaxZones);
 }
 
-void shutdown() {
+size_t pending_maps() noexcept {
+  size_t count = 0;
+  for (const auto& slot : g_slots) if (slot.completion && slot.completion->pending()) ++count;
+  return count;
+}
+
+bool shutdown() {
+  if (pending_maps() != 0) {
+    Log.error("GPU profiler retirement incomplete: map callbacks still pending");
+    return false;
+  }
+  poll_maps();
+  g_passWrites = {}; // these descriptor copies also retain the query set
+  g_passWritesIndex = 0;
   g_querySet = {};
   g_resolveBuffer = {};
   for (auto& slot : g_slots) {
+    if (slot.completion) {
+      if (slot.completion->succeeded()) slot.readback.Unmap();
+      (void)slot.completion->retire();
+    }
     slot.readback = {};
     slot.events.clear();
+    slot.completion.reset();
     slot.passCount = 0;
+    slot.queryCount = 0;
+    slot.submitNs = 0;
     slot.state = SlotState::Free;
   }
+  g_recordSlot = g_emitSlot = 0;
+  g_zoneCount = 0;
+  g_accum.clear();
+  g_accumSpanNs = 0;
+  g_accumFrames = 0;
+  {
+    std::lock_guard lock{g_resultMutex};
+    g_result = {};
+  }
+#ifdef TRACY_ENABLE
+  g_contextEmitted = false;
+  g_queryId = 0;
+  g_lastEmittedTs = g_lastFrameEnd = 0;
+#endif
   g_enabled = false;
   g_timestampsEnabled = false;
   g_active = false;
   g_frameActive = false;
   g_framePending = false;
+  return true;
 }
 
 void frame_begin(const wgpu::CommandEncoder& encoder) {
@@ -509,10 +549,12 @@ void after_submit() {
     auto& slot = record_slot();
     slot.submitNs = now_ns();
     slot.state = SlotState::InFlight;
+    auto completion = std::make_shared<gfx::detail::MapCompletion>();
+    slot.completion = completion;
     slot.readback.MapAsync(wgpu::MapMode::Read, 0, slot.queryCount * sizeof(uint64_t), wgpu::CallbackMode::AllowSpontaneous,
-                           [&slot](wgpu::MapAsyncStatus status, wgpu::StringView) {
-                             slot.state =
-                                 status == wgpu::MapAsyncStatus::Success ? SlotState::Mapped : SlotState::Failed;
+                           [completion](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                             if (!completion->begin_completion()) return;
+                             (void)completion->finish_completion(status == wgpu::MapAsyncStatus::Success);
                            });
     g_recordSlot = (g_recordSlot + 1) % RingDepth;
   }
@@ -520,8 +562,14 @@ void after_submit() {
     ZoneScopedN("ProcessEvents");
     g_instance.ProcessEvents();
   }
+  poll_maps();
+}
+
+void poll_maps() {
   while (true) {
     auto& slot = g_slots[g_emitSlot];
+    if (slot.state == SlotState::InFlight && slot.completion && !slot.completion->pending())
+      slot.state = slot.completion->succeeded() ? SlotState::Mapped : SlotState::Failed;
     const auto state = slot.state.load(std::memory_order_acquire);
     if (state == SlotState::Mapped) {
       process_frame(slot);
@@ -529,6 +577,8 @@ void after_submit() {
     } else if (state != SlotState::Failed) {
       break;
     }
+    if (slot.completion) (void)slot.completion->retire();
+    slot.completion.reset();
     slot.state.store(SlotState::Free, std::memory_order_release);
     g_emitSlot = (g_emitSlot + 1) % RingDepth;
   }
@@ -544,9 +594,7 @@ const wgpu::PassTimestampWrites* pass_writes(std::string_view name) {
   slot.events.push_back({nullptr, index * 2 + 1, EventKind::End});
   ++slot.passCount;
 
-  static std::array<wgpu::PassTimestampWrites, 4> writes;
-  static size_t writesIndex = 0;
-  auto& out = writes[writesIndex++ % writes.size()];
+  auto& out = g_passWrites[g_passWritesIndex++ % g_passWrites.size()];
   out = {
       .querySet = g_querySet,
       .beginningOfPassWriteIndex = index * 2,

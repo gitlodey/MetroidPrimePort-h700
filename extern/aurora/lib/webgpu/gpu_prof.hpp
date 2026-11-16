@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string_view>
 #include <vector>
 
@@ -26,7 +27,10 @@ bool supported();
 Result results();
 
 void initialize();
-void shutdown();
+// No reset/release while a real MapAsync callback is pending. No Submit is issued here.
+bool shutdown();
+void poll_maps(); // owner thread; usable after the last Submit, independent of after_submit
+size_t pending_maps() noexcept; // owner thread, or after producer/worker quiescence
 
 void frame_begin(const wgpu::CommandEncoder& encoder);
 void frame_end(const wgpu::CommandEncoder& encoder);

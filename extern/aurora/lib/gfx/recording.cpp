@@ -877,18 +877,10 @@ void shutdown_recording() {
   for (auto& pool : g_passSnapshotPools) {
     pool = {};
   }
-  g_recorder.currentRenderPass = UINT32_MAX;
   g_offscreenCache.clear();
-  g_recorder.offscreenColor = {};
-  g_recorder.offscreenDepth = {};
-  g_recorder.suspendedEfbPass.reset();
-  g_recorder.heldDepth.reset();
-  g_recorder.inOffscreen = false;
-  g_recorder.hdrScene = false;
-  g_recorder.hdrSceneCleared = false;
-  g_recorder.packet = nullptr;
-  g_recorder.frameSlot = 0;
-  g_recorder.suppressRenderWorker = false;
+  // Also drops suspended-pass holders and abandoned debug/viewport state without
+  // finish()/enqueue. The caller must have quiesced FIFO/render users of the packet.
+  g_recorder = FrameRecorder{};
 }
 
 namespace testing {

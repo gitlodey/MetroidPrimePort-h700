@@ -206,7 +206,7 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-IG-01…IG-09 **PASS**; следующий шаг IG-10, IG-10…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01…IG-10 **PASS**; следующий шаг IG-11, IG-11…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
@@ -290,3 +290,27 @@ IG-01…IG-09 **PASS**; следующий шаг IG-10, IG-10…IG-13 не на
 - Hooks: `begin_pipeline_cache_draining()` закрывает background roots; `drain_pipeline_cache()` вызывается только после upstream producer quiescence и закрывает continuations. False не означает quiescence; `active_pipeline_compiles()`/`pipeline_cache_threads_joined()` не заменяют release всей generation.
 - **8/8 CPU wait/outcome/lifetime/source tests PASS**, H700 wait/recording/generator30/30, non-H70035/35 и FIFO260/260 в обоих профилях PASS. Actual H700 driver link и full non-H70016+60TU core/GX compile PASS; CLI0/0/2, diff check PASS. Parent повторил compiler8/8; independent read-only review blockers не нашёл.
 - Evidence: ignored `build/h700-integration-ig03/ig09-final-{handoff,commands,nonh700-inventory}.json`, logs. Exact offline ARM64 image, без GPU/device. Настоящие Mali compilation/overlap/active-call stop остаются IG-14; зависший driver call не считается завершённым по timeout. Следующий шаг — IG-10.
+
+### IG-10 — PASS, 2026-11-16
+
+- Request-owned `MapCompletion` учитывает pending/executing callback, one-shot outcome и retirement. Staging проверяет identity; profiler/vis-query callbacks не захватывают переиспользуемый slot. Cancelled waiter не равен completion. `pending_internal_maps()` покрывает staging/profiler/vis-query выбранного пути.
+- `retire_frame_resources_after_quiescence()` main-only после FIFO/render joins обслуживает callbacks без нового Submit, отказывает при pending/executing, затем unmap/reset и освобождает abandoned recorder/packets. Полный recorder reset включает suspended-pass holders. Profiler reset также удаляет QuerySet copies в `PassTimestampWrites`; vis-query reset guarded, lazy queries для теста не включались.
+- Source inventory выбранного пути (не live GPU allocation/release evidence):
+
+| Владелец | Создание / release point |
+| --- | --- |
+| Staging | 5 buffers/maps при init, remaps после кадров; callback settle/unmap/records retirement → buffers в `gfx::shutdown` |
+| Packets/recorder | Encoder, ops, targets/captures, snapshot/offscreen pools; normal completion либо reset после joins/maps без finish/enqueue |
+| GPU profiler | Conditional TimestampQuery bootstrap: QuerySet/resolve/4 readbacks даже при runtime profiling OFF; guarded shutdown и reset descriptor refs |
+| Vis-query | Lazy3 query/resolve/readback slots и pipelines; poll без Submit, guarded shutdown всех holders/results/registration |
+| Shared/mixed buffers | 4 shared buffers,2 mirrors/views, groups/layouts; существующий reset в `gfx::shutdown` после retirement |
+| Copy conversion | Bootstrap pipelines/layouts/samplers, conditional/lazy families; полный `tex_copy_conv::shutdown` |
+| Palette conversion | 3 bootstrap pipeline/layout pairs + sampler; `tex_palette_conv::shutdown` |
+| Depth-peek | Conditional core pipeline/layout; `depth_peek::shutdown`; optional snapshot/maps не активированы и вне map inventory |
+| GX | Empty texture/group, samplers/layouts и actual texture/copy caches; `gx::shutdown` + texture shutdown |
+| Resource/pipeline cache | Demand groups/samplers/pipelines/captures; cache reset после compiler/writer joins |
+| WebGPU | Copy/resampler/EFB и worker-target copies; partial-init holder release либо runtime shutdown; final generation order — IG-11 |
+| ImGui/native | Backend/font/textures/frozen captures и2 imports; ImGui shutdown после jobs, native release — IG-11 |
+
+- **10/10 новых retirement CPU/source cases PASS**, H700 related50/50, non-H70052/52, FIFO260/260 в обоих профилях; H700 link и full non-H70016+60TU compile PASS. Parent повторил10/10; independent read-only review blockers не нашёл. CLI0/0/2, diff check PASS.
+- Evidence: ignored `build/h700-integration-ig03/ig10-final-{handoff,commands,resource-inventory,nonh700-inventory}.json`, logs. Exact offline image, без GPU/device. Screenshots/selftest/overdraw/bloom/optional depth readbacks не включались. Пустые GPU holders в CPU fixture не доказывают release созданных объектов; final share-group release — IG-11, hardware proof — IG-14. Следующий шаг — IG-11.

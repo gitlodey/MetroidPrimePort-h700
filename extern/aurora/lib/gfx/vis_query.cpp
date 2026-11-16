@@ -7,6 +7,7 @@
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
 #include "recording.hpp"
+#include "map_completion.hpp"
 
 #include <aurora/gfx.hpp>
 
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <vector>
 
 #include <absl/container/flat_hash_map.h>
@@ -40,6 +42,7 @@ struct Slot {
   wgpu::Buffer resolve;
   wgpu::Buffer readback;
   std::atomic<State> state{State::Idle};
+  std::shared_ptr<gfx::detail::MapCompletion> completion;
   std::vector<uint64_t> keys; // per query index
 };
 
@@ -244,13 +247,13 @@ void after_submit() {
   for (auto& slot : g_slots) {
     if (slot.state.load(std::memory_order_acquire) == State::Resolved) {
       slot.state.store(State::InFlight, std::memory_order_release);
-      Slot* const target = &slot;
+      auto completion = std::make_shared<gfx::detail::MapCompletion>();
+      slot.completion = completion;
       slot.readback.MapAsync(wgpu::MapMode::Read, 0, slot.keys.size() * sizeof(uint64_t),
                              wgpu::CallbackMode::AllowSpontaneous,
-                             [target](wgpu::MapAsyncStatus status, wgpu::StringView) {
-                               target->state.store(status == wgpu::MapAsyncStatus::Success ? State::Mapped
-                                                                                           : State::Failed,
-                                                   std::memory_order_release);
+                             [completion](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                               if (!completion->begin_completion()) return;
+                               (void)completion->finish_completion(status == wgpu::MapAsyncStatus::Success);
                              });
     }
     inFlight = inFlight || slot.state.load(std::memory_order_acquire) == State::InFlight;
@@ -258,7 +261,13 @@ void after_submit() {
   if (inFlight) {
     webgpu::g_instance.ProcessEvents();
   }
+  poll_maps();
+}
+
+void poll_maps() {
   for (auto& slot : g_slots) {
+    if (slot.state == State::InFlight && slot.completion && !slot.completion->pending())
+      slot.state = slot.completion->succeeded() ? State::Mapped : State::Failed;
     const auto state = slot.state.load(std::memory_order_acquire);
     if (state == State::Mapped) {
       const auto* counts =
@@ -276,9 +285,43 @@ void after_submit() {
       Log.warn("occlusion query readback failed");
     }
     if (state == State::Mapped || state == State::Failed) {
+      if (slot.completion) (void)slot.completion->retire();
+      slot.completion.reset();
       slot.state.store(State::Idle, std::memory_order_release);
     }
   }
+}
+size_t pending_maps() noexcept {
+  size_t count = 0;
+  for (const auto& slot : g_slots) if (slot.completion && slot.completion->pending()) ++count;
+  return count;
+}
+
+bool shutdown() {
+  if (pending_maps() != 0) {
+    Log.error("Vis query retirement incomplete: map callbacks still pending");
+    return false;
+  }
+  poll_maps();
+  g_frameSlot = nullptr;
+  g_passOpen = false;
+  g_pipelines.clear();
+  for (auto& slot : g_slots) {
+    slot.querySet = {};
+    slot.resolve = {};
+    slot.readback = {};
+    slot.completion.reset();
+    slot.keys.clear();
+    slot.state = State::Idle;
+  }
+  {
+    std::lock_guard lock{g_resultMutex};
+    g_results.clear();
+    g_mapped = 0;
+  }
+  g_active.store(false, std::memory_order_release);
+  g_drawType = InvalidDrawType;
+  return true;
 }
 } // namespace detail
 } // namespace aurora::gfx::vis_query

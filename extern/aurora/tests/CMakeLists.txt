@@ -228,6 +228,7 @@ if (AURORA_ENABLE_GX)
   gtest_discover_tests(texture_replacement_streaming_tests)
 
   add_executable(render_worker_tests
+    map_completion_test.cpp
     pipeline_wait_test.cpp
     render_worker_test.cpp
     thread_test.cpp
@@ -239,7 +240,8 @@ if (AURORA_ENABLE_GX)
     ../lib
   )
   target_compile_definitions(render_worker_tests PRIVATE AURORA TARGET_PC
-    PIPELINE_CACHE_SOURCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/gfx/pipeline_cache.cpp")
+    PIPELINE_CACHE_SOURCE_FILE="${CMAKE_CURRENT_SOURCE_DIR}/../lib/gfx/pipeline_cache.cpp"
+    MAP_RETIREMENT_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../lib")
   target_link_libraries(render_worker_tests PRIVATE
     gtest
     gtest_main

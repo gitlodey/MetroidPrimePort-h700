@@ -40,6 +40,10 @@ bool frame_work_failed(size_t slot) noexcept;
 void fail_frame_work(size_t slot) noexcept;
 size_t pending_frame_packets() noexcept;
 size_t pending_staging_maps() noexcept;
+size_t pending_internal_maps() noexcept; // owner thread, or after producer/worker quiescence
+// Main only, no external locks: after FIFO/render joins, process existing callbacks, unmap,
+// reset per-frame/readback holders. False retains ownership; no extra Submit, no device release.
+bool retire_frame_resources_after_quiescence();
 // IG-11 only, after upstream producer quiescence, worker join and map retirement.
 bool retire_cancelled_frames_after_quiescence();
 bool try_gpu_synchronize();

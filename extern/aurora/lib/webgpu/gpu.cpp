@@ -964,11 +964,11 @@ bool surface_window_changed() {
 static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu);
 
 #ifdef AURORA_H700
-static void release_h700_init_holders() {
+static bool release_h700_init_holders() {
   // Bootstrap has not entered gfx::initialize or admitted jobs/maps. EFB publication
   // runs inline before the render worker starts, so no queued targets remain to drain.
   g_initialized = false;
-  gpu_prof::shutdown();
+  if (!gpu_prof::shutdown()) return false;
   g_CopyBindGroup = {};
   g_CopyPipeline = {};
   g_CopyPremultipliedAlphaPipeline = {};
@@ -982,6 +982,7 @@ static void release_h700_init_holders() {
   g_frameBufferResolved = {};
   release_scene_hdr_target();
   g_depthBuffer = {};
+  return true;
 }
 #endif
 
@@ -998,7 +999,10 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
   if (auto state = h700::presentation_state()) state->fail("H700 device bootstrap failed");
   // Release every bootstrap holder before Destroy/final release, without invoking
   // whole-gfx shutdown before gfx initialization. IG-11 owns normal runtime quiescence.
-  release_h700_init_holders();
+  if (!release_h700_init_holders()) {
+    Log.error("H700 partial init holders not retired; device/exports retained");
+    return false;
+  }
   if (!release_h700_device()) Log.error("H700 partial init release incomplete; exports/window retained");
   return false;
 #else
@@ -1728,7 +1732,10 @@ bool release_h700_device() {
 void shutdown() {
   g_initialized = false;
   if (!gfx::gpu_synchronize()) return; // IG-11 owns failed-generation quiescence/release
-  gpu_prof::shutdown();
+  if (!gpu_prof::shutdown()) {
+    Log.error("GPU profiler maps not retired; device holders retained");
+    return;
+  }
   g_CopyBindGroupLayout = {};
   g_CopyPipeline = {};
   g_CopyPremultipliedAlphaPipeline = {};

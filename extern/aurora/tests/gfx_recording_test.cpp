@@ -73,6 +73,19 @@ protected:
   bool recordingActive = true;
 };
 
+TEST_F(GfxRecordingTest, RetirementAbandonsRecorderWithoutFinishOrExtraWork) {
+  seed(320, 180); // CPU cache metadata; this does not create or exercise GPU readback resources
+  begin_offscreen(320, 180);
+  const auto passes = frame.renderPasses.size();
+  ASSERT_TRUE(recording_active());
+  ASSERT_TRUE(retire_frame_resources_after_quiescence());
+  recordingActive = false;
+  EXPECT_FALSE(recording_active());
+  EXPECT_EQ(frame.renderPasses.size(), passes); // no finish/seal/extra frame was manufactured
+  EXPECT_EQ(pending_internal_maps(), 0u);
+  EXPECT_TRUE(retire_frame_resources_after_quiescence());
+}
+
 TEST_F(GfxRecordingTest, CreateRestoreReturnsToEfb) {
   seed(320, 180);
   begin_offscreen(320, 180);

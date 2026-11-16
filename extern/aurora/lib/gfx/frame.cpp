@@ -16,6 +16,9 @@
 #include "probe.hpp"
 #include "recording.hpp"
 #include "render_worker.hpp"
+#include "map_completion.hpp"
+#include "vis_query.hpp"
+#include "../gx/fifo.hpp"
 #include "resource_cache.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
@@ -83,6 +86,14 @@ std::array<FramePacket, FrameSlotCount> g_framePackets;
 std::array<std::atomic_bool, FrameSlotCount> g_frameFailed{};
 std::array<std::atomic_bool, FrameSlotCount> g_frameOwned{};
 std::array<std::atomic<std::shared_ptr<h700::MapSlotOwnership>>, StagingBufferCount> g_mapOwnership;
+std::array<std::atomic<std::shared_ptr<MapCompletion>>, StagingBufferCount> g_mapCompletions;
+std::thread::id g_frameOwner;
+bool g_mapsRetiring = false;
+
+bool staging_callback_pending(size_t slot) {
+  const auto completion = g_mapCompletions[slot].load(std::memory_order_acquire);
+  return completion && completion->pending();
+}
 uint64_t g_nextFrameId = 1;
 render_worker::FrameSlotPool g_frameSlots{FrameSlotCount};
 render_worker::FrameSlotPool g_stagingSlots{StagingBufferCount};
@@ -364,6 +375,7 @@ void pace_frame_start() {
 }
 
 std::shared_ptr<h700::MapSlotOwnership> map_staging_buffer(size_t slot, bool releaseSlotOnCompletion = false) {
+  if (g_mapsRetiring) return {};
   auto expected = BufferMapState::Unmapped;
   if (!g_mappingStates[slot].compare_exchange_strong(expected, BufferMapState::Mapping, std::memory_order_acq_rel,
                                                      std::memory_order_acquire)) {
@@ -371,15 +383,20 @@ std::shared_ptr<h700::MapSlotOwnership> map_staging_buffer(size_t slot, bool rel
   }
   auto ownership = std::make_shared<h700::MapSlotOwnership>(releaseSlotOnCompletion, [slot] { g_stagingSlots.release(slot); });
   g_mapOwnership[slot].store(ownership, std::memory_order_release);
+  auto completion = std::make_shared<MapCompletion>();
+  g_mapCompletions[slot].store(completion, std::memory_order_release);
   g_stagingBuffers[slot].MapAsync(
       wgpu::MapMode::Write, 0, g_bufferSizes.staging(), wgpu::CallbackMode::AllowSpontaneous,
-      [slot, ownership](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+      [slot, ownership, completion](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+        if (g_mapCompletions[slot].load(std::memory_order_acquire) != completion || !completion->begin_completion())
+          return; // duplicate or an old request: never mutate a replacement buffer/generation
 #ifdef AURORA_H700
         if (status != wgpu::MapAsyncStatus::Success) {
           g_mappingStates[slot].store(BufferMapState::Failed, std::memory_order_release);
           if (auto state = h700::presentation_state()) state->fail(fmt::format("Staging map failed: {} {}", magic_enum::enum_name(status), message));
           render_worker::notify_failure();
           ownership->complete();
+          (void)completion->finish_completion(false);
           return;
         }
 #else
@@ -387,6 +404,7 @@ std::shared_ptr<h700::MapSlotOwnership> map_staging_buffer(size_t slot, bool rel
           Log.warn("Buffer mapping {}: {}", magic_enum::enum_name(status), message);
           g_mappingStates[slot].store(BufferMapState::Unmapped, std::memory_order_release);
           ownership->complete();
+          (void)completion->finish_completion(false);
           return;
         }
         AURORA_ASSERT(status == wgpu::MapAsyncStatus::Success, "Buffer mapping failed: {} {}",
@@ -394,6 +412,7 @@ std::shared_ptr<h700::MapSlotOwnership> map_staging_buffer(size_t slot, bool rel
 #endif
         g_mappingStates[slot].store(BufferMapState::Mapped, std::memory_order_release);
         ownership->complete();
+        (void)completion->finish_completion(true);
       });
   return ownership;
 }
@@ -591,6 +610,13 @@ void unregister_encoder_task_type(EncoderTaskId type) noexcept {
 }
 
 void initialize() {
+  if (pending_internal_maps() != 0) {
+    Log.error("Frame initialization refused: previous map callbacks remain owned");
+    render_worker::notify_failure();
+    return;
+  }
+  g_frameOwner = std::this_thread::get_id();
+  g_mapsRetiring = false;
   g_frameIndex = 0;
   g_processEventsQueued.store(false, std::memory_order_release);
   g_lastPresentNs.store(0, std::memory_order_release);
@@ -911,6 +937,13 @@ void shutdown() {
   render_worker::synchronize();
   render_worker::shutdown();
   if (!render_worker::is_quiescent()) return; // producer-side rejected work may still be unwinding
+  while (!retire_frame_resources_after_quiescence()) {
+    if (!render_worker::progress_wait()) {
+      Log.error("Frame retirement incomplete; maps/packets/holders retained for IG-11");
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
   g_processEventsQueued.store(false, std::memory_order_release);
   g_lastPresentNs.store(0, std::memory_order_release);
   g_presentPeriodNs.store(0, std::memory_order_release);
@@ -921,6 +954,7 @@ void shutdown() {
     g_presentTimes.clear();
   }
   shutdown_pipeline_cache();
+  if (!vis_query::detail::shutdown()) return;
   depth_peek::shutdown();
   tex_copy_conv::shutdown();
   probe::shutdown();
@@ -956,7 +990,7 @@ void shutdown() {
   g_resources.vertexFetchTextureView = {};
   g_resources.storageFetchTexture = {};
   g_resources.storageFetchTextureView = {};
-  g_stagingBuffers.fill({});
+  g_stagingBuffers.fill({}); // map retirement above unmapped and settled every request
   for (auto& packet : g_framePackets) {
     packet = {};
   }
@@ -977,9 +1011,9 @@ void shutdown() {
 bool wait_for_staging_buffer(size_t slot) {
   ZoneScopedN("Wait for buffer map");
   const auto initial = g_mappingStates[slot].load(std::memory_order_acquire);
-  if (initial == BufferMapState::Mapped && render_worker::wait_healthy()) return true;
+  if (initial == BufferMapState::Mapped && !staging_callback_pending(slot) && render_worker::wait_healthy()) return true;
   if (initial == BufferMapState::Failed || !render_worker::wait_healthy()) {
-    if (initial == BufferMapState::Mapping) {
+    if (initial == BufferMapState::Mapping || staging_callback_pending(slot)) {
       if (auto owner = g_mapOwnership[slot].load(std::memory_order_acquire)) owner->cancel_wait();
     } else g_stagingSlots.release(slot);
     return false;
@@ -987,7 +1021,7 @@ bool wait_for_staging_buffer(size_t slot) {
   const auto ownership = map_staging_buffer(slot);
   while (true) {
     const auto mappingState = g_mappingStates[slot].load(std::memory_order_acquire);
-    if (mappingState == BufferMapState::Mapped && render_worker::wait_healthy()) return true;
+    if (mappingState == BufferMapState::Mapped && !staging_callback_pending(slot) && render_worker::wait_healthy()) return true;
     if (mappingState == BufferMapState::Unmapped || mappingState == BufferMapState::Failed ||
         !wait_for_gpu_progress(std::chrono::milliseconds{1})) {
       if (ownership) ownership->cancel_wait();
@@ -1118,7 +1152,7 @@ bool grow_staging(const std::array<uint64_t, 4>& want) {
   }
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     // A buffer still mapping completes with an error; wait it out before replacing it.
-    while (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapping) {
+    while (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapping || staging_callback_pending(i)) {
       if (!wait_for_gpu_progress(std::chrono::milliseconds{1})) return false;
     }
     if (!render_worker::wait_healthy()) return false;
@@ -1343,8 +1377,35 @@ void fail_frame_work(size_t slot) noexcept {
 }
 size_t pending_staging_maps() noexcept {
   size_t count = 0;
-  for (const auto& state : g_mappingStates) if (state.load(std::memory_order_acquire) == BufferMapState::Mapping) ++count;
+  for (size_t i = 0; i < StagingBufferCount; ++i)
+    if (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapping || staging_callback_pending(i)) ++count;
   return count;
+}
+
+size_t pending_internal_maps() noexcept {
+  return pending_staging_maps() + webgpu::gpu_prof::pending_maps() + vis_query::detail::pending_maps();
+}
+
+bool retire_frame_resources_after_quiescence() {
+  if (g_frameOwner != std::thread::id{} && g_frameOwner != std::this_thread::get_id()) return false;
+  if (!gx::fifo::is_quiescent() || !render_worker::is_quiescent()) return false;
+  g_mapsRetiring = true;
+  // Lifecycle poll: callbacks must still retire after terminal failure. No new map or Submit.
+  if (g_instance) g_instance.ProcessEvents();
+  webgpu::gpu_prof::poll_maps();
+  vis_query::detail::poll_maps();
+  if (pending_internal_maps() != 0) return false;
+  for (size_t i = 0; i < StagingBufferCount; ++i) {
+    if (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapped) g_stagingBuffers[i].Unmap();
+    if (auto completion = g_mapCompletions[i].load(std::memory_order_acquire)) (void)completion->retire();
+    g_mapCompletions[i].store({}, std::memory_order_release);
+    g_mapOwnership[i].store({}, std::memory_order_release);
+    g_mappingStates[i].store(BufferMapState::Unmapped, std::memory_order_release);
+  }
+  // Reset an abandoned recorder without finish()/enqueue: its FIFO/worker users have joined.
+  shutdown_recording();
+  if (!retire_cancelled_frames_after_quiescence()) return false;
+  return webgpu::gpu_prof::shutdown() && vis_query::detail::shutdown();
 }
 size_t pending_frame_packets() noexcept {
   size_t count = 0;
@@ -1352,14 +1413,16 @@ size_t pending_frame_packets() noexcept {
   return count;
 }
 bool retire_cancelled_frames_after_quiescence() {
-  if (!render_worker::is_quiescent() || recording_active()) return false;
+  if (!gx::fifo::is_quiescent() || !render_worker::is_quiescent() || recording_active()) return false;
   for (size_t i = 0; i < FrameSlotCount; ++i) {
     if (!g_frameOwned[i].load(std::memory_order_acquire)) {
+      g_framePackets[i] = {};
       g_frameFailed[i].store(false, std::memory_order_release);
       continue;
     }
     const auto staging = g_framePackets[i].stagingBuffer;
-    if (g_mappingStates[staging].load(std::memory_order_acquire) == BufferMapState::Mapping) return false;
+    if (g_mappingStates[staging].load(std::memory_order_acquire) == BufferMapState::Mapping || staging_callback_pending(staging))
+      return false;
     g_framePackets[i] = {};
     g_frameOwned[i].store(false, std::memory_order_release);
     g_frameFailed[i].store(false, std::memory_order_release);
