@@ -2,7 +2,7 @@
 
 Адаптация нативного порта **Metroid Prime** для **ANBERNIC RG40XX H под muOS 2601.0 Jacaranda**. Это нативная C/C++-игра на основе декомпиляции, не запуск через эмулятор.
 
-> **Статус: подготовка первого интеграционного этапа.** На основе [архитектурного заключения](docs/H700_ARCHITECTURE_DECISION.md) пользователь согласовал ранний slice на настоящем renderer U. [Подробный план IG-01…IG-14](docs/H700_INTEGRATION_PLAN.md) ожидает утверждения: постоянный H700 path, diagnostic GX scene, один общий threading/lifetime device-gate до остального переноса. Production-реализация и device-запуск не начаты. Запуск всей новой игры и целевые FPS **не подтверждены**. Краткий статус — **[прогресс переноса](docs/H700_PROGRESS.md)**.
+> **Статус: реализация первого интеграционного этапа.** Пользователь утвердил [локальные итерации IG-01…IG-13](docs/H700_INTEGRATION_PLAN.md). **IG-01 PASS:** offline build profile и diagnostic frontend собирают/линкуют настоящие Aurora targets; GPU path и сцена ещё не реализованы. IG-14 — общий threading/lifetime device-gate — требует отдельного разрешения. Запуск всей новой игры и целевые FPS **не подтверждены**. [Простая версия плана](docs/H700_INTEGRATION_SUMMARY.md), [прогресс](docs/H700_PROGRESS.md).
 
 ## Цель H700
 

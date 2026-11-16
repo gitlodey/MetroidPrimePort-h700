@@ -7,6 +7,12 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+option(AURORA_H700 "Enable the muOS H700 integration path" OFF)
+if(AURORA_H700 AND (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+   NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8))
+  message(FATAL_ERROR "AURORA_H700 requires Linux ARM64")
+endif()
+
 option(AURORA_ENABLE_GX "Enable GX implementation and WebGPU renderer" ON)
 option(AURORA_ENABLE_DVD "Enable DVD implementation backed by nod" ON)
 option(AURORA_ENABLE_CARD "Enable CARD implementation based on kabufuda" ON)

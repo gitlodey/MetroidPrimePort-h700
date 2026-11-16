@@ -2,9 +2,11 @@
 
 **Цель:** Metroid Prime Unbound v0.46.0 работает на **ANBERNIC RG40XX H / muOS 2601.0 Jacaranda** с корректными графикой, интерфейсом, управлением, звуком и сохранениями. 30 FPS при 640×480 — следующий отдельный этап.
 
-**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **План ожидает утверждения; все IG не начаты.** Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код не менялся, устройство в этой итерации не использовалось.
+**Текущий этап:** пользователь согласовал **ранний integration slice на настоящем коде** до остального переноса. Подготовлен [подробный план IG-01…IG-14](H700_INTEGRATION_PLAN.md): 13 локальных итераций и один общий device-gate. [Простая версия: действия, результаты и место в общем переносе](H700_INTEGRATION_SUMMARY.md). **IG-01…IG-13 утверждены пользователем; IG-01 PASS, следующий шаг IG-02.** После каждой завершённой итерации — commit/push, затем следующая без нового согласования. Изменение плана требует остановки; IG-14/device window отдельно не разрешён. Исследовательское основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md). Production-код не менялся, устройство в этой итерации не использовалось.
 
 ## Что готово
+
+- **IG-01:** новый offline profile/manifest/driver линкует настоящие Aurora core/GX. 14 input hashes, 10 helper tests, clean configure/build и CLI help — PASS; compile graph включает 121 Aurora library translation unit. Проверены provider paths и ELF metadata; GPU/firmware runtime не запускались. [Команды и evidence](H700_INTEGRATION_PLAN.md#ig-01--pass-2026-11-16).
 
 - [Аудит базы и донора](H700_PORT_REVIEW.md), [краткий обзор](H700_PORT_SUMMARY.md), [правила работы](H700_WORKFLOW.md), [firmware ABI snapshot](H700_RUNTIME_ABI.md).
 - [Graphics demo](H700_GRAPHICS_PROBE.md): offscreen 2 кадра и последовательный EGLImage bridge 120 кадров — device PASS в своём ограниченном сценарии. Не production threading/lifetime и не полноценная визуальная приёмка.
@@ -17,14 +19,14 @@
 
 **Один архитектурный runtime-допуск:** совместная работа pinned Dawn/Mali с реальными resource/render/compiler потоками, main presenter и полным teardown всей EGL share group. Static contract определён, совместный device PASS отсутствует.
 
-**Подход раннего slice согласован.** Не отдельная копия renderer: diagnostic frontend линкует штатные Aurora targets, постоянный H700 path остаётся в игре. До PASS единственного общего gate остальной renderer-перенос блокируется. Конкретные итерации и [приёмка](H700_INTEGRATION_PLAN.md#5-конечная-device-приёмка) ещё утверждаются; device-запуск отдельно не разрешён.
+**Подход раннего slice согласован.** Не отдельная копия renderer: diagnostic frontend линкует штатные Aurora targets, постоянный H700 path остаётся в игре. До PASS единственного общего gate остальной renderer-перенос блокируется. Локальные итерации и [критерии приёмки](H700_INTEGRATION_PLAN.md#5-конечная-device-приёмка) согласованы; device-запуск отдельно не разрешён.
 
 Также не проверены полная игра/эффекты/UI, input/audio, kernel 4.9 fallback nod, реальный save/load и возврат в меню. Это приёмка переноса, не обязательный набор предплановых probes. ABI snapshot не является полным списком firmware exports.
 
 ## Следующий шаг и согласование
 
-Утвердить [план ранней интеграции](H700_INTEGRATION_PLAN.md), затем начать IG-01 без новых исследований того же вопроса. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; это изменение приёмки выделено явно, не объявлено автоматически принятым. План всей игры ещё не составлен.
+Продолжить утверждённый [план ранней интеграции](H700_INTEGRATION_PLAN.md) с IG-02 после commit/push IG-01. План включает прежний **EOL image только для slice**, fatal-exit вместо live recovery, реальные mixed device request/shader/resources и normal-drain contract. Предлагает **EFB resize при постоянных native slots + два поколения** вместо live EGLSurface recreation; эта явно выделенная замена приёмки согласована утверждением плана. План всей игры ещё не составлен.
 
-**В этой итерации:** адресная сверка source seams и подготовка плана/документации; новых сборок, tests, downloads и device runs не было. Пакеты/образ/production/донор не менялись, `.DS_Store` сохранены. Прежние device tests очищены, firmware hashes были неизменны. Утверждение IG-01…IG-13 разрешит локальную реализацию по плану; IG-14/deploy/device window требуют отдельного согласия.
+**В IG-01:** реализованы build profile/option/driver и локальные проверки, новых downloads/installations/device runs не было. Образ и donor не менялись, `.DS_Store` сохранены. IG-01…IG-13 разрешены; IG-14/deploy/device window требуют отдельного согласия.
 
 **Ориентир до каждого действия:** цель → конкретный вопрос целевого пути → минимальная проверка → решение по результату → остановка. Полнота вспомогательной матрицы не цель; правила — [H700_WORKFLOW.md](H700_WORKFLOW.md).

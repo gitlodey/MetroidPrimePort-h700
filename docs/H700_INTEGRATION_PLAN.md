@@ -1,10 +1,10 @@
 # H700 — план первого интеграционного этапа
 
-**Редакция 1, 2026-11-16. Статус: проект подробного плана, ожидает утверждения.**
+**Редакция 1, 2026-11-16. Статус: IG-01…IG-13 утверждены пользователем для последовательной локальной реализации с commit/push после каждой итерации. IG-14/device window отдельно не разрешён.**
 
 **Для чтения без технических подробностей:** [что делаем в 13 итерациях, что получаем и какая это часть переноса](H700_INTEGRATION_SUMMARY.md). Ниже — рабочая техническая версия того же плана.
 
-Пользователь согласовал **подход**: небольшой настоящий участок переноса, diagnostic scene без игровых ресурсов, штатные потоки/renderer U и один общий threading/lifetime gate до остального переноса. Это разрешает подготовить данный план и снимает концептуальный запрет на предложение раннего production slice, но не заменяет требуемое [workflow](H700_WORKFLOW.md) утверждение конкретных итераций. Production-правки и device-запуск пока не начинались.
+Пользователь явно утвердил все **13 локальных итераций**: настоящий участок переноса, diagnostic scene без игровых ресурсов, штатные потоки/renderer U. Разрешено выполнять их последовательно без повторного запроса между итерациями; после каждой — проверки, commit и push. При необходимости изменить план работа останавливается по [workflow](H700_WORKFLOW.md). Приставка/IG-14 остаются отдельным разрешением; остальной перенос игры не разрешён этим этапом.
 
 Основание — [архитектурное заключение](H700_ARCHITECTURE_DECISION.md), база U `c872da704adde9a7838492aaa56dac73a32053e4`, Unbound v0.46.0. Цель этапа — получить пригодное для будущей игры графическое основание **RG40XX H / H700 / muOS 2601.0**, не отдельный альтернативный renderer и не FPS benchmark.
 
@@ -25,7 +25,7 @@
 3. **Platform option:** новая opt-in `AURORA_H700`, допустимая только для Linux AArch64. Обычный upstream path по умолчанию неизменён. Реализация в `extern/aurora/lib/h700/`, интеграция через штатные Aurora manifests. Имена новых файлов/API ниже — планируемые, сейчас их нет.
 4. **Runtime:** строго аппаратный OpenGLES на firmware display; без CPU/Null/другого backend fallback. `SDL_VIDEODRIVER=sdl2`, `SDL3SHIM_SDL2_VIDEODRIVER=mali`. Native output 640×480, GL_RGBA8 / RGBA8Unorm, 1 mip, без MSAA. Существующий linear-format present путь U сохраняется, дополнительную sRGB encode/decode не добавлять. EFB и native output — разные объекты.
 5. **Нагрузка и проверки:** frame/storage scale 1, resident geometry 0, неприкреплённые staging buffers; один compiler U для OpenGLES, штатный multi-thread Dawn toggle. RmlUi остаётся исходно OFF; ImGui входит в настоящую final composition. Не форсировать no-compute. `pipelineCacheNoSeed=true`, отдельный пустой cache, профиль `h700-mixed-v1`. Validation и robustness **включены**, в том числе в RelWithDebInfo: U иначе при NDEBUG включает `skip_validation/disable_robustness`. Driver явно отключает эти toggles и отклоняет конфликтующие runtime overrides/skip-present, а не полагается на чистое окружение.
-6. **Recreation — уточнение предлагаемой приёмки:** native presenter context/surface/storage сохраняются до конца поколения; смена EFB-размера их не пересоздаёт. В gate проверяем EFB resize при неизменных native slots, затем **полный teardown и второе поколение**. Это предлагаемая замена surface-only recreation из §5 прежнего заключения: для фиксированного H700 output и fatal-exit policy live recreation не нужно, а SDL-владельцу поверхности нельзя произвольно подменять его EGLSurface. Поддержку live surface recreation не заявляем. До утверждения этого плана прежний пункт не считается ни выполненным, ни автоматически отменённым.
+6. **Recreation — уточнение предлагаемой приёмки:** native presenter context/surface/storage сохраняются до конца поколения; смена EFB-размера их не пересоздаёт. В gate проверяем EFB resize при неизменных native slots, затем **полный teardown и второе поколение**. Это предлагаемая замена surface-only recreation из §5 прежнего заключения: для фиксированного H700 output и fatal-exit policy live recreation не нужно, а SDL-владельцу поверхности нельзя произвольно подменять его EGLSurface. Поддержку live surface recreation не заявляем. Утверждение этого плана согласовало эту замену приёмки; ни EFB resize, ни full teardown ещё не объявляются проверенными.
 7. **Failure policy:** fatal EGL/device loss → terminal state, пробуждение ожиданий, доступный best-effort teardown и диагностический exit, без live recovery. Нельзя обещать GPU drain после loss или возврат из зависшего driver call; timeout не PASS. Неизвестный teardown запрещает второе поколение. Firmware/runtime libraries на устройстве не заменяются.
 
 ## 3. Неизменные контракты реализации
@@ -206,8 +206,20 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-Статусы всех IG-01…IG-14 сейчас **не начаты**. После утверждения выполняются по dependencies, не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01 **PASS**; IG-02…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
 До подключения игры следующий план обязан отдельно учесть game-owner safe quiesce до уничтожения `archSupport`, реальные skinning waits, runtime nod на kernel 4.9, бюджет памяти/ресурсов игры, остальные эффекты/UI/input/audio/cards и безопасную установку. Их отсутствие в раннем gate не означает готовность всей игры и не маскируется новым набором предплановых демок.
+
+## 7. Выполненные итерации
+
+### IG-01 — PASS, 2026-11-16
+
+- Добавлены opt-in Linux ARM64 `AURORA_H700`, общий `cmake/h700/InitialCache.cmake`, driver CMake/CLI и offline build helper/manifest. Штатные Aurora source manifests не заменены, root game CMake не менялся. Volatile references на initialize/shutdown удерживают настоящий runtime в link, даже когда выполняется только `--help`.
+- Все **14** pinned archives проверены до staging, используются новые source trees, не старые binary directories. Источники `/src:ro`, только `/out` writable, exact image, network none. SDL provenance остаётся local digest, не независимая аутентификация ref. Source overrides обходят vendor patches: для Linux SDL2-backend не применяются Android/Windows/X11 и optional GameCube raw-axis изменения; zlib clang-cl patch не применим.
+- Реальные providers проверяются после configure: shared SDL из fork, static Dawn/nod packages, source zlib-ng/zstd. Первый configure выявил directory-local imports nod; frontend импортирует тот же проверенный package через `find_package(... GLOBAL ...)`, без изменения provider/artifact. Отдельный output не удалялся.
+- **10 helper tests PASS**, missing/hash failure до staging, safe extraction/fresh output. Clean configure **19,3 с**, build **145,8 с**, compile graph содержит **121** Aurora library translation unit. Сборка target и ELF metadata executable/SDL — PASS; `--help` exit0 без SDL/EGL/Dawn initialization. Это не GPU/firmware ABI/device PASS.
+- Команды из корня: `python3 -B tools/h700_integration_driver/test_build.py -v`; `python3 -B tools/h700_integration_driver/build.py --check-inputs`; `python3 -B tools/h700_integration_driver/build.py --output build/h700-integration-ig01-r2 --jobs 2`. Output должен быть свежим.
+- Локальные evidence: ignored `build/h700-integration-ig01-r2/{commands.json,environment.json,input-manifest.json,elf-metadata.json}`, `build/providers.txt`, compile commands/build/help logs. Executable SHA256 `606d2d1d173faa0de8f0fd6a441ffca65da7fad509fd332251e99167a1afd2ec`, SDL SHA256 `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b`.
+- Приставка, donor, образ и firmware не использовались/не менялись. Graphics execution CLI пока явно отказывает с exit2; это не реализованная сцена. Следующая итерация — IG-02.

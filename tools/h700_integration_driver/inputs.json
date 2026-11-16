@@ -1,0 +1,122 @@
+{
+  "schema": 1,
+  "image_id": "sha256:2db4439763783aa796da4268dbd91847ee2c13deef4c8ce2439e0f6bdf926962",
+  "platform": "linux/arm64",
+  "provenance": {
+    "archive_inventory": "build/h700-build-readiness/cached_archives.json",
+    "additional_inputs": "build/h700-build-readiness/input-closure/downloads.json",
+    "sdl": {
+      "claimed_ref": "6057d79baf8321bf190479a699655f06cc2a962f",
+      "claimed_url": "https://github.com/bmdhacks/SDL/archive/6057d79baf8321bf190479a699655f06cc2a962f.tar.gz",
+      "limitation": "Observed local archive digest, NOT an independently authenticated upstream checksum/ref. Matched headers and sources are extracted from this same archive."
+    },
+    "dawn": {
+      "version": "v20261029.114630",
+      "ref": "118436b3f8f68583eb86e811ca605dc41637e8cc",
+      "limitation": "Cached package digest matches Aurora's pinned linux-aarch64 checksum; archive hash alone is not independent ref authentication."
+    }
+  },
+  "archives": [
+    {
+      "name": "abseil-cpp",
+      "path": "build/muos-linux-arm64/_deps/abseil-cpp-subbuild/abseil-cpp-populate-prefix/src/20240722.0.tar.gz",
+      "sha256": "f50e5ac311a81382da7fa75b97310e4b9006474f9560ac46f54a9967f07d4ae3",
+      "strip_prefix": "abseil-cpp-20240722.0",
+      "fetchcontent": "ABSEIL-CPP"
+    },
+    {
+      "name": "dawn",
+      "path": "build/muos-linux-arm64/_deps/dawn_prebuilt-subbuild/dawn_prebuilt-populate-prefix/src/dawn-linux-aarch64.tar.gz",
+      "sha256": "cbb550709fdd519d52330b9b59206a8300bcbd8bd698af0359e0ba5bfca2fed8",
+      "strip_prefix": "",
+      "fetchcontent": "DAWN_PREBUILT",
+      "package": "DAWN"
+    },
+    {
+      "name": "fmt",
+      "path": "build/muos-linux-arm64/_deps/fmt-subbuild/fmt-populate-prefix/src/12.1.0.tar.gz",
+      "sha256": "ea7de4299689e12b6dddd392f9896f08fb0777ac7168897a244a6d6085043fea",
+      "strip_prefix": "fmt-12.1.0",
+      "fetchcontent": "FMT"
+    },
+    {
+      "name": "freetype",
+      "path": "build/muos-linux-arm64/_deps/freetype-subbuild/freetype-populate-prefix/src/freetype-2.14.3.tar.gz",
+      "sha256": "e61b31ab26358b946e767ed7eb7f4bb2e507da1cfefeb7a8861ace7fd5c899a1",
+      "strip_prefix": "freetype-2.14.3",
+      "fetchcontent": "FREETYPE"
+    },
+    {
+      "name": "googletest",
+      "path": "build/muos-linux-arm64/_deps/googletest-subbuild/googletest-populate-prefix/src/v1.17.0.tar.gz",
+      "sha256": "65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c",
+      "strip_prefix": "googletest-1.17.0",
+      "fetchcontent": "GOOGLETEST"
+    },
+    {
+      "name": "imgui",
+      "path": "build/muos-linux-arm64/_deps/imgui-subbuild/imgui-populate-prefix/src/v1.91.9b-docking.tar.gz",
+      "sha256": "466fdef9b18de15f0bb6e288e3d00ffa3d82200ec458ce5e4f724a161d9528a5",
+      "strip_prefix": "imgui-1.91.9b-docking",
+      "fetchcontent": "IMGUI"
+    },
+    {
+      "name": "png",
+      "path": "build/muos-linux-arm64/_deps/png-subbuild/png-populate-prefix/src/v1.6.58.tar.gz",
+      "sha256": "a9d4df463d36a6e5f9c29bd6f4967312d17e996c1854f3511f833924eb1993cf",
+      "strip_prefix": "libpng-1.6.58",
+      "fetchcontent": "PNG"
+    },
+    {
+      "name": "sdl",
+      "path": "build/muos-linux-arm64/_deps/sdl-subbuild/sdl-populate-prefix/src/6057d79baf8321bf190479a699655f06cc2a962f.tar.gz",
+      "sha256": "0b5fdcb0c1142ba8197ba7ca59fe0371489c4e6e97c82826acce55bf86c974dc",
+      "strip_prefix": "SDL-6057d79baf8321bf190479a699655f06cc2a962f",
+      "fetchcontent": "SDL"
+    },
+    {
+      "name": "sqlite3",
+      "path": "build/muos-linux-arm64/_deps/sqlite3-subbuild/sqlite3-populate-prefix/src/sqlite-amalgamation-3510300.zip",
+      "sha256": "acb1e6f5d832484bf6d32b681e858c38add8b2acdfd42ac5df24b8afb46552b4",
+      "strip_prefix": "sqlite-amalgamation-3510300",
+      "fetchcontent": "SQLITE3"
+    },
+    {
+      "name": "tracy",
+      "path": "build/muos-linux-arm64/_deps/tracy-subbuild/tracy-populate-prefix/src/v0.14.1.zip",
+      "sha256": "908f3a2917fa86a247abfcf85dcf04bad1db6986a4d40f94b70512f3e9e98d5b",
+      "strip_prefix": "tracy-0.14.1",
+      "fetchcontent": "TRACY"
+    },
+    {
+      "name": "xxhash",
+      "path": "build/muos-linux-arm64/_deps/xxhash-subbuild/xxhash-populate-prefix/src/v0.8.3.tar.gz",
+      "sha256": "aae608dfe8213dfd05d909a57718ef82f30722c392344583d3f39050c7f29a80",
+      "strip_prefix": "xxHash-0.8.3",
+      "fetchcontent": "XXHASH"
+    },
+    {
+      "name": "nod",
+      "path": "build/h700-build-readiness/input-closure/libnod-linux-aarch64.tar.gz",
+      "sha256": "6872dd3d45d9e688012db30f0a75b10702b8520b5b550ea6b50e9f6d458b05b3",
+      "strip_prefix": "",
+      "fetchcontent": "NOD_PREBUILT",
+      "package": "NOD",
+      "version": "v2.0.0-alpha.12"
+    },
+    {
+      "name": "zlib",
+      "path": "build/h700-build-readiness/input-closure/zlib-ng-2.3.3.tar.gz",
+      "sha256": "f9c65aa9c852eb8255b636fd9f07ce1c406f061ec19a2e7d508b318ca0c907d1",
+      "strip_prefix": "zlib-ng-2.3.3",
+      "fetchcontent": "ZLIB"
+    },
+    {
+      "name": "zstd",
+      "path": "build/h700-build-readiness/input-closure/zstd-1.5.7.tar.gz",
+      "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+      "strip_prefix": "zstd-1.5.7",
+      "fetchcontent": "ZSTD"
+    }
+  ]
+}
