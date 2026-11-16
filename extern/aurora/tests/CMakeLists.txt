@@ -21,6 +21,17 @@ if (NOT TARGET gtest)
   endif ()
 endif ()
 
+# H700 native-image ownership, using only the production CPU state helper.
+find_package(Threads REQUIRED)
+add_executable(h700_presentation_state_tests
+  h700_presentation_state_test.cpp
+  ../lib/h700/presentation_state.cpp
+)
+target_include_directories(h700_presentation_state_tests PRIVATE ../lib)
+target_compile_features(h700_presentation_state_tests PRIVATE cxx_std_20)
+target_link_libraries(h700_presentation_state_tests PRIVATE gtest_main Threads::Threads)
+gtest_discover_tests(h700_presentation_state_tests PROPERTIES TIMEOUT 10)
+
 add_executable(io_tests
   io_test.cpp
   ../lib/card/FileIO.cpp

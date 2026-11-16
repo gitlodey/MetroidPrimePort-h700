@@ -206,7 +206,7 @@ ImGui opaque cyan marker имеет native rect `(16,16)–(48,48)`, прове�
 
 ## 6. Учёт и последующий переход
 
-IG-01 **PASS**; IG-02…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
+IG-01…IG-02 **PASS**; IG-03…IG-13 не начаты; IG-14 не разрешён и не начат. Утверждённые локальные итерации выполняются по dependencies и не требуют повторного согласования той же архитектуры на каждом commit. Device window остаётся отдельным разрешением. Новый dependency artifact, execution policy, расширение scope либо изменение критериев — согласование по workflow.
 
 Полезный объём не равен одной короткой правке: здесь **13 локальных итераций и один общий device-рубеж**, ориентир **13–26 часов активной реализации**, плюс отдельно ожидание сборок/окна и device-приёмка. Это оценка по source seams, не обещание срока; дополнительные устранения новых blockers заранее не считаются включёнными. Нельзя честно назвать весь permanent backend + shader/resources + waits/lifetime работой на один вечер.
 
@@ -222,4 +222,12 @@ IG-01 **PASS**; IG-02…IG-13 не начаты; IG-14 не разрешён и 
 - **10 helper tests PASS**, missing/hash failure до staging, safe extraction/fresh output. Clean configure **19,3 с**, build **145,8 с**, compile graph содержит **121** Aurora library translation unit. Сборка target и ELF metadata executable/SDL — PASS; `--help` exit0 без SDL/EGL/Dawn initialization. Это не GPU/firmware ABI/device PASS.
 - Команды из корня: `python3 -B tools/h700_integration_driver/test_build.py -v`; `python3 -B tools/h700_integration_driver/build.py --check-inputs`; `python3 -B tools/h700_integration_driver/build.py --output build/h700-integration-ig01-r2 --jobs 2`. Output должен быть свежим.
 - Локальные evidence: ignored `build/h700-integration-ig01-r2/{commands.json,environment.json,input-manifest.json,elf-metadata.json}`, `build/providers.txt`, compile commands/build/help logs. Executable SHA256 `606d2d1d173faa0de8f0fd6a441ffca65da7fad509fd332251e99167a1afd2ec`, SDL SHA256 `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b`.
-- Приставка, donor, образ и firmware не использовались/не менялись. Graphics execution CLI пока явно отказывает с exit2; это не реализованная сцена. Следующая итерация — IG-02.
+- Приставка, donor, образ и firmware не использовались/не менялись. Graphics execution CLI пока явно отказывает с exit2; это не реализованная сцена. IG-01 зафиксирован и отправлен: `99ddc286b`.
+
+### IG-02 — PASS, 2026-11-16
+
+- Добавлен CPU-only production helper `aurora::h700::PresentationState`: два credits, FIFO2, immutable generation/frame/slot descriptors, отдельные Submit boundary/publication, forward/reverse/swap transitions, Draining/Failed/quarantine. Notifications содержат owned значения, не удерживают native credit. Не добавлялись GL calls или общий callback framework.
+- Подключён к `aurora_core` только при `AURORA_H700`; новый `h700_presentation_state_tests` компилирует тот же production source с GTest/Threads, без GPU.
+- **17/17 CTest cases PASS** в exact ARM64 image/Clang16. Fresh output: `build/h700-integration-ig02`, configure tests `AURORA_ENABLE_TESTS=ON`, explicit build target `h700_presentation_state_tests`; `ctest --test-dir /out/build -R H700Presentation --output-on-failure --timeout 15`. CTest run около0,05с. Первый узкий фильтр выбрал16fixture cases; расширенный prefix выполнил все17, включая zero-generation case.
+- CPU events не являются проверкой настоящих GPU completions. `try_stop()` подтверждает только отсутствие presentation ownership, не quiescence renderer/compiler; failure-only `stop_after_teardown()` требует доказанного внешним wrapper разрушения поколения и не делает quarantine reusable.
+- Локальные logs: ignored `build/h700-integration-ig02/{configure-tests.log,build-state-tests.log}`, CTest `build/Testing/Temporary/LastTest.log`. Read-only independent review существенных issues не обнаружил. Устройство не использовалось; следующий шаг — IG-03.
