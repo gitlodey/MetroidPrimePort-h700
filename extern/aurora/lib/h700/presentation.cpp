@@ -21,8 +21,8 @@
 namespace aurora::h700 {
 namespace {
 constexpr Module Log{"aurora::h700"};
-// A bounded diagnostic trace, not an unbounded per-frame allocation. Exhaustion fails the
-// generation instead of silently discarding evidence needed to prove context retirement.
+// Full event history is for the bounded IG diagnostic, not retail playtime. Context records
+// and current bindings below remain authoritative and are updated even without this trace.
 constexpr size_t MaxContextEvents = 65536;
 struct DiagnosticMap {
   std::atomic_bool called{false};
@@ -128,6 +128,7 @@ ContextRecord* live_context(EGLContext context) {
   return nullptr;
 }
 void append_event(const ContextEvent& event) {
+  if (!diagnostic::current()) return;
   if (backend->events.size() == MaxContextEvents) {
     observation_failure("H700 EGL context event trace exhausted");
   } else {

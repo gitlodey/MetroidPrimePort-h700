@@ -380,6 +380,42 @@ TEST(GenerationLifecycleSource, TerminalLogsKeepFirstCauseAndDistinguishObservat
   EXPECT_LT(proof.find("return fail("), proof.find("backend->dawn_released = true"));
 }
 
+TEST(GenerationLifecycleSource, RetailLifetimeTrackingDoesNotDependOnBoundedDiagnosticHistory) {
+  const auto presentation = source("h700/presentation.cpp");
+  const auto trace = section(presentation, "void append_event(", "void retire_pending()");
+  const auto optIn = trace.find("if (!diagnostic::current()) return;");
+  ASSERT_NE(optIn, std::string::npos);
+  EXPECT_LT(optIn, trace.find("backend->events.size() == MaxContextEvents"));
+  EXPECT_NE(trace.find("observation_failure(\"H700 EGL context event trace exhausted\")"), std::string::npos);
+  EXPECT_NE(presentation.find("constexpr size_t MaxContextEvents = 65536;"), std::string::npos);
+
+  // Only append_event may skip diagnostic history. Every actual EGL result still
+  // validates and updates the live ledger, including deferred current destruction.
+  const auto create = section(presentation, "EGLContext EGLAPIENTRY observed_create(",
+                              "EGLBoolean EGLAPIENTRY observed_make_current(");
+  const auto makeCurrent = section(presentation, "EGLBoolean EGLAPIENTRY observed_make_current(",
+                                   "EGLBoolean EGLAPIENTRY observed_destroy(");
+  const auto destroy = section(presentation, "EGLBoolean EGLAPIENTRY observed_destroy(",
+                               "EGLBoolean EGLAPIENTRY observed_release_thread()");
+  const auto release = section(presentation, "EGLBoolean EGLAPIENTRY observed_release_thread()",
+                               "__eglMustCastToProperFunctionPointerType EGLAPIENTRY observed_get_proc(");
+  for (const auto& operation : {create, makeCurrent, destroy, release}) {
+    EXPECT_EQ(operation.find("diagnostic::current()"), std::string::npos);
+    EXPECT_NE(operation.find("append_event("), std::string::npos);
+    EXPECT_NE(operation.find("observation_failure("), std::string::npos);
+  }
+  EXPECT_NE(create.find("backend->contexts.push_back("), std::string::npos);
+  EXPECT_NE(makeCurrent.find("record_binding(context, draw, read)"), std::string::npos);
+  EXPECT_NE(destroy.find("record->destroy_requested = true"), std::string::npos);
+  EXPECT_NE(destroy.find("retire_pending()"), std::string::npos);
+  EXPECT_NE(release.find("record_binding(EGL_NO_CONTEXT, EGL_NO_SURFACE, EGL_NO_SURFACE)"), std::string::npos);
+  const auto proof = section(presentation, "bool contexts_retired()", "} // namespace");
+  EXPECT_EQ(proof.find("backend->events"), std::string::npos);
+  EXPECT_NE(proof.find("backend->trustworthy"), std::string::npos);
+  EXPECT_NE(proof.find("return c.destroyed"), std::string::npos);
+  EXPECT_NE(proof.find("b.context != backend->presenter"), std::string::npos);
+}
+
 TEST(GenerationLifecycleSource, FailedNativeRecordsNeedRealEvidenceAndNeverFakeRecycle) {
   const auto presentation = source("h700/presentation.cpp");
   const auto retire = section(presentation, "bool retire_native_after_dawn_release()", "bool release_dawn_imports()");

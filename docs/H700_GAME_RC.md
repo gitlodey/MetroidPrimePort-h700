@@ -1,6 +1,6 @@
 # H700 — игровой RC и результат повторной fresh build
 
-**Локальный package PASS; окно A / GM-18 FAIL: runtime fail-stop, actual exit не достигнут.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
+**Локальные packages PASS; GM-18 / A и диагностический A2 FAIL по runtime. В RC4 установлена причина: исчерпание65536-event EGL trace; локальный fix проверен, device-повтор ещё не разрешён.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
 
 ## Выбранный неизменяемый payload
 
@@ -112,6 +112,28 @@ python3 -B tools/h700_game/build.py --package --output build/h700-game-rc4-diagn
 - Это диагностический кандидат, **не исправление зависания, не device PASS и не public distribution clearance**. RC3 не перезаписан; новую сборку после gates не меняли.
 
 Следующий минимальный device-шаг отдельно согласуется: до10мин active time, SSH preflight после пользовательской перезагрузки, проверка отсутствия game/copier данной установки, снятие только собственного stale lock при доказанно завершённом процессе, update только payload/с сохранением собственного user/cache, один no-init loader check нового binary и один manual Ports run до того же меню. Ждать повторения отказа либо до5мин наблюдать responsive menu, затем normal Exit; New Game/station/save/reset не включать. Логи/RAM наблюдает агент, пользователь подтверждает экран/звук/реакцию меню. Нет automatic kill/reset/retry; любой hang/unknown останавливает run. Это диагностический повтор failure path, не автоматически A PASS. Read-only post-reboot SSH отдельно разрешён и выполнен: игра/её copier/launcher не найдены в process snapshot, frontend работает, MemAvailable881244KiB (~861MiB), все5 firmware baseline hashes совпали. Собственные user/cache существуют; `run.lock` остался после аварийного run/reboot. Он **не удалялся**. Raw evidence — `build/h700-game-a-rc3/post-reboot-*`. Разрешение подключаться не расширено до update/remove-lock/no-init/manual run; эти действия пока pending.
+
+## A2 — RC4 menu-only repeat: причина найдена, runtime FAIL
+
+Пользователь отдельно разрешил update/remove-stale-lock, один no-init и один manual menu-only run до10мин. После подтверждения отсутствия game/copier/launcher опубликован RC4; все102installed file hashes совпали,24own user/cache file hashes и configured Ports entry неизменны. Старый lock снят только после absent-child proof; transport/staging удалены. Единственный `--version` вернул0. User запустил Ports вручную и подтвердил появление меню; согласованный маршрут ограничен меню, gameplay не подтверждён.
+
+Bounded read-only observation остановлено сразу при реальном отказе:
+
+- **Первая ошибка:** `H700 EGL context event trace exhausted; context events=65536/65536, contexts=6, bindings=1`.
+- Root сохранил ту же причину в `H700 generation first failure`, затем FIFO/root terminal cleanup.
+- Final proof: **observer trustworthy=false, live contexts=0, Dawn bindings=0, imports remaining=false**. Следовательно, этот Dawn-release rejection вызван недостоверностью observer после исчерпания history, а не обнаруженными оставшимися contexts/imports. Старый RC3 без этой диагностики не получает задним числом доказанную первопричину.
+- Runtime снова завершился fail-stop status3/stage12; process snapshot sleeping, RSS256176KiB/HWM630224KiB,13threads. Actual exit/возврат в Ports не достигнуты. Lock удерживается; никаких signals/kill/reset/retry не выполнялось.
+- Logged sampled min available340608KiB (~333MiB),5firmware baseline hashes совпали после отказа при ещё живом процессе. Это не post-exit verification и не gameplay PASS.
+
+Raw evidence и `window-a2-result.json` — ignored `build/h700-game-a2-rc4/`. Диагностическая цель A2 достигнута (причина установлена), но game run — FAIL, не A acceptance.
+
+### Минимальный local fix после A2 — game link/CPU PASS
+
+`append_event()` теперь собирает полный bounded history только при установленном existing `diagnostic::Control`. Его единственный production consumer — context report IG-driver; Control устанавливается до initialization и снимается после generation release. В retail game этот IG observer не установлен: history больше не вводит конечный лимит playtime.
+
+**Реальные EGL-result/display/context checks, таблица всех contexts, текущие bindings, destroy_requested/deferred retirement, trustworthy и release/export/fail-stop guards сохранены без gating.** Они выполняются после возврата из append_event и не используют events для proof. Diagnostic IG history/cap65536/exhaustion failure остаются прежними. Не вводились ring/history framework, увеличение cap, fake completion/release, новый backend/dependency или изменение ownership policy.
+
+Full incremental game compile/link,45/45 scoped presentation/lifecycle/no-init CTest и55/55complete render/lifecycle tests PASS. Новый source regression связывает opt-in только с history и проверяет неизменённый live ledger/retirement proof; это не выполнение EGL на Mali. Independent read-only diff/caller/IG-lifetime review blockers не нашёл. Local evidence — `build/h700-game-gm03/gm18-trace-fix-*`. Новый пакет/hash и отдельно разрешённый device run необходимы; RC4 не изменён на приставке и остаётся в fail-stop.
 
 ## Evidence на локальном диске
 
