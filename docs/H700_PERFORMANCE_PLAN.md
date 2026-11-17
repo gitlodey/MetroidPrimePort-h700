@@ -1,6 +1,6 @@
 # H700 — первая performance-итерация
 
-**PERF-01, проект для утверждения.** Пользователь поручил подготовить план после неиграбельного RC5. Подготовка плана разрешена; новый device run, изменение production code или параметров пока не разрешены. [Текущий статус](H700_PROGRESS.md), [исходное evidence](H700_OPTIMIZATION_NOTES.md#opt-006--rc5-неиграбельная-отзывчивость-drawcompile-stalls).
+**PERF-01 УТВЕРЖДЁН пользователем: «Делай» в ответ на запрос утверждения плана и окна до10мин.** Разрешены локальная подготовка, пассивное SSH-наблюдение и один manual warm RC5 process/180s фиксированного меню/штатный Exit по scope ниже. Production code, параметры, deploy/no-init, второй run и принудительное завершение этим permission не разрешены. [Текущий статус](H700_PROGRESS.md), [исходное evidence](H700_OPTIMIZATION_NOTES.md#opt-006--rc5-неиграбельная-отзывчивость-drawcompile-stalls).
 
 ## Цель и минимальное решение
 
@@ -45,5 +45,11 @@
 | Длинные frames совпадают с активностью других TID/compile warnings | Проверить compiler/cache interference и ownership этих TID; совпадение не доказывает причинность или повторные builds того же hash. |
 | Известные render/main преимущественно ждут или hottest TID не идентифицируется | Выбрать **одну** недостающую границу/API envelope/роль для следующего минимального замера; не приписывать futex GPU и не начинать общий EGL profiler/пересборку Dawn. |
 | Меню после settling работает нормально, проблема появляется только при смене сцены | Не чинить steady-menu path; следующим отдельно ограниченным вопросом станет переход/intro compile/load. Intro не обязателен в этом первом run. |
+
+### Подготовка после утверждения — LOCAL PASS, ждём меню
+
+Подготовлен только ignored host collector `build/h700-perf01-rc5/collect.py`:180s/60samples, starttime/TID guard, CPU tick deltas без HZ assumption, инкрементальное чтение existing log с проверкой overlap, no device signals/exec game. Локальные fixtures проверили comm со скобками/пробелами, поля stat, TID/starttime reuse, counter rollback, исключение guest double count, attribution и log overlap; дополнительно разобраны уже сохранённые actual firmware CPU/game stat records. Это проверки collector, не performance/game PASS.
+
+Read-only preflight: установленный executable и configured entry hashes совпали с RC5; game/copier/launcher отсутствуют, lock отсутствует,5firmware baseline hashes unchanged, MemAvailable822512KiB (~803MiB). Никаких deploy/no-init/config/cache changes, game launches или signals не выполнялось. Collector пока не запущен и требует explicit main-menu confirmation; следующий шаг — один manual Ports launch пользователя, затем180s наблюдения по этой карточке. Private evidence — только `build/h700-perf01-rc5/`.
 
 После PERF-01 конкретное production-исправление предъявляется отдельным коротким планом с файлами, regression и сопоставимой проверкой. **Не обещаем заранее единственный виновный компонент, величину ускорения или достижение30FPS.** Завершённые GM-01…17/backend/pins не переоткрываются; safeguards и качество картинки сохраняются.
