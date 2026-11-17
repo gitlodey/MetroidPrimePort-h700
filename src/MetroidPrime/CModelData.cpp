@@ -1,5 +1,9 @@
 #include "MetroidPrime/CModelData.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "Kyoto/Animation/CVertexMorphEffect.hpp"
 #include "Kyoto/CResFactory.hpp"
@@ -93,6 +97,9 @@ CModelData::~CModelData() {}
 
 void CModelData::Render(EWhichModel which, const CTransform4f& xf, const CActorLights* lights,
                         const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
   // Remastered's CModelDataMP1::Render (0xfa6c0c): model 3 is always a thermal command with
   // SModelThermalParams::DefaultOverride (a = 1, b = 0), a = the flags' alpha for a sort-thermal
@@ -133,11 +140,28 @@ void CModelData::Render(EWhichModel which, const CTransform4f& xf, const CActorL
             ? PortFrozenModel()
             : nullptr;
     if (frozen != nullptr) {
+#ifdef AURORA_H700
+      if (xc_animData->PortTrySetupRender(*frozen, rstl::optional_object< CVertexMorphEffect >(),
+                                         nullptr)) {
+        xc_animData->DrawSkinnedModel(*frozen, flags);
+      }
+#else
       xc_animData->Render(*frozen, flags, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     } else
 #endif
-    xc_animData->Render(PickAnimatedModel(which), flags,
-                        rstl::optional_object< CVertexMorphEffect >(), nullptr);
+    {
+#ifdef AURORA_H700
+      const CSkinnedModel& model = PickAnimatedModel(which);
+      if (xc_animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                         nullptr)) {
+        xc_animData->DrawSkinnedModel(model, flags);
+      }
+#else
+      xc_animData->Render(PickAnimatedModel(which), flags,
+                          rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
+    }
   } else if (x1c_normalModel) {
     const CModel& model = **PickStaticModel(which);
     if (x14_24_renderSorted)
@@ -147,6 +171,9 @@ void CModelData::Render(EWhichModel which, const CTransform4f& xf, const CActorL
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   x14_24_renderSorted = false;
 }
 
@@ -268,11 +295,17 @@ void CModelData::ThermalDraw(CSkinnedModel& model, const CColor& mulColor, const
 void CModelData::ThermalDraw(CSkinnedModel& model, const float* positions, const float* normals,
                              const CColor& mulColor, const CColor& addColor,
                              const CModelFlags& flags) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   gpRender->DrawThermalModel(**model.GetModel(), mulColor, addColor, positions, normals, flags);
 }
 
 void CModelData::RenderThermal(const CTransform4f& xf, const CColor& mulColor,
                                const CColor& addColor, const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CTransform4f scaledXf = xf * CTransform4f::Scale(x0_scale);
 #ifdef TARGET_PC
   scaledXf = PortScaledXf(kWM_ThermalHot, xf);
@@ -281,7 +314,12 @@ void CModelData::RenderThermal(const CTransform4f& xf, const CColor& mulColor,
   CGraphics::DisableAllLights();
   if (HasAnimation()) {
     CSkinnedModel& model = PickAnimatedModel(kWM_ThermalHot);
+#ifdef AURORA_H700
+    if (!xc_animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                        nullptr)) return;
+#else
     xc_animData->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     ThermalDraw(model, mulColor, addColor, flags);
   } else {
     gpRender->DrawThermalModel(**PickStaticModel(kWM_ThermalHot), mulColor, addColor, nullptr,
@@ -291,6 +329,9 @@ void CModelData::RenderThermal(const CTransform4f& xf, const CColor& mulColor,
 
 void CModelData::DisintegrateDraw(EWhichModel which, const CTransform4f& xf,
                                   const CTexture& texture, const CColor& color, float t) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CTransform4f scaledXf = xf * CTransform4f::Scale(x0_scale);
 #ifdef TARGET_PC
   scaledXf = PortScaledXf(which, xf);
@@ -300,7 +341,12 @@ void CModelData::DisintegrateDraw(EWhichModel which, const CTransform4f& xf,
   CAABox bounds = GetBounds(scaledXf);
   if (HasAnimation()) {
     CSkinnedModel& model = PickAnimatedModel(which);
+#ifdef AURORA_H700
+    if (!xc_animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                        nullptr)) return;
+#else
     xc_animData->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     SOneTextureDrawContext ctx(model, texture, color, t);
     model.Draw(reinterpret_cast< TDrawFunc >(DisintegrateDrawCallback), &ctx);
   } else {
@@ -315,6 +361,9 @@ void CModelData::DisintegrateDraw(const CStateManager& mgr, const CTransform4f& 
 
 void CModelData::FlatDraw(EWhichModel which, const CTransform4f& xf, bool unsortedOnly,
                           const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CTransform4f scaledXf = xf * CTransform4f::Scale(x0_scale);
 #ifdef TARGET_PC
   scaledXf = PortScaledXf(which, xf);
@@ -323,7 +372,12 @@ void CModelData::FlatDraw(EWhichModel which, const CTransform4f& xf, bool unsort
   CGraphics::DisableAllLights();
   if (HasAnimation()) {
     CSkinnedModel& model = PickAnimatedModel(which);
+#ifdef AURORA_H700
+    if (!xc_animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                        nullptr)) return;
+#else
     xc_animData->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     SFlatDrawContext ctx(model, unsortedOnly, flags);
     model.Draw(reinterpret_cast< TDrawFunc >(FlatDrawCallback), &ctx);
   } else {
@@ -334,6 +388,9 @@ void CModelData::FlatDraw(EWhichModel which, const CTransform4f& xf, bool unsort
 void CModelData::MultiLightingDraw(EWhichModel which, const CTransform4f& xf,
                                    const CActorLights* lights, const CColor& mulColor,
                                    const CColor& addColor) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CTransform4f scaledXf = xf * CTransform4f::Scale(x0_scale);
 #ifdef TARGET_PC
   scaledXf = PortScaledXf(which, xf);
@@ -341,7 +398,12 @@ void CModelData::MultiLightingDraw(EWhichModel which, const CTransform4f& xf,
   gpRender->SetModelMatrix(scaledXf);
   if (HasAnimation()) {
     CSkinnedModel& model = PickAnimatedModel(which);
+#ifdef AURORA_H700
+    if (!GetAnimationData()->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                               nullptr)) return;
+#else
     GetAnimationData()->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     SMultiLightingDrawContext ctx(**model.GetModel(), lights, mulColor, addColor);
     model.Draw(reinterpret_cast< TDrawFunc >(MultiLightingDrawCallback), &ctx);
   } else {
@@ -353,6 +415,9 @@ void CModelData::MultiLightingDraw(EWhichModel which, const CTransform4f& xf,
 void CModelData::MultipassDraw(EWhichModel which, const CTransform4f& xf,
                                const CActorLights* lights, const CModelFlags* flags,
                                int count) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CTransform4f scaledXf = xf * CTransform4f::Scale(x0_scale);
 #ifdef TARGET_PC
   scaledXf = PortScaledXf(which, xf);
@@ -366,7 +431,12 @@ void CModelData::MultipassDraw(EWhichModel which, const CTransform4f& xf,
   }
   if (HasAnimation()) {
     CSkinnedModel& model = PickAnimatedModel(which);
+#ifdef AURORA_H700
+    if (!GetAnimationData()->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                               nullptr)) return;
+#else
     GetAnimationData()->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
     SMultipassDrawContext ctx(model, flags, count);
     model.Draw(reinterpret_cast< TDrawFunc >(MultipassDrawCallback), &ctx);
   } else {

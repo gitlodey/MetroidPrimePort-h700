@@ -29,6 +29,9 @@
 #include "port_world_holders.h"
 #include "port_console.h"
 #include "port_room_effects.h"
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -1478,6 +1481,9 @@ void CStateManager::Think(float dt) {
 
         if (camList->GetObjectById(ent->GetUniqueId()) == nullptr) {
           ent->Think(dt, *this);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
     }
@@ -1788,6 +1794,9 @@ void CStateManager::Update(float dt) {
 
   if (x904_gameState == kGS_Running || x904_gameState == kGS_SoftPaused) {
     Think(dt);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     PortRoomGeo::Think(*this, dt);
     PortRoomEffects::Think(*this, dt);
   }
@@ -1807,6 +1816,9 @@ void CStateManager::Update(float dt) {
     }
 
     ent->Think(dt, *this);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 
   if (x904_gameState != kGS_Paused) {
@@ -2783,23 +2795,35 @@ void CStateManager::SendScriptMsg(TUniqueId uid, TEditorId target, EScriptObject
 }
 
 void CStateManager::RecursiveDrawTree(TUniqueId uid) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CActor* actor = TCastToPtr< CActor >(const_cast< CEntity* >(GetObjectById(uid)));
   if (actor != NULL && x8dc_objectDrawToken != actor->GetDrawToken()) {
     const TUniqueId nextNode = actor->GetDrawParent();
     if (nextNode != kInvalidUniqueId) {
       RecursiveDrawTree(nextNode);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
     if (x8dc_objectDrawToken == actor->GetAddedToken()) {
 #ifdef TARGET_PC
       CPortActorRenderScope presented(*actor);
 #endif
       actor->Render(*this);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
     actor->SetDrawToken(x8dc_objectDrawToken);
   }
 }
 
 void CStateManager::RendererDrawCallback(const void* drawable, const void* context, int type) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   const CStateManager& mgr = *static_cast< const CStateManager* >(context);
   switch (type) {
   case 0: {
@@ -2810,11 +2834,17 @@ void CStateManager::RendererDrawCallback(const void* drawable, const void* conte
     const TUniqueId nextNode = actor.GetDrawParent();
     if (nextNode != kInvalidUniqueId) {
       mgr.RecursiveDrawTree(nextNode);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
 #ifdef TARGET_PC
     CPortActorRenderScope presented(actor);
 #endif
     actor.Render(mgr);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     actor.SetDrawToken(mgr.x8dc_objectDrawToken);
     break;
   }
@@ -2899,6 +2929,9 @@ bool CStateManager::GetVisSetForArea(const TAreaId areaA, const TAreaId areaB, C
 CGameArea::CChainIterator CWorld::AliveAreasEnd() { return skGlobalNonConstEnd; }
 
 void CStateManager::PreRender() {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!xf94_24_readyToRender) {
     return;
   }
@@ -2924,6 +2957,9 @@ void CStateManager::PreRender() {
   }
 #else
   x850_world->PreRender();
+#endif
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
 #endif
 #ifdef TARGET_PC
   {
@@ -2971,7 +3007,13 @@ void CStateManager::PreRender() {
         CActor* actor = TCastToPtr< CActor >((*areaObjList)[i]);
         if (actor != nullptr && actor->IsDrawEnabled()) {
           actor->CalculateRenderBounds();
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
           actor->PreRender(*this, frustum);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
     }
@@ -2979,6 +3021,9 @@ void CStateManager::PreRender() {
 
   if (!gkWorldOnlyReflection) {
     CacheReflection();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 
   gpRender->PrepareDynamicLights(x8e0_dynamicLights);
@@ -3655,6 +3700,9 @@ float CStateManager::PortZoomedFov(float fov) {
 #endif
 
 void CStateManager::DrawWorld() const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
   // A zoomed pass (sharp scan window) draws before the frame's own: the frame's captures and
   // the gun belong to that one.
@@ -3680,6 +3728,11 @@ void CStateManager::DrawWorld() const {
   const CViewport backupViewport = CGraphics::GetViewport();
   const CFrustumPlanes frustum = SetupViewForDraw(backupViewport);
   const CTransform4f backupViewMatrix = CGraphics::GetViewMatrix();
+#ifdef AURORA_H700
+  // A failed pass returns here through actor/pipeline scopes, then restores the
+  // entered world draw state before returning to CMFGame and the root.
+  const auto drawPasses = [&]() {
+#endif
   const TAreaId visAreaId = GetVisAreaId();
   const rstl::reserved_vector< TUniqueId, 20 >& renderLast =
       x86c_stateManagerContainer->xf39c_renderLast;
@@ -3776,6 +3829,9 @@ void CStateManager::DrawWorld() const {
     portGunFirst = x84c_player->GetPlayerGun()->PortRenderDepth(
         *this, x870_cameraManager->GetGlobalCameraTranslation(*this));
     CGraphics::SetProjectionState(gunProj);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   } else if (sPortGunFirstHold != 0) {
     --sPortGunFirstHold;
   }
@@ -3804,11 +3860,17 @@ void CStateManager::DrawWorld() const {
     // too: Remastered's RenderPrimaryPass 0xf9ccd8 draws its one world in every visor, the
     // X-ray's bit-18 meshes left out by InitMeshFilter 0xf9e764 (kb topic/visor-mesh-filter.md).
     portRoomGeo[i] = (!thermal || portThermalScene) && PortRoomGeo::Draw(*this, area, frustum);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     if (portRoomGeo[i]) {
       continue;
     }
 #endif
     gpRender->DrawUnsortedGeometry(id.Value(), mask, targetMask);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 
   if (!SetupFogForDraw()) {
@@ -3819,6 +3881,9 @@ void CStateManager::DrawWorld() const {
   if (!portCollisionOnly)
 #endif
     x850_world->DrawSky(CTransform4f::Translate(backupViewMatrix.GetTranslation()));
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
   GXPortSetShadowCaster(portShadow);
 #endif
@@ -3838,6 +3903,9 @@ void CStateManager::DrawWorld() const {
         CPortActorRenderScope presented(*actor);
 #endif
         actor->Render(*this);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) return;
+#endif
       }
     }
   }
@@ -3872,7 +3940,11 @@ void CStateManager::DrawWorld() const {
     }
     ++portShadowEligible;
     CPortActorRenderScope presented(actor);
-    if (actor.PortRenderShadowCaster(*this)) {
+    const bool rendered = actor.PortRenderShadowCaster(*this);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
+    if (rendered) {
       if (sShadowCheck && portShadowDrawn == 0) {
         static bool sLogged = false;
         if (!sLogged) {
@@ -3913,6 +3985,9 @@ void CStateManager::DrawWorld() const {
           if (set.GetVisible(const_cast< CGameArea& >(area).LookupPVSID(id)) == kVSS_EndOfTree) {
 #ifdef TARGET_PC
             portShadowOffscreen(*actor, i);
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) return;
+#endif
 #endif
             continue;
           }
@@ -3922,6 +3997,9 @@ void CStateManager::DrawWorld() const {
             const CPlayer::EPlayerMorphBallState state = x84c_player->GetMorphballTransitionState();
             if (state == CPlayer::kMS_Morphed || state == CPlayer::kMS_Unmorphed) {
               x84c_player->AddToRenderer(frustum, *this);
+#ifdef AURORA_H700
+              if (PortH700::GameFailurePending()) return;
+#endif
             } else {
               morphingPlayerVisible = true;
             }
@@ -3945,10 +4023,16 @@ void CStateManager::DrawWorld() const {
             CPortActorRenderScope presented(*actor);
 #endif
             actor->AddToRenderer(frustum, *this);
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) return;
+#endif
           }
 #ifdef TARGET_PC
           if (actor->GetPreRenderClipped()) {
             portShadowOffscreen(*actor, i);
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) return;
+#endif
           }
 #endif
           if (thermal && (actor->GetThermalFlags() & 2) != 0) {
@@ -3973,21 +4057,36 @@ void CStateManager::DrawWorld() const {
       x884_actorModelParticles->AddStragglersToRenderer(*this);
     }
 #endif
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     ++x8dc_objectDrawToken;
     x84c_player->MorphBall()->DrawBallShadow(const_cast< CStateManager& >(*this));
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
     for (const CProjectedShadow* shadow = xf7c_projectedShadow; shadow != nullptr;
          shadow = shadow->GetNextShadow()) {
       shadow->Render(*this);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
 #else
     if (xf7c_projectedShadow != nullptr) {
       xf7c_projectedShadow->Render(*this);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
 #endif
 #ifdef TARGET_PC
     if (flushShadows) {
       PortActorShadow::RenderFrame(*this, backupViewMatrix);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
 #endif
     gpRender->EnablePVS(&set, area.GetId().Value());
@@ -4004,6 +4103,9 @@ void CStateManager::DrawWorld() const {
     gpRender->PortDrawSortedDrawables(area.GetId().Value());
 #else
     gpRender->DrawSortedGeometry(area.GetId().Value(), mask, targetMask);
+#endif
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
 #endif
   }
 
@@ -4039,6 +4141,9 @@ void CStateManager::DrawWorld() const {
     PortRoomGeo::sReplacingArea = portRoomGeo[i];
     gpRender->DrawSortedGeometry(area.GetId().Value(), mask, targetMask);
     PortRoomGeo::sReplacingArea = false;
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
   // Remastered's silhouette shells (the Phazon Suit's aura) over the sorted geometry, reading the
   // opaque copy (port_shell.h).
@@ -4073,12 +4178,18 @@ void CStateManager::DrawWorld() const {
   if (!portCollisionOnly)
 #endif
     x880_envFxManager->Render(*this);
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (morphingPlayerVisible) {
 #ifdef TARGET_PC
     CPortActorRenderScope presented(*x84c_player);
     CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
 #endif
     x84c_player->Render(*this);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 #ifdef TARGET_PC
   GXPortVolumetricFogEnd();
@@ -4095,6 +4206,9 @@ void CStateManager::DrawWorld() const {
             CPortActorRenderScope presented(*actor);
 #endif
             actor->Render(*this);
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) return;
+#endif
           }
         }
       }
@@ -4116,6 +4230,9 @@ void CStateManager::DrawWorld() const {
                (actor->GetCurrentAreaId() == kInvalidAreaId && id == visAreaId))) {
             CPortActorRenderScope presented(*actor);
             actor->PortAddThermalColdNode(frustum, *this);
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) return;
+#endif
             ++coldNodes;
           }
         }
@@ -4142,6 +4259,9 @@ void CStateManager::DrawWorld() const {
           CPortActorRenderScope presented(*actor);
 #endif
           actor->Render(*this);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
     }
@@ -4154,11 +4274,20 @@ void CStateManager::DrawWorld() const {
       // bit-19 meshes through the thermal override, in place of the retail hot surfaces.
       if (portRoomGeo[i]) {
         PortRoomGeo::DrawThermalHot(*this, *areas[i], frustum);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) return;
+#endif
         continue;
       }
 #endif
       gpRender->DrawUnsortedGeometry(id.Value(), mask, 0x20);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
       gpRender->DrawAreaGeometry(id.Value(), mask, 0x10);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
     ++x8dc_objectDrawToken;
     for (int i = 0; i < areas.size(); ++i) {
@@ -4171,18 +4300,30 @@ void CStateManager::DrawWorld() const {
           CPortActorRenderScope presented(*actor);
 #endif
           actor->AddToRenderer(frustum, *this);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
       if (i == areas.size() - 1) {
         x884_actorModelParticles->AddStragglersToRenderer(*this);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) return;
+#endif
         CDecalManager::AddToRenderer(frustum, *this);
         if (x84c_player != nullptr) {
           x84c_player->AddToRenderer(frustum, *this);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
       ++x8dc_objectDrawToken;
       gpRender->EnablePVS(&visibility[i], id.Value());
       gpRender->DrawSortedGeometry(id.Value(), mask, 0x10);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
     gpRender->PostRenderFogs();
   }
@@ -4195,6 +4336,9 @@ void CStateManager::DrawWorld() const {
   if (gkWorldOnlyReflection) {
 #endif
     const_cast< CStateManager* >(this)->CacheReflection();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 #ifdef TARGET_PC
   if (x84c_player != nullptr && !portZoomed) {
@@ -4243,6 +4387,12 @@ void CStateManager::DrawWorld() const {
         CPortPipelineContextScope globalPipelines(AURORA_PIPELINE_CONTEXT_GLOBAL);
         if (beam) {
           arm.RenderGrappleBeam(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) {
+            if (gunFov) CGraphics::SetProjectionState(gunProj);
+            return;
+          }
+#endif
         }
         if (muzzle) {
           gun.PortRenderMuzzleFxAt(*this, muzzleXf);
@@ -4255,10 +4405,16 @@ void CStateManager::DrawWorld() const {
       CGraphics::SetProjectionState(gunProj);
     }
 #endif
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 #ifdef TARGET_PC
   if (!portZoomed)
     PortViewModel::Draw(*this);
+#endif
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
 #endif
 #ifdef TARGET_PC
   // Remastered draws its visor effects after the post (RenderAfterPostFX 0xf9fa6c, but not in
@@ -4277,6 +4433,9 @@ void CStateManager::DrawWorld() const {
           CPortActorRenderScope presented(*actor);
 #endif
           actor->Render(*this);
+#ifdef AURORA_H700
+          if (PortH700::GameFailurePending()) return;
+#endif
         }
       }
     }
@@ -4308,10 +4467,34 @@ void CStateManager::DrawWorld() const {
   ResetViewAfterDraw(backupViewport, backupViewMatrix);
   DrawE3DeathEffect();
   DrawAdditionalFilters();
+#ifdef AURORA_H700
+  };
+  drawPasses();
+  if (PortH700::GameFailurePending()) {
+#ifdef TARGET_PC
+    PortRoomGeo::sReplacingArea = false;
+    GXPortSetShadowCaster(false);
+    GXPortVolumetricFogEnd();
+    CCubeMaterial::sPortPBRThermal = CCubeMaterial::kPT_None;
+    CCubeModel::PortSetThermalPass(PortVisorMesh::kTP_None);
+    CModelData::sPortThermalColdNodes = 0;
+    sPortVisorEffectsDeferred = false;
+#endif
+    x87c_fluidPlaneManager->EndFrame();
+    gpRender->SetThermal(false, 0.f, CColor::Black());
+    xf34_thermalFlag = kTD_Bypass;
+    CGraphics::SetDepthRange(0.125f, 1.f);
+    ResetViewAfterDraw(backupViewport, backupViewMatrix);
+    return;
+  }
+#endif
 }
 
 #ifdef TARGET_PC
 void CStateManager::PortDrawVisorEffects() const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!sPortVisorEffectsDeferred)
     return;
   sPortVisorEffectsDeferred = false;
@@ -4330,6 +4513,9 @@ void CStateManager::PortDrawVisorEffects() const {
   SetupViewForDraw(backupViewport);
   CGraphics::SetDepthRange(0.015625f, 0.03125f);
   for (const TUniqueId* it = renderLast.begin(); it != renderLast.end(); ++it) {
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) break;
+#endif
     const CActor* actor = static_cast< const CActor* >(GetObjectById(*it));
     if (actor != nullptr && PortIsVisorEffect(*actor)) {
       CPortActorRenderScope presented(*actor);

@@ -1,5 +1,9 @@
 #include "MetroidPrime/Enemies/CWallCrawlerSwarm.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 #include "Collision/CCollidableSphere.hpp"
 #include "Kyoto/Animation/CVertexMorphEffect.hpp"
 #include "Kyoto/Audio/CSfxManager.hpp"
@@ -201,6 +205,31 @@ void CWallCrawlerSwarm::AddDoorRepulsors(CStateManager& mgr) {
 }
 
 void CWallCrawlerSwarm::AllocateSkinnedModels(CStateManager& mgr, CModelData::EWhichModel which) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+  x430_posWorkspaces.clear();
+  x484_nrmWorkspaces.clear();
+  rstl::reserved_vector< rstl::auto_ptr< rstl::game_memory< float > >, 10 > positions;
+  rstl::reserved_vector< float*, 10 > normalWorkspaces;
+  for (int i = 0; i < 10; ++i) {
+    float* normals = nullptr;
+    rstl::auto_ptr< rstl::game_memory< float > > workspace(
+        x4b0_modelDatas[i]->PickAnimatedModel(which).AllocateNewWorkspace(&normals));
+    if (PortH700::GameFailurePending()) return;
+    positions.push_back(workspace);
+    normalWorkspaces.push_back(normals);
+    if (i < 9) {
+      x4b0_modelDatas[i]->EnableLooping(true);
+      x4b0_modelDatas[i]->AdvanceAnimation(
+          x4b0_modelDatas[i]->GetAnimationData()->GetAnimTimeRemaining(rstl::string_l("Whole Body")) *
+              (float(i) / 16.f),
+          mgr, GetCurrentAreaId(), true);
+      if (PortH700::GameFailurePending()) return;
+    }
+  }
+  x430_posWorkspaces = positions;
+  x484_nrmWorkspaces = normalWorkspaces;
+#else
   x430_posWorkspaces.clear();
   x484_nrmWorkspaces.clear();
   for (int i = 0; i < 9; ++i) {
@@ -218,6 +247,7 @@ void CWallCrawlerSwarm::AllocateSkinnedModels(CStateManager& mgr, CModelData::EW
   x430_posWorkspaces.push_back(
       x4b0_modelDatas[9]->PickAnimatedModel(which).AllocateNewWorkspace(&normals));
   x484_nrmWorkspaces.push_back(normals);
+#endif
   x4dc_whichModel = which;
 }
 
@@ -234,6 +264,9 @@ void CWallCrawlerSwarm::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid,
       x108_boids.push_back(CBoid(CTransform4f::Identity(), i));
     }
     AllocateSkinnedModels(mgr, CModelData::kWM_Normal);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     AddDoorRepulsors(mgr);
     SetDrawShadow(false);
     break;
@@ -571,6 +604,9 @@ CColor CWallCrawlerSwarm::SoftwareLight(const CStateManager& mgr, const CAABox& 
 }
 
 void CWallCrawlerSwarm::Render(const CStateManager& mgr) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   uint drawMask = ~0;
   const bool enableLighting = x560_24_enableLighting;
   const bool useSoftwareLight = x560_25_useSoftwareLight;
@@ -594,9 +630,18 @@ void CWallCrawlerSwarm::Render(const CStateManager& mgr) const {
                    GX_SRC_REG, static_cast< GXLightID >(lights), lights ? GX_DF_CLAMP : GX_DF_NONE,
                    lights ? GX_AF_SPOT : GX_AF_NONE);
   for (int x = 0; x < 5; ++x) {
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) break;
+#endif
     int rowIndex = x;
     for (int y = 0; y < 5; ++y, rowIndex += 5) {
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) break;
+#endif
       for (int z = 0; z < 5; ++z) {
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) break;
+#endif
         const int index = rowIndex + z * 25;
         CBoid* boid = x168_partitionedBoidLists[index];
         if (boid != nullptr) {
@@ -616,6 +661,9 @@ void CWallCrawlerSwarm::Render(const CStateManager& mgr) const {
             }
           }
           for (; boid != nullptr; boid = boid->x44_next) {
+#ifdef AURORA_H700
+            if (PortH700::GameFailurePending()) break;
+#endif
             if (boid->x80_25_inFrustum && boid->x80_24_active) {
               RenderBoid(boid, drawMask, thermalHot, flags);
             }
@@ -627,6 +675,9 @@ void CWallCrawlerSwarm::Render(const CStateManager& mgr) const {
   CBoid* boid = x360_outlierBoidList;
   int index = 0;
   for (; boid != nullptr; boid = boid->x44_next) {
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) break;
+#endif
     ++index;
     if (boid->x80_25_inFrustum && boid->x80_24_active) {
       if (enableLighting) {
@@ -651,11 +702,17 @@ void CWallCrawlerSwarm::Render(const CStateManager& mgr) const {
   CCubeModel::sPortUnbaked = false;
 #endif
   CGraphics::DisableAllLights();
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   DrawTouchBounds();
 }
 
 void CWallCrawlerSwarm::RenderBoid(CBoid* boid, uint& drawMask, bool thermalHot,
                                    const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   uint index = boid->x7c_16_index & 3;
   uint mask = drawMask;
   if (boid->x80_26_launched) {
@@ -669,10 +726,15 @@ void CWallCrawlerSwarm::RenderBoid(CBoid* boid, uint& drawMask, bool thermalHot,
   CAnimData& animData = *data.AnimationData();
   CSkinnedModel& model = data.PickAnimatedModel(x4dc_whichModel);
   if (mask & (1 << index)) {
-    mask &= ~(1 << index);
     animData.BuildPose();
+#ifdef AURORA_H700
+    if (!model.PortTryCalculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(),
+                                nullptr, x430_posWorkspaces[index].get())) return;
+#else
     model.Calculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(), nullptr,
                     x430_posWorkspaces[index].get());
+#endif
+    mask &= ~(1 << index);
   }
   gpRender->SetAmbientColor(boid->x40_ambientLighting);
   gpRender->SetModelMatrix(boid->GetTransform());
@@ -697,6 +759,9 @@ void CWallCrawlerSwarm::RenderBoid(CBoid* boid, uint& drawMask, bool thermalHot,
   } else {
     model.Draw(positions, normals, flags);
   }
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   drawMask = mask;
 }
 
@@ -708,6 +773,9 @@ void CWallCrawlerSwarm::Think(float dt, CStateManager& mgr) {
     const CModelData::EWhichModel which = CModelData::GetRenderingModel(mgr);
     if (x4dc_whichModel != which) {
       AllocateSkinnedModels(mgr, which);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
     }
   }
   SetTransformDirty(true);

@@ -629,6 +629,9 @@ CGameArchitectureSupport::~CGameArchitectureSupport() {
 }
 
 bool CGameArchitectureSupport::UpdateTicks() {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return false;
+#endif
   bool terminate = false;
   const BOOL interrupts = OSDisableInterrupts();
   const float elapsed = x20_tickStopwatch.GetElapsedTime();
@@ -700,15 +703,27 @@ bool CGameArchitectureSupport::UpdateTicks() {
     }
     x4_archQueue.Push(MakeMsg::CreateTimerTick(kAMT_Game, tickPeriod));
     x58_ioWinMgr.PumpMessages(x4_archQueue);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return false;
+#endif
     ++sTicksAdvanced;
   }
 
   x58_ioWinMgr.PumpMessages(x4_archQueue);
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return false;
+#endif
   return !terminate;
 }
 
 void CGameArchitectureSupport::Update() {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   gpGameState->WorldTransitionManager()->TouchModels();
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   x4_archQueue.Push(MakeMsg::CreateFrameEnd(kAMT_Game, x78_gameFrameCount));
   x58_ioWinMgr.PumpMessages(x4_archQueue);
 }
@@ -1434,6 +1449,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
       PortH700RootSafePoint("loop: draw/loader path returned");
 #endif
       archSupport->Update();
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: architecture update returned, before audio/reset");
+#endif
       for (uint i = 0; i < sTicksAdvanced; ++i) {
         CSfxManager::Update(dt);
         UpdateStreamedAudio(dt);

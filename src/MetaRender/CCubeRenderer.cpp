@@ -708,6 +708,9 @@ void CCubeRenderer::AddPlaneObject(const void* obj, const CAABox& aabb, const CP
 
 void CCubeRenderer::AddDrawable(const void* obj, const CVector3f& pos, const CAABox& aabb, int mode,
                                 IRenderer::EDrawableSorting sorting) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (sorting == IRenderer::kDS_UnsortedCallback) {
     xa8_drawableCallback(obj, xac_drawableCallbackUserData, mode);
   } else {
@@ -751,6 +754,9 @@ void CCubeRenderer::AddWorldSurfaces(CCubeModel& model) {
 void CCubeRenderer::DrawRenderBucketsDebug() {}
 
 void CCubeRenderer::RenderBucketItems(const CAreaListItem* areaListItem) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   AUTO_CONST_REF(bucketData, Buckets::GetBucketData());
   AUTO_CONST_REF(bucketHolder, Buckets::GetBucketHolder());
 
@@ -797,6 +803,9 @@ void CCubeRenderer::RenderBucketItems(const CAreaListItem* areaListItem) {
         break;
       }
       }
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
       lastType = drawType;
     }
   }
@@ -1179,6 +1188,9 @@ CTexture* CCubeRenderer::GetRealReflection() {
 
 void CCubeRenderer::CacheReflection(void (*cb)(void*, const CVector3f&), void* ctx,
                                     bool clearAfter) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (x318_24_reflectionDirty) {
     x318_24_reflectionDirty = false;
     x2dc_reflectionAge = 0;
@@ -1205,9 +1217,15 @@ void CCubeRenderer::CacheReflection(void (*cb)(void*, const CVector3f&), void* c
 
     cb(ctx, CCubeMaterial::GetViewingReflection());
 
-    void* reflectionData = const_cast< void* >(x14c_reflectionTex->GetConstBitMapData(0));
-    CGX::SetZMode(true, GX_LEQUAL, true);
-    GXCopyTex(reflectionData, clearAfter);
+#ifdef AURORA_H700
+    if (!PortH700::GameFailurePending()) {
+#endif
+      void* reflectionData = const_cast< void* >(x14c_reflectionTex->GetConstBitMapData(0));
+      CGX::SetZMode(true, GX_LEQUAL, true);
+      GXCopyTex(reflectionData, clearAfter);
+#ifdef AURORA_H700
+    }
+#endif
 
     CGraphics::SetViewport(oldLeft, oldTop, oldWidth, oldHeight);
     CGraphics::SetScissor(oldLeft, oldTop, oldWidth, oldHeight);

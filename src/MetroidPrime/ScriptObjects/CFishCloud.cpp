@@ -1,4 +1,8 @@
 #include "MetroidPrime/ScriptObjects/CFishCloud.hpp"
+
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
 #include "MetroidPrime/ScriptObjects/CFishCloudModifier.hpp"
 
 #include "Kyoto/Animation/CSkinnedModel.hpp"
@@ -223,6 +227,30 @@ CFishCloud::CFishCloud(TUniqueId uid, const bool active, const rstl::string& nam
 }
 
 void CFishCloud::InitAnimBoids(CStateManager& mgr, CModelData::EWhichModel which) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+  x178_posWorkspaces.clear();
+  x19c_nrmWorkspaces.clear();
+  // Partial replacements stay locally owned until the complete pair is ready.
+  rstl::reserved_vector< rstl::auto_ptr< rstl::game_memory< float > >, 4 > positions;
+  rstl::reserved_vector< float*, 4 > normalWorkspaces;
+  for (int i = 0; i < 4; ++i) {
+    float* normals = nullptr;
+    rstl::auto_ptr< rstl::game_memory< float > > workspace(
+        x1b0_models[i]->PickAnimatedModel(which).AllocateNewWorkspace(&normals));
+    if (PortH700::GameFailurePending()) return;
+    positions.push_back(workspace);
+    normalWorkspaces.push_back(normals);
+    x1b0_models[i]->EnableLooping(true);
+    x1b0_models[i]->AdvanceAnimation(
+        (float(i) / 4.f) *
+            x1b0_models[i]->GetAnimationData()->GetAnimTimeRemaining(rstl::string_l("Whole Body")),
+        mgr, GetCurrentAreaId(), true);
+    if (PortH700::GameFailurePending()) return;
+  }
+  x178_posWorkspaces = positions;
+  x19c_nrmWorkspaces = normalWorkspaces;
+#else
   x178_posWorkspaces.clear();
   x19c_nrmWorkspaces.clear();
   for (int i = 0; i < 4; ++i) {
@@ -236,6 +264,7 @@ void CFishCloud::InitAnimBoids(CStateManager& mgr, CModelData::EWhichModel which
             x1b0_models[i]->GetAnimationData()->GetAnimTimeRemaining(rstl::string_l("Whole Body")),
         mgr, GetCurrentAreaId(), true);
   }
+#endif
   x230_whichModel = which;
 }
 
@@ -570,6 +599,9 @@ void CFishCloud::PreRender(CStateManager& mgr, const CFrustumPlanes& frustum) {
 
 void CFishCloud::RenderBoid(int idx, const CBoid& boid, uint& drawMask, const bool thermalHot,
                             const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   const uint modelIndex = idx & 3;
   uint mask = drawMask;
   CModelData& modelData = *x1b0_models[modelIndex];
@@ -577,10 +609,15 @@ void CFishCloud::RenderBoid(int idx, const CBoid& boid, uint& drawMask, const bo
   CSkinnedModel& model = modelData.PickAnimatedModel(CModelData::kWM_Normal);
   const uint bit = 1 << modelIndex;
   if (mask & bit) {
-    mask &= ~bit;
     animData.BuildPose();
+#ifdef AURORA_H700
+    if (!model.PortTryCalculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(),
+                                nullptr, x178_posWorkspaces[modelIndex].get())) return;
+#else
     model.Calculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(), nullptr,
                     x178_posWorkspaces[modelIndex].get());
+#endif
+    mask &= ~bit;
   }
 #ifdef TARGET_PC
   // CFishCloudMP1 faces an animated boid along its turning heading; no scale, no wobble.
@@ -600,10 +637,16 @@ void CFishCloud::RenderBoid(int idx, const CBoid& boid, uint& drawMask, const bo
   } else {
     model.Draw(positions, normals, flags);
   }
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   drawMask = mask;
 }
 
 void CFishCloud::Render(const CStateManager& mgr) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!GetActive()) {
     return;
   }
@@ -628,6 +671,9 @@ void CFishCloud::Render(const CStateManager& mgr) const {
     uint drawMask = ~0;
     int index = 0;
     for (AUTO(it, xe8_boids.begin()); it != xe8_boids.end(); ++it, ++index) {
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) break;
+#endif
       if (it->x20_active) {
         RenderBoid(index, *it, drawMask, thermalHot, flags);
       }
@@ -638,6 +684,9 @@ void CFishCloud::Render(const CStateManager& mgr) const {
     CGraphics::DisableAllLights();
     gpRender->SetModelMatrix(CTransform4f::Identity());
     for (AUTO(it, xe8_boids.begin()); it != xe8_boids.end(); ++it) {
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) break;
+#endif
       if (it->x20_active) {
         modelData.SetScale(CVector3f(it->x18_scale, it->x18_scale, it->x18_scale));
 #ifdef TARGET_PC

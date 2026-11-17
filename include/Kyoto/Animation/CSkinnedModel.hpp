@@ -3,6 +3,10 @@
 
 #include "types.h"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 #include "Kyoto/Animation/CSkinRules.hpp"
 #include "Kyoto/TToken.hpp"
 
@@ -40,6 +44,10 @@ public:
   const CVector3f* GetPositions() const;
   void Calculate(const CPoseAsTransforms&, const rstl::optional_object< CVertexMorphEffect >&,
                  const float*, float*);
+#ifdef AURORA_H700
+  bool PortTryCalculate(const CPoseAsTransforms&,
+                        const rstl::optional_object< CVertexMorphEffect >&, const float*, float*);
+#endif
   void Draw(const CModelFlags&) const;
   void Draw(const float* positions, const float* normals, const CModelFlags& flags) const;
   void Draw(TDrawFunc func, void* data);
@@ -66,6 +74,9 @@ public:
   static void* sPointGenData;
 
   static void Draw(const TDrawFunc func, const float* positions, const float* normals, void* data) {
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     func(positions, normals, data);
   }
 

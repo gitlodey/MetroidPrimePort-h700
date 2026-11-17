@@ -112,6 +112,21 @@ class H700GameFailureWiring(unittest.TestCase):
                      'PortH700RootSafePoint("loop: draw and EndScene returned");',
                      "presented = true;", "++archSupport->GetFramesDrawn();")
 
+    def test_reflection_failure_skips_copy_but_restores_viewport_and_scissor(self):
+        render = braced(source("src/MetaRender/CCubeRenderer.cpp"), "void CCubeRenderer::CacheReflection(")
+        self.ordered(render, "if (PortH700::GameFailurePending()) return;",
+                     "cb(ctx, CCubeMaterial::GetViewingReflection());",
+                     "if (!PortH700::GameFailurePending()) {", "GetConstBitMapData(0)",
+                     "GXCopyTex(reflectionData, clearAfter);", "#ifdef AURORA_H700", "}", "#endif",
+                     "CGraphics::SetViewport(oldLeft, oldTop, oldWidth, oldHeight);",
+                     "CGraphics::SetScissor(oldLeft, oldTop, oldWidth, oldHeight);")
+
+    def test_architecture_update_returns_to_root_before_audio_and_reset(self):
+        root = braced(source("src/MetroidPrime/main.cpp"), "int CMain::RsMain(")
+        self.ordered(root, "archSupport->Update();",
+                     'PortH700RootSafePoint("loop: architecture update returned, before audio/reset");',
+                     "CSfxManager::Update(dt);", "UpdateStreamedAudio(dt);", "if (CheckTerminate())")
+
     def test_actual_endscene_submission_and_sync_pulse_precede_failure_gate_and_tail(self):
         graphics = source("src/Kyoto/Graphics/DolphinCGraphics.cpp")
         frame_end = braced(graphics, "void AuroraFrameEnd()")

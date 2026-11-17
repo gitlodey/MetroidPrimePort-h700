@@ -175,3 +175,11 @@ Checked products/alignment/narrowing выполняются до pointer use; ri
 Full incremental ARM64 game compile/link,23/23CPU/no-init/DVD CTest (включая новый latch test и7source-binding cases), non-H700 compile3changed game TUs PASS. Independent read-only review не нашёл blockers этой итерации. Tests различают CPU policy/source binding и actual game/GPU execution; последнее не выполнялось. Commands/logs — ignored `gm12-root-*`.
 
 Это завершённая первая итерация, **не весь GM-12**: новые skin failure producers ещё не включены. Далее direct consumer/workspace/dispatch wiring, затем их единое включение с allocation/wait regressions.
+
+### GM-12, итерация 2 — LOCAL PASS: consumers/workspace/dispatch
+
+H700-only bool wrappers и sticky-status checks останавливают direct model/animation/shadow/swarm consumers. External workspace pairs сначала находятся у local owners и публикуются только целиком; failed Calculate не обновляет draw mask. После отказа не выполняются shadow/reflection copies, следующие actor/pass/message и IOWin removal. Actor hook, time-provider, projection/view/thermal и scan-zoom restores сохранены. Think/Update возвращают отказ до ClearGraveyard; CMFGame восстанавливает random scope. Root проверяет status сразу после architecture Update до audio/reset.
+
+Full incremental ARM64 game compile/link PASS;25/25 CPU/no-init/DVD CTest PASS, включая33 source-binding cases в трёх status/consumer/dispatch tests. Все13 изменённых game TUs компилируются без AURORA_H700. Первый non-H700 invocation остановился из-за отсутствия git в immutable image; список файлов передан явно без установки tools. Повторный CTest использует точный DVD filter. Commands/logs — ignored `gm12-consumers-*`. Source checks не являются runtime failure injection; GPU/device не запускались.
+
+Новые skin allocation/wait failure producers по-прежнему выключены. Следующая итерация включает их вместе с root handshake и behavioral regressions; весь GM-12 ещё не завершён.

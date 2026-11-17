@@ -221,6 +221,9 @@ void CSkinnedModel::Construct() {
 }
 
 void CSkinnedModel::Draw(const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
@@ -238,6 +241,9 @@ void CSkinnedModel::Draw(const CModelFlags& flags) const {
 }
 
 void CSkinnedModel::Draw(const TDrawFunc func, void* data) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
@@ -261,12 +267,26 @@ void CSkinnedModel::Draw(const TDrawFunc func, void* data) {
 
 void CSkinnedModel::Draw(const float* positions, const float* normals,
                          const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
   x4_model->Draw(positions, normals, flags);
   PostDrawFunc();
 }
+
+#ifdef AURORA_H700
+bool CSkinnedModel::PortTryCalculate(
+    const CPoseAsTransforms& pose,
+    const rstl::optional_object< CVertexMorphEffect >& morphEffect,
+    const float* averagedNormals, float* workVerts) {
+  if (PortH700::GameFailurePending()) return false;
+  Calculate(pose, morphEffect, averagedNormals, workVerts);
+  return !PortH700::GameFailurePending();
+}
+#endif
 
 void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
                               const rstl::optional_object< CVertexMorphEffect >& morphEffect,

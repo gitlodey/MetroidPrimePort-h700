@@ -342,10 +342,17 @@ void CAnimData::AdvanceParticles(const CTransform4f& xf, float dt, const CVector
 void CAnimData::PoseSkinnedModel(const CSkinnedModel& model, const CPoseAsTransforms& pose,
                                  const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                                  const float* avgNormals) const {
+#ifdef AURORA_H700
+  const_cast< CSkinnedModel& >(model).PortTryCalculate(pose, morphEffect, avgNormals, nullptr);
+#else
   const_cast< CSkinnedModel& >(model).Calculate(pose, morphEffect, avgNormals, nullptr);
+#endif
 }
 
 void CAnimData::DrawSkinnedModel(const CSkinnedModel& model, const CModelFlags& flags) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   GXLightID light = static_cast< GXLightID >(CGraphics::GetLightMask());
 
   GXAttnFn attnFn = GX_AF_NONE;
@@ -697,9 +704,23 @@ void CAnimData::PreRender() {
   }
 }
 
+#ifdef AURORA_H700
+bool CAnimData::PortTrySetupRender(
+    const CSkinnedModel& model,
+    const rstl::optional_object< CVertexMorphEffect >& morphEffect,
+    const float* avgNormals) const {
+  if (PortH700::GameFailurePending()) return false;
+  SetupRender(model, morphEffect, avgNormals);
+  return !PortH700::GameFailurePending();
+}
+#endif
+
 void CAnimData::SetupRender(const CSkinnedModel& model,
                             const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                             const float* avgNormals) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!x220_30_poseBuilt) {
     CAnimData* self = const_cast< CAnimData* >(this);
 #ifdef TARGET_PC
@@ -719,7 +740,11 @@ void CAnimData::SetupRender(const CSkinnedModel& model,
 void CAnimData::Render(const CSkinnedModel& model, const CModelFlags& flags,
                        const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                        const float* avgNormals) const {
+#ifdef AURORA_H700
+  if (!PortTrySetupRender(model, morphEffect, avgNormals)) return;
+#else
   SetupRender(model, morphEffect, avgNormals);
+#endif
   DrawSkinnedModel(model, flags);
 }
 

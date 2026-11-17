@@ -123,6 +123,10 @@ public:
   // PreRender__9CAnimDataFv
   void SetupRender(const CSkinnedModel&, const rstl::optional_object< CVertexMorphEffect >&,
                    const float*) const;
+#ifdef AURORA_H700
+  bool PortTrySetupRender(const CSkinnedModel&,
+                          const rstl::optional_object< CVertexMorphEffect >&, const float*) const;
+#endif
   // Render__9CAnimDataCFRC13CSkinnedModelRC11CModelFlagsRCQ24rstl37optional_object<18CVertexMorphEffect>PCf
   void Render(const CSkinnedModel&, const CModelFlags&,
               const rstl::optional_object< CVertexMorphEffect >&, const float*) const;

@@ -1,5 +1,9 @@
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "Kyoto/Animation/CVertexMorphEffect.hpp"
 #include "Kyoto/Audio/CSfxManager.hpp"
@@ -125,6 +129,9 @@ void CSnakeWeedSwarm::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid, C
   switch (msg) {
   case kSM_Registered:
     InitAnimBoids(mgr, CModelData::kWM_Normal);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     SetCalculateLighting(true);
     ActorLights()->SetCastShadows(true);
     break;
@@ -138,6 +145,29 @@ void CSnakeWeedSwarm::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid, C
 }
 
 void CSnakeWeedSwarm::InitAnimBoids(CStateManager& mgr, CModelData::EWhichModel which) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+  x178_posWorkspaces.clear();
+  x19c_nrmWorkspaces.clear();
+  rstl::reserved_vector< rstl::auto_ptr< rstl::game_memory< float > >, 4 > positions;
+  rstl::reserved_vector< float*, 4 > normalWorkspaces;
+  for (int i = 0; i < 4; ++i) {
+    float* normals = nullptr;
+    rstl::auto_ptr< rstl::game_memory< float > > workspace(
+        x1b0_modelData[i]->PickAnimatedModel(which).AllocateNewWorkspace(&normals));
+    if (PortH700::GameFailurePending()) return;
+    positions.push_back(workspace);
+    normalWorkspaces.push_back(normals);
+    x1b0_modelData[i]->EnableLooping(true);
+    x1b0_modelData[i]->AdvanceAnimation(
+        x1b0_modelData[i]->GetAnimationData()->GetAnimTimeRemaining(rstl::string_l("Whole Body")) *
+            (float(i) / 4.f),
+        mgr, GetCurrentAreaId(), true);
+    if (PortH700::GameFailurePending()) return;
+  }
+  x178_posWorkspaces = positions;
+  x19c_nrmWorkspaces = normalWorkspaces;
+#else
   x178_posWorkspaces.clear();
   x19c_nrmWorkspaces.clear();
   for (int i = 0; i < 4; ++i) {
@@ -151,6 +181,7 @@ void CSnakeWeedSwarm::InitAnimBoids(CStateManager& mgr, CModelData::EWhichModel 
             (float(i) / 4.f),
         mgr, GetCurrentAreaId(), true);
   }
+#endif
   x1c4_which = which;
 }
 
@@ -209,6 +240,9 @@ void CSnakeWeedSwarm::Think(float dt, CStateManager& mgr) {
       CModelData::EWhichModel which = CModelData::GetRenderingModel(mgr);
       if (x1c4_which != which) {
         InitAnimBoids(mgr, which);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) return;
+#endif
       }
     }
     for (int i = 0; i < 4; ++i) {
@@ -348,6 +382,9 @@ void CSnakeWeedSwarm::PreRender(CStateManager& mgr, const CFrustumPlanes& frustu
 }
 
 void CSnakeWeedSwarm::RenderBoid(uint index, const CBoid& boid, uint& posesToBuild) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   const uint modelIndex = index & 3;
   int mask = posesToBuild;
   CModelData& data = *x1b0_modelData[modelIndex];
@@ -355,20 +392,31 @@ void CSnakeWeedSwarm::RenderBoid(uint index, const CBoid& boid, uint& posesToBui
   CSkinnedModel& model = data.PickAnimatedModel(x1c4_which);
   const int bit = 1 << modelIndex;
   if (mask & bit) {
-    mask &= ~bit;
     animData.BuildPose();
+#ifdef AURORA_H700
+    if (!model.PortTryCalculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(),
+                                nullptr, x178_posWorkspaces[modelIndex].get())) return;
+#else
     model.Calculate(animData.GetPose(), rstl::optional_object< CVertexMorphEffect >(), nullptr,
                     x178_posWorkspaces[modelIndex].get());
+#endif
+    mask &= ~bit;
   }
   gpRender->SetModelMatrix(
       CTransform4f::Translate(boid.GetLocation() - CVector3f(0.f, 0.f, boid.GetDepth())) *
       CTransform4f::Scale(boid.GetSize()));
   model.Draw(x178_posWorkspaces[modelIndex].get(), x19c_nrmWorkspaces[modelIndex],
              CModelFlags(CModelFlags::kT_Opaque, 1.f));
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   posesToBuild = mask;
 }
 
 void CSnakeWeedSwarm::AddToRenderer(const CFrustumPlanes& frustum, const CStateManager& mgr) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!GetPreRenderClipped()) {
     if (x1ec_particleGen1.get()) {
       gpRender->AddParticleGen(*x1ec_particleGen1);
@@ -390,6 +438,9 @@ void CSnakeWeedSwarm::AddToRenderer(const CFrustumPlanes& frustum, const CStateM
 #endif
     uint index = 0;
     for (AUTO(it, x130_boids.begin()); it != x130_boids.end(); ++it, ++index) {
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) break;
+#endif
       RenderBoid(index, *it, posesToBuild);
     }
 #ifdef TARGET_PC

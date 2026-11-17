@@ -1,5 +1,9 @@
 #include "MetroidPrime/CProjectedShadow.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "Kyoto/Animation/CVertexMorphEffect.hpp"
 #include "Kyoto/Graphics/CGX.hpp"
@@ -70,6 +74,9 @@ void CProjectedShadow::RenderShadowBuffer(CStateManager& mgr, int count,
                                           const CTransform4f* const* transforms, int flags,
                                           const CVector3f& translation, float scale,
                                           float zDistanceAdjust) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (count < 1) {
     return;
   }
@@ -83,6 +90,9 @@ void CProjectedShadow::RenderShadowBuffer(CStateManager& mgr, const CModelData& 
                                           const CTransform4f& xf, int flags,
                                           const CVector3f& translation, float scale,
                                           float zDistanceAdjust) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   x68_bounds = modelData.GetBounds(xf);
 #endif
   x84_scale = scale;
@@ -142,7 +152,12 @@ void CProjectedShadow::RenderShadowBuffer(CStateManager& mgr, const CModelData& 
 #endif
     if (const CAnimData* animData = modelData.GetAnimationData()) {
       CSkinnedModel& model = modelData.PickAnimatedModel(CModelData::kWM_Normal);
+#ifdef AURORA_H700
+      if (!animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(),
+                                        nullptr)) break;
+#else
       animData->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
       SShadowDrawContext context(model, flags == 0);
       model.Draw(reinterpret_cast< TDrawFunc >(ModelDrawCallback), &context);
     } else {
@@ -150,17 +165,30 @@ void CProjectedShadow::RenderShadowBuffer(CStateManager& mgr, const CModelData& 
       model->UpdateLastFrame();
       model->GetCubeModel()->DrawFlat(nullptr, nullptr, flags == 0 ? kSS_All : kSS_Unsorted);
     }
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) break;
+#endif
   }
 #else
   const CAnimData* animData = modelData.GetAnimationData();
   CSkinnedModel& model = modelData.PickAnimatedModel(CModelData::kWM_Normal);
+#ifdef AURORA_H700
+  if (animData->PortTrySetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr)) {
+#else
   animData->SetupRender(model, rstl::optional_object< CVertexMorphEffect >(), nullptr);
+#endif
   SShadowDrawContext context(model, flags == 0);
   CGraphics::SetModelMatrix(xf * CTransform4f::Scale(CVector3f(modelData.GetScale())));
   model.Draw(reinterpret_cast< TDrawFunc >(ModelDrawCallback), &context);
+#ifdef AURORA_H700
+  }
+#endif
 
 #endif
 
+#ifdef AURORA_H700
+  if (!PortH700::GameFailurePending()) {
+#endif
   bool useVideoFilter = CGraphics::GetUseVideoFilter();
   CGraphics::SetUseVideoFilter(false);
   CGX::SetZMode(true, GX_LEQUAL, true);
@@ -170,11 +198,20 @@ void CProjectedShadow::RenderShadowBuffer(CStateManager& mgr, const CModelData& 
   x0_texture.UnLock();
   GXPixModeSync();
   CGraphics::SetUseVideoFilter(useVideoFilter);
+#ifdef AURORA_H700
+  }
+#endif
   CGraphics::SetViewPointMatrix(oldView);
   CGraphics::SetProjectionState(oldProjection);
   gpRender->SetViewport(oldViewport.mLeft, oldViewport.mTop, oldViewport.mWidth,
                         oldViewport.mHeight);
   CGraphics::SetDepthRange(oldNear, oldFar);
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) {
+    x80_enabled = false;
+    return;
+  }
+#endif
   mgr.SetProjectedShadow(this);
 }
 
@@ -186,6 +223,9 @@ CAABox ScaleAndTranslateBounds(const CAABox& bounds, const CVector3f& translatio
 }
 
 void CProjectedShadow::Render(const CStateManager& mgr) const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (!x80_enabled) {
     return;
   }

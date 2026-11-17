@@ -5,6 +5,10 @@
 
 #include "rstl/string.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 static const char* tmp = "Msg[%3d] %s";
 static const char* tmp2 = "-------------------------";
 static const char* tmp3 = "Draw[%3d] %s";
@@ -153,6 +157,9 @@ rstl::ncrc_ptr< CIOWin > CIOWinManager::FindIOWin(const rstl::string& name) cons
 
 void CIOWinManager::PumpMessages(CArchitectureQueue& queue) {
   while (!queue.IsEmpty()) {
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     CArchitectureMessage msg = queue.Pop();
     DistributeOneMessage(msg, queue);
   }
@@ -160,9 +167,16 @@ void CIOWinManager::PumpMessages(CArchitectureQueue& queue) {
 
 bool CIOWinManager::DistributeOneMessage(const CArchitectureMessage& msg,
                                          CArchitectureQueue& queue) {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return false;
+#endif
   for (IOWinPQNode* node = x4_pumpRoot; node;) {
     rstl::ncrc_ptr< CIOWin > iow = node->GetIOWin();
     CIOWin::EMessageReturn mret = iow->OnMessage(msg, x8_localGatherQueue);
+#ifdef AURORA_H700
+    // Leave both queues and their owners intact until the root CPU checkpoint.
+    if (PortH700::GameFailurePending()) return false;
+#endif
 
     while (!x8_localGatherQueue.IsEmpty()) {
       CArchitectureMessage msg = x8_localGatherQueue.Pop();
@@ -192,13 +206,22 @@ bool CIOWinManager::DistributeOneMessage(const CArchitectureMessage& msg,
 }
 
 void CIOWinManager::Draw() const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   for (IOWinPQNode* node = x0_drawRoot; node; node = node->GetNext()) {
     node->GetIOWin()->PreDraw();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     if (!node->GetIOWin()->GetIsContinueDraw())
       break;
   }
   for (IOWinPQNode* node = x0_drawRoot; node; node = node->GetNext()) {
     node->GetIOWin()->Draw();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     if (!node->GetIOWin()->GetIsContinueDraw())
       break;
   }

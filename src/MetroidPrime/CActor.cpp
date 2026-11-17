@@ -36,6 +36,10 @@
 #include "Kyoto/Math/CQuaternion.hpp"
 #endif
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 static CMaterialList MakeActorMaterialList(const CMaterialList& in,
                                            const CActorParameters& params) {
   CMaterialList ret = in;
@@ -421,6 +425,11 @@ void CActor::Render(const CStateManager& mgr) const {
       }
       if (xe5_31_pointGeneratorParticles) {
         CSkinnedModel::ClearPointGeneratorFunc();
+      }
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
+      if (xe5_31_pointGeneratorParticles) {
         mgr.GetActorModelParticles()->Render(mgr, *this);
       }
     }

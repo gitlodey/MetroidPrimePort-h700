@@ -816,6 +816,12 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_game_failure_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_game_failure_wiring.py")
         set_tests_properties(port_h700_game_failure_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_skin_consumers_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_skin_consumers_wiring.py")
+        set_tests_properties(port_h700_skin_consumers_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_dispatch_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_dispatch_wiring.py")
+        set_tests_properties(port_h700_dispatch_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)
         set_tests_properties(port_h700_profile_startup PROPERTIES TIMEOUT 30 LABELS port)

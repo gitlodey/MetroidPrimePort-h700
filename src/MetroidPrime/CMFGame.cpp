@@ -42,6 +42,10 @@
 #include "MetroidPrime/HUD/CSamusHud.hpp"
 #include <dolphin/gx/GXExtra.h>
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#endif
+
 CMFGame::CMFGame(rstl::ncrc_ptr< CStateManager > stateManager,
                  rstl::ncrc_ptr< CInGameGuiManager > guiManager,
                  CArchitectureQueue& architectureQueue)
@@ -153,6 +157,12 @@ CIOWin::EMessageReturn CMFGame::OnMessage(const CArchitectureMessage& message,
       switch (mStateManager->GetDeferredStateTransition()) {
       case kSMT_InGame:
         mStateManager->Update(dt);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) {
+          mStateManager->SetRandomAvailable(false);
+          return kMR_Exit;
+        }
+#endif
         if (mStateManager->GetWantsToQuit())
           CGraphics::SetIsBeginSceneClearFb(false);
         break;
@@ -192,6 +202,9 @@ CIOWin::EMessageReturn CMFGame::OnMessage(const CArchitectureMessage& message,
         mStateManager->SetRandomAvailable(true);
         mStateManager->Update(dt);
         mStateManager->SetRandomAvailable(false);
+#ifdef AURORA_H700
+        if (PortH700::GameFailurePending()) return kMR_Exit;
+#endif
       }
       break;
     }
@@ -269,6 +282,9 @@ CIOWin::EMessageReturn CMFGame::OnMessage(const CArchitectureMessage& message,
 }
 
 void CMFGame::Draw() const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
   // Do not let a request survive a non-game draw (or an early return) into another frame.
   CStateManager::sPortSceneHdrRequest = false;
@@ -318,6 +334,9 @@ void CMFGame::Draw() const {
   if (mGuiManager->GetIsGameDraw()) {
     gpMain->SetGameFrameDrawn(true);
     mStateManager->PreRender();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
     {
       // Remastered's character backlight hint of the camera's room, before the models draw.
@@ -413,6 +432,12 @@ void CMFGame::Draw() const {
       const bool requestSceneHdr = CStateManager::PortShouldUseSceneHdr(roomEnvActive, supportedVisor);
       CStateManager::sPortSceneHdrRequest = requestSceneHdr;
       mStateManager->DrawWorld();
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) {
+        CCubeMaterial::sPortSceneHdr = false;
+        return false;
+      }
+#endif
       return requestSceneHdr;
     };
     // Sharp scan window: the window's picture is the world drawn again through a zoomed
@@ -426,9 +451,24 @@ void CMFGame::Draw() const {
         scanVisor->PortScanZoom(*mStateManager, scanZoom, scanWidth, scanHeight)) {
       CStateManager::sPortViewZoom = scanZoom;
       const bool sceneHdr = drawWorld();
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) {
+        CStateManager::sPortViewZoom = 1.f;
+        return;
+      }
+#endif
       postProcess(false, sceneHdr);
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) {
+        CStateManager::sPortViewZoom = 1.f;
+        return;
+      }
+#endif
       mGuiManager->PortDrawScanZoomReticles(*mStateManager);
       CStateManager::sPortViewZoom = 1.f;
+#ifdef AURORA_H700
+      if (PortH700::GameFailurePending()) return;
+#endif
       CPlayerVisor::PortCopyScanZoom(scanWidth, scanHeight, scanZoom);
     }
 #else
@@ -442,13 +482,22 @@ void CMFGame::Draw() const {
 #else
     drawWorld();
 #endif
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     (void)mStateManager->GetPlayer()->IsPlayerDeadEnough();
 #ifdef TARGET_PC
     postProcess(true, sceneHdr);
 #endif
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
   }
 
   mGuiManager->PreDraw(*mStateManager, IsCameraActiveFlow());
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
 #ifdef TARGET_PC
   // The debug free camera looks at the world, not through the visor.
   if (!PortFreeCam::Active() || mFlowState != kGFS_InGame)
@@ -462,6 +511,9 @@ void CMFGame::Draw() const {
 #ifdef TARGET_PC
   // A zoomed copy the visor didn't draw this frame must not show on a later one.
   CPlayerVisor::PortDropScanZoom();
+#endif
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
 #endif
 
   if (mFlowState == kGFS_CinematicSkip) {
