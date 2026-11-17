@@ -451,4 +451,14 @@ H700 reset использует production/test `ResetGameOwner`: pre-dtor bound
 
 Проверки: полный incremental game compile/link, **8/8 CPU/no-init CTest PASS**, non-H700 compile game main PASS. Boundary suite дополнен ordering/destructor-generated queued cleanup/delayed-free и alias/new-owner assertions, включая отказ обеих границ и failure после обработки tail. Final compile/boundary rerun после сохранения clear-FB default PASS. Independent lifecycle review без blockers. Actual reset на приставке остаётся GM-19, не засчитывается CPU tests. Logs/commands — ignored `gm07-*` staged output.
 
-Следующая GM-08 — normal game exit с subsystem/global destructor tails; отдельное разрешение на локальный шаг не требуется.
+GM-07 commit/push: `0292af263`.
+
+### GM-08 — LOCAL PASS: normal exit и final destructor tails
+
+Healthy retirement helper теперь общий для reset/exit. ArchSupport уничтожается явно внутри живого scope (alias=null), затем его tail drain и no-command flush; отдельная такая граница охватывает ShutdownSubsystems и game globals. Прежний ранний CFDk::ShutDown/GXDrawDone+flush отключён только на H700: final flush идёт после всех соответствующих destructor tails, перед ARAM Shutdown. Loader/disc services остаются живыми до CResLoader destruction.
+
+Platform порядок учитывает SDL ownership: AIPortShutdown (`SDL_AudioStream`) и stop background disc services **до** IG11/SDL_Quit; затем полный status-bearing IG11, лишь Released/FailedReleased разрешают disc close/return. FailedReleased даёт nonzero; Unknown/Pending по30s deadline удерживают main scope/runtime/disc в fail-stop. H700 normal path не вызывает aurora_shutdown второй раз. Poll helper переименован в `PollGenerationShutdown` без изменения поведения; normal/failed init используют один механизм. Non-H700 порядок сохранён.
+
+Проверки: полный incremental game compile/link, **8/8 CPU/no-init CTest PASS**, non-H700 game/platform main compile PASS. Новые ordering/failure cases используют production retire helper и проверяют loader/services lifetime, subsystem/global-generated cleanup, final flush перед ARAM. Independent lifecycle review без blockers; реальный normal exit/GPU/loader execution остаётся device gate, terminal exception transport ещё не реализован. Logs/commands — ignored `gm08-*`.
+
+Следующая GM-09 — terminal CPU-quiescence checkpoint до Maps; локальные шаги продолжаются без нового approval.

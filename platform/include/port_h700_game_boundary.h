@@ -15,17 +15,23 @@ bool GameOwnerBoundary(bool frameOpen, Healthy healthy, FinishOpenFrame finishOp
   return healthy() && drainAndSync() && healthy();
 }
 
-// Same-generation reset at the main safe-point, with ticks/draw stopped. destroy must
-// clear the raw alias before destroying the old owner; construct publishes the new one.
-// A failed boundary never authorizes delayed frees or construction. The caller must
-// fail-stop with the main stack/remaining owners retained until terminal transport exists.
-// flush must not enqueue commands beyond the proven destructor-tail boundary.
-template <class Boundary, class Destroy, class Flush, class Construct>
-bool ResetGameOwner(Boundary boundary, Destroy destroy, Flush flush, Construct construct) {
+// Healthy retirement at the main safe-point, with ticks/draw stopped. destroy must
+// clear raw aliases before destroying owners. A failed boundary never authorizes
+// delayed frees: the caller must fail-stop with its main stack/remaining owners retained
+// until terminal transport exists. flush must not enqueue commands after the tail boundary.
+template <class Boundary, class Destroy, class Flush>
+bool RetireGameOwner(Boundary boundary, Destroy destroy, Flush flush) {
   if (!boundary()) return false;
   destroy();
   if (!boundary()) return false;
   flush();
+  return true;
+}
+
+// Same-generation reset: publish/construct the new owner only after healthy retirement.
+template <class Boundary, class Destroy, class Flush, class Construct>
+bool ResetGameOwner(Boundary boundary, Destroy destroy, Flush flush, Construct construct) {
+  if (!RetireGameOwner(boundary, destroy, flush)) return false;
   construct();
   return true;
 }

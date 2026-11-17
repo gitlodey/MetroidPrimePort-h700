@@ -365,7 +365,10 @@ void CMain::InitializeSubsystems() {
 }
 
 void CMain::ShutdownSubsystems() {
+#ifndef AURORA_H700
   CFrameDelayedKiller::ShutDown();
+#endif
+  // H700's caller flushes without commands after subsystem AND global destructor tails.
   CDecalManager::ShutDown();
   CElementGen::ShutDown();
   CAnimData::FreeCache();
@@ -1427,9 +1430,48 @@ int CMain::RsMain(int argc, const char* const* argv) {
   } else {
     fprintf(stderr, "MP audio: no driver; SDL opened no audio device\n");
   }
+#ifdef AURORA_H700
+  // Retire explicitly while this scope still holds the architecture owner on failure.
+  bool archDestroyed = false;
+  const bool archRetired = PortH700::RetireGameOwner(
+      [] { return CGraphics::PortGameOwnerBoundary(); },
+      [&] {
+        x164_archSupport = nullptr;
+        archSupport = nullptr;
+        archDestroyed = true;
+      },
+      [] { CFrameDelayedKiller::FlushAllAllocations(); });
+  if (!archRetired) {
+    PortLog::Write("port: H700 normal exit fail-stop: architecture boundary failed %s destruction; "
+                   "retaining main stack/remaining owners; no delayed flush or unwind\n",
+                   archDestroyed ? "after" : "before");
+    for (;;) SDL_Delay(1000);
   }
+#endif
+  }
+#ifdef AURORA_H700
+  // Subsystems and globals can enqueue cleanup/release more resources. Keep the disc,
+  // loader services and generation live through CResLoader's destructor and the final tail.
+  bool globalsDestroyed = false;
+  const bool globalsRetired = PortH700::RetireGameOwner(
+      [] { return CGraphics::PortGameOwnerBoundary(); },
+      [&] {
+        ShutdownSubsystems();
+        x128_gameGlobalObjects = nullptr;
+        gameGlobalObjects = nullptr;
+        globalsDestroyed = true;
+      },
+      [] { CFrameDelayedKiller::FlushAllAllocations(); });
+  if (!globalsRetired) {
+    PortLog::Write("port: H700 normal exit fail-stop: subsystem/global boundary failed %s destruction; "
+                   "retaining main stack/remaining owners; no final delayed flush, ARAM shutdown or unwind\n",
+                   globalsDestroyed ? "after" : "before");
+    for (;;) SDL_Delay(1000);
+  }
+#else
   ShutdownSubsystems();
   gameGlobalObjects = nullptr;
+#endif
   CARAMManager::Shutdown();
   return 0;
 }

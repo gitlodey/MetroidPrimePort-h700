@@ -28,7 +28,7 @@ struct ShutdownScript {
   int deadlineChecks = 0;
 
   Result Run() {
-    return PortH700::PollInitFailureShutdown(
+    return PortH700::PollGenerationShutdown(
         [&] {
           CHECK_EQ(requests, 0);
           CHECK_EQ(polls, 0);

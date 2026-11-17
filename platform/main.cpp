@@ -1490,7 +1490,7 @@ int main(int argc, char** argv) {
                        static_cast<int>(initializationReady), info.windowSize.native_fb_width,
                        info.windowSize.native_fb_height);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
-        const auto shutdown = PortH700::PollInitFailureShutdown(
+        const auto shutdown = PortH700::PollGenerationShutdown(
             [] { aurora::h700::request_generation_shutdown(); },
             [] { return aurora::h700::poll_generation_shutdown(); },
             [] { std::this_thread::sleep_for(std::chrono::milliseconds{1}); },
@@ -1725,7 +1725,34 @@ int main(int argc, char** argv) {
     PortDiscVerify::Shutdown();
     PortDiscReplace::Shutdown();
     PortActorCollisionBounds::Reset();
+#ifdef AURORA_H700
+    // Game/resource-factory destructors have returned, and disc-dependent services are
+    // stopped. AIPortShutdown above must precede IG11's SDL_Quit (SDL_AudioStream owner).
+    // Leave the disc mounted until the full generation release is proven.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+    const auto shutdown = PortH700::PollGenerationShutdown(
+        [] { aurora::h700::request_generation_shutdown(); },
+        [] { return aurora::h700::poll_generation_shutdown(); },
+        [] { std::this_thread::sleep_for(std::chrono::milliseconds{1}); },
+        [&] { return std::chrono::steady_clock::now() >= deadline; });
+    if (shutdown.status != aurora::h700::ShutdownStatus::Released &&
+        shutdown.status != aurora::h700::ShutdownStatus::FailedReleased) {
+        PortLog::Write("port: H700 normal exit fail-stop: status=%d stage=%d (%s); "
+                       "release unproven, retaining main stack/runtime/disc; no unwind or retry\n",
+                       static_cast<int>(shutdown.status), static_cast<int>(shutdown.stage),
+                       shutdown.status == aurora::h700::ShutdownStatus::Pending
+                           ? "30s diagnostic deadline expired" : "unknown ownership");
+        // Synchronous driver calls inside poll cannot be preempted by the deadline.
+        for (;;) std::this_thread::sleep_for(std::chrono::seconds{1});
+    }
+    PortLog::Write("port: H700 normal exit released: status=%d stage=%d\n",
+                   static_cast<int>(shutdown.status), static_cast<int>(shutdown.stage));
+    if (shutdown.status == aurora::h700::ShutdownStatus::FailedReleased && result == 0) result = 1;
+    aurora_dvd_close();
+    // IG11 already released the generation; never call aurora_shutdown a second time.
+#else
     aurora_dvd_close();
     aurora_shutdown();
+#endif
     return result;
 }
