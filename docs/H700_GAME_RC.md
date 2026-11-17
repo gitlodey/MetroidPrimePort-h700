@@ -76,18 +76,26 @@ Manifest/SHA256SUMS/archive hashes закономерно различаются
 
 A проверяет физические graphics/HUD/fonts/orientation, встроенный pad, слышимые movie/music/SFX, actual disc/nod path и normal Exit; exit0/CPU tests не заменяют пользовательское подтверждение. Station route требуется к B, late Thermal/X-ray scenes — перед C, не перед A. Actual memory sampled96MiB headroom остаётся runtime gate, не измеренной гарантией.
 
-## GM-18 / A — FAIL, процесс удерживается в fail-stop
+## GM-18 / A — FAIL, пользователь затем перезагрузил устройство
 
 - Изолированная установка RC3 опубликована отдельной записью `Metroid Prime Unbound`;102 package/manifest/checksum files совпали. Wrapper настроен одним literal private disc path, syntax/hash checks PASS. Перед первым запуском собственные user/cache отсутствовали.
 - Единственный разрешённый no-init `--version` вернул0 и `0.46.0`. Один full game process запущен вручную пользователем через Ports, не агентом по SSH. Лог подтверждает Mali-G31/OpenGLES, native640×480, validation/robustness ON, disc USA1.00 и распознанный `muOS-Keys`.
-- Пользователь подтвердил запуск и слышимый звук, затем тормоза и предполагаемое зависание. Ранний gameplay/move/aim/fire, physical HUD/colors/orientation и pad ещё не подтверждены; station save/load не проверялись.
+- Пользователь подтвердил запуск и слышимый звук, затем тормоза и зависание; уточнение: на экране меню, звука больше нет. Ранний gameplay/move/aim/fire, physical HUD/colors/orientation и pad ещё не подтверждены; station save/load не проверялись.
 - Один ранний интервал240frames:14,3FPS, worst310,2ms; отдельные draw stalls280–326ms и pipeline compilation349–496ms. Это baseline отдельных интервалов, не измерение устойчивого gameplay FPS и не установленная причина отказа.
 - Наблюдаемая последовательность: `game failure=1` на `loop: no BeginScene, before loader continuation`, `FIFO downstream wait failed`, root terminal owner retirement, `Dawn release incomplete: imports, contexts or current bindings remain`, затем `normal exit fail-stop: status=3 stage=12 (unknown ownership)`. Watchdog сообщает отсутствие кадров60,1s на frame1024. Эти сообщения не устанавливают первопричину; watchdog stage labels не доказывают, что поток всё ещё выполняет старый UpdateTicks/queue submit.
-- Actual child жив (sleeping), install lock удерживается. Normal Exit/возврат в Ports не достигнуты. Никаких signals/kill/reset/retry, новых игровых процессов, очистки lock/log/user/cache или исправлений production code не выполнялось.
+- В последнем pre-reboot snapshot actual child был жив (sleeping), install lock удерживался. Normal Exit/возврат в Ports не достигнуты. Затем пользователь сам сообщил о перезагрузке приставки. Агент не посылал signals/kill/reset/retry, не запускал новых игровых процессов и не очищал lock/log/user/cache; после перезагрузки по SSH не подключался. Post-reboot состояние/lock не проверены, перезагрузка не засчитана штатным exit.
 - Последний logged sampled minimum MemAvailable357456KiB (~349MiB), выше96MiB; RSS high-water в process snapshot613096KiB. После частичного teardown MemAvailable598296KiB (~584MiB). В полученном логе нет признака OOM; полную причину отказа это не исключает.
 - Все5 baseline firmware hashes совпали до установки, после no-init и после failure при ещё живом процессе. Это не post-exit verification: actual exit пока отсутствует.
 
-Активное окно A остановлено с FAIL. Дальше — локальная минимальная диагностика конкретного failure path; принудительное освобождение устройства и любой повторный device run требуют отдельного разрешения. B/C pending, перенос не принят.
+Активное окно A остановлено с FAIL. После пользовательской перезагрузки принудительное завершение прежнего процесса не требуется. Любой новый SSH/device run требует отдельного разрешения; B/C pending, перенос не принят.
+
+### Локальная диагностика после A — не исправление зависания
+
+Существующий `PresentationState` сохраняет sticky `first_error`, но RC3 не выводит его при root shutdown. Observer также объединяет trace exhaustion/invalid context/driver failure, а финальный release — недостоверность observer и actual live ownership. Поэтому сохранённого лога недостаточно для выбора исправления renderer. Исчерпание bounded65536-event trace — конкретная гипотеза, не установленная причина этого запуска; лимит/guards не менялись.
+
+Добавлен только failure-path output: однократный уже latched first_error перед draining, разные причины EGL observation failure с counters и summary rejected Dawn-release proof (trustworthy/events/live contexts/Dawn bindings/imports). Нет нового logging protocol, изменения renderer/scheduler/ownership, увеличения лимитов, обхода certification, retry или ослабления fail-stop.
+
+Full incremental game compile/link,44/44 scoped presentation/lifecycle/no-init CTest,54/54 complete render/lifecycle tests и non-H700 `aurora_core` compile PASS. Source regression проверяет wiring новой диагностики; CPU PASS не воспроизводит зависание Mali. Independent read-only diff review blockers не нашёл. Evidence — existing `build/h700-game-gm03/gm18-diagnostics-*` и non-H700 output. Эта правка требует нового artifact/hash для следующего разрешённого запуска; прежний RC3 и его FAIL неизменны.
 
 ## Evidence на локальном диске
 

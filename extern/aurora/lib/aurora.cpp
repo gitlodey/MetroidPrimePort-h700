@@ -456,7 +456,11 @@ void request_h700_shutdown() noexcept {
   g_generationLifecycle.request_stop();
   if (g_generationLifecycle.stage() != h700::ShutdownStage::Producers || g_shutdownRootsRequested) return;
   g_shutdownRootsRequested = true;
-  if (auto state = h700::presentation_state()) state->begin_draining();
+  if (auto state = h700::presentation_state()) {
+    const auto snapshot = state->snapshot();
+    if (snapshot.first_error) Log.error("H700 generation first failure: {}", *snapshot.first_error);
+    state->begin_draining();
+  }
   gfx::render_worker::begin_draining(); // roots only; accepted downstream work remains admissible
   if (g_gfxStarted) gfx::begin_pipeline_cache_draining();
   if (g_fifoStarted) gx::fifo::request_drain(g_shutdownFifoDrain);

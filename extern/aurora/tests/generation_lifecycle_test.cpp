@@ -359,6 +359,27 @@ TEST(GenerationLifecycleSource, DestroyIsNotWholeGroupReleaseAndLifecycleMayRebi
   EXPECT_NE(delayed.find("binding.context == context.context"), std::string::npos);
 }
 
+TEST(GenerationLifecycleSource, TerminalLogsKeepFirstCauseAndDistinguishObservationFromLiveOwnership) {
+  const auto request = section(source("aurora.cpp"), "void request_h700_shutdown() noexcept {",
+                               "h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept;");
+  EXPECT_LT(request.find("g_shutdownRootsRequested = true"), request.find("H700 generation first failure: {}"));
+  EXPECT_LT(request.find("*snapshot.first_error"), request.find("state->begin_draining()"));
+  const auto presentation = source("h700/presentation.cpp");
+  const auto observation = section(presentation, "void observation_failure(", "ContextRecord* live_context(");
+  EXPECT_NE(observation.find("if (backend->trustworthy)"), std::string::npos);
+  EXPECT_NE(observation.find("backend->trustworthy = false"), std::string::npos);
+  EXPECT_NE(observation.find("backend->state->fail(reason)"), std::string::npos);
+  const auto trace = section(presentation, "void append_event(", "void retire_pending()");
+  EXPECT_NE(trace.find("observation_failure(\"H700 EGL context event trace exhausted\")"), std::string::npos);
+  EXPECT_NE(presentation.find("observation_failure(\"H700 EGL make-current failed\")"), std::string::npos);
+  const auto proof = section(presentation, "bool acknowledge_dawn_release()", "bool release_exports()");
+  EXPECT_LT(proof.find("importsRemaining || !contexts_retired()"), proof.find("H700 Dawn release proof:"));
+  EXPECT_NE(proof.find("backend->trustworthy"), std::string::npos);
+  EXPECT_NE(proof.find("!c.destroyed"), std::string::npos);
+  EXPECT_NE(proof.find("b.context != backend->presenter"), std::string::npos);
+  EXPECT_LT(proof.find("return fail("), proof.find("backend->dawn_released = true"));
+}
+
 TEST(GenerationLifecycleSource, FailedNativeRecordsNeedRealEvidenceAndNeverFakeRecycle) {
   const auto presentation = source("h700/presentation.cpp");
   const auto retire = section(presentation, "bool retire_native_after_dawn_release()", "bool release_dawn_imports()");

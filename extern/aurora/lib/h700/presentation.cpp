@@ -112,9 +112,13 @@ void* raw_proc(const char* name) {
   if (!proc) proc = reinterpret_cast<void*>(eglGetProcAddress(name));
   return proc;
 }
-void observation_failure() {
+void observation_failure(const char* reason) {
+  if (backend->trustworthy) {
+    Log.error("{}; context events={}/{}, contexts={}, bindings={}; teardown cannot be certified",
+              reason, backend->events.size(), MaxContextEvents, backend->contexts.size(), backend->bindings.size());
+  }
   backend->trustworthy = false;
-  backend->state->fail("H700 EGL context observation failed; teardown cannot be certified");
+  backend->state->fail(reason);
 }
 ContextRecord* live_context(EGLContext context) {
   if (context == EGL_NO_CONTEXT) return nullptr;
@@ -125,7 +129,7 @@ ContextRecord* live_context(EGLContext context) {
 }
 void append_event(const ContextEvent& event) {
   if (backend->events.size() == MaxContextEvents) {
-    observation_failure();
+    observation_failure("H700 EGL context event trace exhausted");
   } else {
     backend->events.push_back(event);
   }
@@ -153,11 +157,11 @@ EGLContext EGLAPIENTRY observed_create(EGLDisplay display, EGLConfig config, EGL
   if (result != EGL_NO_CONTEXT) {
     auto* parent = live_context(share);
     if (display != backend->display || live_context(result) || (share != EGL_NO_CONTEXT && !parent)) {
-      observation_failure();
+      observation_failure("H700 EGL create returned an unexpected display, context or share group");
     }
     const auto group = parent ? parent->group : backend->contexts.size() + 1;
     backend->contexts.push_back({result, share, group});
-  } else if (!proc) observation_failure();
+  } else if (!proc) observation_failure("H700 EGL create entry point missing");
   // A real failed create owns no context. Dawn may attempt optional compiler contexts;
   // retain the zero return, but let RequestAdapter/RequestDevice decide bootstrap success.
   return result;
@@ -172,9 +176,10 @@ EGLBoolean EGLAPIENTRY observed_make_current(EGLDisplay display, EGLSurface draw
                 draw, read, result});
   if (result == EGL_TRUE) {
     if (display != backend->display ||
-        (context != EGL_NO_CONTEXT && context != backend->presenter && !live_context(context))) observation_failure();
+        (context != EGL_NO_CONTEXT && context != backend->presenter && !live_context(context)))
+      observation_failure("H700 EGL make-current used an unexpected display or context");
     record_binding(context, draw, read);
-  } else observation_failure();
+  } else observation_failure("H700 EGL make-current failed");
   return result;
 }
 EGLBoolean EGLAPIENTRY observed_destroy(EGLDisplay display, EGLContext context) {
@@ -187,7 +192,7 @@ EGLBoolean EGLAPIENTRY observed_destroy(EGLDisplay display, EGLContext context) 
   if (result == EGL_TRUE && display == backend->display && record && !record->destroy_requested) {
     record->destroy_requested = true;
     retire_pending();
-  } else observation_failure();
+  } else observation_failure("H700 EGL destroy failed or targeted an unexpected context");
   return result;
 }
 EGLBoolean EGLAPIENTRY observed_release_thread() {
@@ -197,7 +202,7 @@ EGLBoolean EGLAPIENTRY observed_release_thread() {
   append_event({ContextEvent::Operation::ReleaseThread, std::this_thread::get_id(), backend->display,
                 EGL_NO_CONTEXT, EGL_NO_CONTEXT, EGL_NO_SURFACE, EGL_NO_SURFACE, result});
   if (result == EGL_TRUE) record_binding(EGL_NO_CONTEXT, EGL_NO_SURFACE, EGL_NO_SURFACE);
-  else observation_failure();
+  else observation_failure("H700 EGL release-thread failed");
   return result;
 }
 __eglMustCastToProperFunctionPointerType EGLAPIENTRY observed_get_proc(const char* name) {
@@ -815,8 +820,24 @@ bool release_dawn_imports() {
 bool acknowledge_dawn_release() {
   if (!backend) return true;
   if (!require_main()) return false;
-  if (std::any_of(backend->slots.begin(), backend->slots.end(), [](const NativeSlot& s) { return bool(s.texture) || bool(s.view); }) ||
-      !contexts_retired()) return fail("Dawn release incomplete: imports, contexts or current bindings remain");
+  const bool importsRemaining = std::any_of(backend->slots.begin(), backend->slots.end(), [](const NativeSlot& s) {
+    return bool(s.texture) || bool(s.view);
+  });
+  if (importsRemaining || !contexts_retired()) {
+    {
+      std::lock_guard lock(backend->observer_mutex);
+      const auto liveContexts = std::count_if(backend->contexts.begin(), backend->contexts.end(), [](const ContextRecord& c) {
+        return !c.destroyed;
+      });
+      const auto dawnBindings = std::count_if(backend->bindings.begin(), backend->bindings.end(), [](const ContextBinding& b) {
+        return b.context != backend->presenter;
+      });
+      Log.error("H700 Dawn release proof: observer trustworthy={}, context events={}/{}, live contexts={}, "
+                "Dawn bindings={}, imports remaining={}", backend->trustworthy, backend->events.size(), MaxContextEvents,
+                liveContexts, dawnBindings, importsRemaining);
+    }
+    return fail("Dawn release incomplete: imports, contexts or current bindings remain");
+  }
   backend->dawn_released = true;
   return true;
 }
