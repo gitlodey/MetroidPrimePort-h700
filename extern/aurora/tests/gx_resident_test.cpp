@@ -9,6 +9,7 @@
 #include "gx/resident.hpp"
 
 #include <array>
+#include <memory>
 #include <vector>
 
 using aurora::gx::g_gxState;
@@ -60,6 +61,64 @@ protected:
   }
 };
 
+// These CPU-only tests join the real FIFO worker before reading either registry. There
+// are no renderer/compiler jobs or GPU allocations; production requires the full H700
+// CpuQuiescent/Maps checkpoint through the lifecycle bridge, not merely FIFO quiescence.
+class GXResidentCleanupTest : public GXFifoTest {
+protected:
+  std::array<u8, 4> data{1, 2, 3, 4};
+  std::array<u8, 4> otherData{5, 6, 7, 8};
+  u32 producerRetains = 0;
+
+  void retain_producer() {
+    GXPortRetainResident(data.data(), static_cast<u32>(data.size()));
+    ++producerRetains;
+  }
+
+  void release_producer() {
+    GXPortReleaseResident(data.data());
+    --producerRetains;
+  }
+
+  bool stop_processor() {
+    return aurora::gx::fifo::shutdown() && aurora::gx::fifo::is_quiescent();
+  }
+
+  void expect_guard(bool expected) {
+    ASSERT_TRUE(aurora::gx::fifo::is_quiescent());
+    const auto* buffer = aurora::gx::fifo::get_buffer_data();
+    const auto size = aurora::gx::fifo::get_buffer_size();
+    const std::vector<u8> bytes(buffer, buffer + size);
+    const auto published = aurora::gx::fifo::published_bytes();
+    const auto processed = aurora::gx::fifo::processed_bytes();
+    const auto used = aurora::gx::resident::used_bytes();
+    const auto uploads = aurora::gfx::g_testResidentUploads;
+    for (int i = 0; i < 4; ++i) {
+      EXPECT_EQ(aurora::gx::resident::can_destroy_without_graphics_commands(), expected);
+      EXPECT_EQ(aurora::gx::fifo::get_buffer_data(), buffer);
+      EXPECT_EQ(aurora::gx::fifo::get_buffer_size(), size);
+      EXPECT_EQ(std::vector<u8>(buffer, buffer + size), bytes);
+      EXPECT_EQ(aurora::gx::fifo::published_bytes(), published);
+      EXPECT_EQ(aurora::gx::fifo::processed_bytes(), processed);
+      EXPECT_EQ(aurora::gx::resident::used_bytes(), used);
+      EXPECT_EQ(aurora::gfx::g_testResidentUploads, uploads);
+    }
+  }
+
+  void TearDown() override {
+    ASSERT_TRUE(stop_processor());
+    // Only fixture cleanup consumes the unpublished retain copies, after all guard
+    // assertions. The query itself must leave these commands and their ownership intact.
+    decode_fifo(capture_fifo());
+    ASSERT_TRUE(aurora::gx::fifo::init());
+    while (producerRetains != 0) release_producer();
+    ASSERT_TRUE(aurora::gx::fifo::drain());
+    ASSERT_TRUE(stop_processor());
+    aurora::gx::resident::reset();
+    GXFifoTest::TearDown();
+  }
+};
+
 // A 4-vertex strip and a triangle (two triangles and one), three bytes a vertex, padded to 32.
 std::vector<u8> strip_and_triangle() {
   std::vector<u8> dl{GX_DRAW_TRIANGLE_STRIP | GX_VTXFMT0, 0, 4};
@@ -98,6 +157,102 @@ TEST(GXResidentAllocator, FirstFitAndJoin) {
   // Everything joined back into one block.
   ASSERT_TRUE(allocator.alloc(3072, d));
   EXPECT_EQ(d, 1024u);
+}
+
+TEST_F(GXResidentCleanupTest, EmptyRegistriesAllowNoCommandCleanup) {
+  ASSERT_TRUE(stop_processor());
+  EXPECT_TRUE(aurora::gx::resident::processor_registry_empty());
+  expect_guard(true);
+}
+
+TEST_F(GXResidentCleanupTest, InertRetainsLeaveRegistriesEmpty) {
+  GXPortRetainResident(nullptr, static_cast<u32>(data.size()));
+  GXPortRetainResident(data.data(), 0);
+  ASSERT_TRUE(stop_processor());
+  EXPECT_TRUE(aurora::gx::resident::processor_registry_empty());
+  EXPECT_EQ(aurora::gx::fifo::get_buffer_size(), 0u);
+  expect_guard(true);
+}
+
+TEST_F(GXResidentCleanupTest, ProducerOnlyRetainBlocksCleanupWithoutConsumingItsCommand) {
+  retain_producer(); // no publish: the processor has never seen this entry
+  ASSERT_TRUE(stop_processor());
+  ASSERT_GT(aurora::gx::fifo::get_buffer_size(), 0u);
+  EXPECT_TRUE(aurora::gx::resident::processor_registry_empty());
+  EXPECT_EQ(aurora::gx::resident::find(data.data()), nullptr);
+  EXPECT_EQ(aurora::gx::resident::used_bytes(), 0u);
+  expect_guard(false);
+}
+
+TEST_F(GXResidentCleanupTest, ProcessorOnlyEntryBlocksCleanupWithZeroGpuBytes) {
+  ASSERT_TRUE(stop_processor());
+  aurora::gx::resident::retain(data.data(), std::make_unique<std::vector<u8>>(data.begin(), data.end()));
+  ASSERT_NE(aurora::gx::resident::find(data.data()), nullptr);
+  EXPECT_FALSE(aurora::gx::resident::processor_registry_empty());
+  EXPECT_EQ(aurora::gx::resident::used_bytes(), 0u);
+  expect_guard(false);
+  aurora::gx::resident::release(data.data());
+  expect_guard(true);
+}
+
+TEST_F(GXResidentCleanupTest, MismatchedProducerAndProcessorKeysBlockCleanup) {
+  retain_producer();
+  ASSERT_TRUE(stop_processor());
+  aurora::gx::resident::retain(otherData.data(),
+                             std::make_unique<std::vector<u8>>(otherData.begin(), otherData.end()));
+  EXPECT_EQ(aurora::gx::resident::find(data.data()), nullptr);
+  ASSERT_NE(aurora::gx::resident::find(otherData.data()), nullptr);
+  EXPECT_EQ(aurora::gx::resident::used_bytes(), 0u);
+  expect_guard(false);
+  aurora::gx::resident::release(otherData.data());
+  EXPECT_TRUE(aurora::gx::resident::processor_registry_empty());
+  expect_guard(false); // the producer obligation still exists
+}
+
+TEST_F(GXResidentCleanupTest, MatchingEntryBeforeGpuAllocationStillBlocksCleanup) {
+  retain_producer();
+  ASSERT_TRUE(aurora::gx::fifo::drain());
+  ASSERT_TRUE(stop_processor());
+  const auto* entry = aurora::gx::resident::find(data.data());
+  ASSERT_NE(entry, nullptr);
+  const auto* copy = entry->bytes.get();
+  ASSERT_NE(copy, nullptr);
+  EXPECT_EQ(*copy, std::vector<u8>(data.begin(), data.end()));
+  EXPECT_EQ(aurora::gx::resident::used_bytes(), 0u);
+  expect_guard(false);
+  EXPECT_EQ(aurora::gx::resident::find(data.data()), entry);
+  EXPECT_EQ(entry->bytes.get(), copy);
+  EXPECT_EQ(*copy, std::vector<u8>(data.begin(), data.end()));
+  EXPECT_EQ(entry->storage.size, 0u);
+  EXPECT_EQ(entry->vert.size, 0u);
+  EXPECT_EQ(entry->idx.size, 0u);
+  EXPECT_FALSE(entry->arrayTried);
+  EXPECT_FALSE(entry->dlTried);
+  EXPECT_TRUE(entry->chunks.empty());
+}
+
+TEST_F(GXResidentCleanupTest, RepeatedQueriesPreserveCountedRetainsAndProcessorOwnership) {
+  retain_producer();
+  retain_producer();
+  ASSERT_TRUE(aurora::gx::fifo::drain());
+  ASSERT_TRUE(stop_processor());
+  const auto* entry = aurora::gx::resident::find(data.data());
+  ASSERT_NE(entry, nullptr);
+  expect_guard(false);
+
+  ASSERT_TRUE(aurora::gx::fifo::init());
+  release_producer();
+  ASSERT_TRUE(aurora::gx::fifo::drain());
+  ASSERT_TRUE(stop_processor());
+  EXPECT_EQ(aurora::gx::resident::find(data.data()), entry);
+  expect_guard(false); // queries must not decrement the producer's retain count
+
+  ASSERT_TRUE(aurora::gx::fifo::init());
+  release_producer();
+  ASSERT_TRUE(aurora::gx::fifo::drain());
+  ASSERT_TRUE(stop_processor());
+  EXPECT_EQ(aurora::gx::resident::find(data.data()), nullptr);
+  expect_guard(true);
 }
 
 TEST_F(GXResidentTest, DisplayListDrawsFromItsResidentCopy) {

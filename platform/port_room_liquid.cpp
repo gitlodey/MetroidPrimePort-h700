@@ -32,6 +32,9 @@
 
 #include <algorithm>
 #include <cmath>
+#ifdef AURORA_H700
+#include <cstdio>
+#endif
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -83,9 +86,30 @@ struct Area {
   std::unordered_map< uint32_t, int > filterOwners; // water object -> its filter, -1 for none
 };
 
+#ifdef AURORA_H700
+// Observe the existing lazy registry without allocating it from a cleanup query.
+const std::unordered_map< uint32_t, Area >* sCleanupAreas = nullptr;
+
+bool RoomCleanupReady(const std::unordered_map< uint32_t, Area >* areas) {
+  if (areas != nullptr) {
+    for (const auto& [mrea, area] : *areas) {
+      // Separate FIFO release of liquid resources is not proven. Even an item
+      // whose model/tokens have not loaded yet remains an unsupported obligation.
+      if (!area.items.empty()) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+#endif
+
 // Never destroyed, as port_room_geo.cpp's: the tokens must not outlive the pool.
 std::unordered_map< uint32_t, Area >& Areas() {
   static auto* const areas = new std::unordered_map< uint32_t, Area >();
+#ifdef AURORA_H700
+  sCleanupAreas = areas;
+#endif
   return *areas;
 }
 
@@ -556,6 +580,45 @@ bool Parse(const std::vector< uint8_t >& data, std::vector< Surface >& out, std:
   }
   return true;
 }
+
+#ifdef AURORA_H700
+bool CanDestroyWithoutGraphicsCommands() {
+  return RoomCleanupReady(sCleanupAreas);
+}
+
+int H700RoomCleanupSelfTest() {
+  int failures = 0;
+  const auto check = [&](bool passed, const char* detail) {
+    if (!passed) {
+      std::fprintf(stderr, "H700 room liquid cleanup: %s\n", detail);
+      ++failures;
+    }
+  };
+  const auto* const registryBefore = sCleanupAreas;
+  check(RoomCleanupReady(nullptr), "uninitialized registry");
+  std::unordered_map< uint32_t, Area > areas;
+  check(RoomCleanupReady(&areas), "empty registry");
+  Area& area = areas[1];
+  area.read = true;
+  area.placed = true;
+  area.owners.emplace(2, -1);
+  area.filterOwners.emplace(3, -1);
+  area.filters.emplace_back();
+  check(RoomCleanupReady(&areas), "retail placeholder and CPU-only filter metadata");
+  area.items.emplace_back();
+  check(!RoomCleanupReady(&areas), "item with no loaded model/tokens must still block");
+  area.items.front().type = 2;
+  check(!RoomCleanupReady(&areas), "unloaded lava item must block");
+  check(!RoomCleanupReady(&areas), "repeated query must still block");
+  check(area.items.size() == 1 && area.items.front().type == 2 && area.read && area.placed &&
+            area.owners.size() == 1 && area.filterOwners.size() == 1 && area.filters.size() == 1,
+        "query must preserve ownership and metadata");
+  area.items.clear();
+  check(RoomCleanupReady(&areas), "inert again");
+  check(sCleanupAreas == registryBefore, "fixtures must not initialize or replace the live registry");
+  return failures == 0 ? 0 : 1;
+}
+#endif
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   auto& areas = Areas();

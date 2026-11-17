@@ -45,6 +45,8 @@
 #ifdef AURORA_H700
 #include "port_h700_profile.h"
 #include "port_h700_init.h"
+#include "port_room_env.h"
+#include "port_room_liquid.h"
 #include <chrono>
 #include <thread>
 #endif
@@ -828,6 +830,13 @@ int main(int argc, char** argv) {
 #ifdef AURORA_H700
     if (argc == 2 && std::strcmp(argv[1], "--h700-profile-selftest") == 0) {
         return PortDebug::H700SettingsSelfTest();
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--h700-room-cleanup-selftest") == 0) {
+        const int env = PortRoomEnv::H700RoomCleanupSelfTest();
+        const int geo = PortRoomGeo::H700RoomCleanupSelfTest();
+        const int liquid = PortRoomLiquid::H700RoomCleanupSelfTest();
+        std::fprintf(stderr, "H700 room cleanup self-test: env=%d geo=%d liquid=%d\n", env, geo, liquid);
+        return env || geo || liquid ? 1 : 0;
     }
 #endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {

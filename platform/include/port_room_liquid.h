@@ -89,6 +89,14 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Surface>& out, std::vec
 
 // The areas in memory now; frees the surfaces of areas that left.
 void SetLoadedAreas(const uint32_t* mreas, size_t count);
+#ifdef AURORA_H700
+// Main thread only, AFTER the actual GM09 CpuQuiescent/Maps checkpoint and before
+// owner destruction. Read-only; conservatively requires no items (models/tokens).
+// True permits inert retail placeholders, not GPU release or checkpoint completion.
+bool CanDestroyWithoutGraphicsCommands();
+// CPU-only private-state fixtures; run before game/module initialization, without a backend.
+int H700RoomCleanupSelfTest();
+#endif
 // Once a frame, `dt` game seconds on: the water's clock (CStateManagerGameData's, which
 // wraps at 5000 s) that its normal maps, waves and flow scroll with.
 void Advance(float dt);

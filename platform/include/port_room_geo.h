@@ -269,6 +269,14 @@ std::vector<uint8_t> WriteLods(const std::vector<Lods>& models);
 
 // The areas in memory now. Loads the files of new ones and frees those of areas that left.
 void SetLoadedAreas(const uint32_t* mreas, size_t count);
+#ifdef AURORA_H700
+// Main thread only, AFTER the actual GM09 CpuQuiescent/Maps checkpoint and before
+// owner destruction. Read-only: no future consumption, resident release or GX calls.
+// True permits inert retail placeholders, not GPU release or checkpoint completion.
+bool CanDestroyWithoutGraphicsCommands();
+// CPU-only private-state fixtures; run before game/module initialization, without a backend.
+int H700RoomCleanupSelfTest();
+#endif
 // The game started streaming the area in (CGameArea::StartStreamIn): reads and parses its
 // file on a worker, so that loading it once it is in only has to make the models. Any number
 // of calls per area; nothing changes until the area loads.

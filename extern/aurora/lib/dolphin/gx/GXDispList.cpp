@@ -2,6 +2,7 @@
 #include "__gx.h"
 
 #include "../../gx/fifo.hpp"
+#include "../../gx/resident.hpp"
 #include "dolphin/gx/GXAurora.h"
 #include "dolphin/gx/GXExtra.h"
 
@@ -20,6 +21,10 @@ struct Retained {
 };
 std::unordered_map<const void*, Retained> sRetained;
 } // namespace
+
+bool aurora::gx::resident::can_destroy_without_graphics_commands() noexcept {
+  return sRetained.empty() && processor_registry_empty();
+}
 
 extern "C" {
 void GXBeginDisplayList(void* list, u32 size) {

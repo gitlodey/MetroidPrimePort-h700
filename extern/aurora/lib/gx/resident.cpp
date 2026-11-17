@@ -204,6 +204,8 @@ void free_dl(Entry& entry) noexcept {
   entry.dlTried = false;
 }
 
+bool processor_registry_empty() noexcept { return g_state.entries.empty(); }
+
 void reset() noexcept {
   g_state = State{};
   publish_used();

@@ -22,6 +22,7 @@
 #ifdef AURORA_H700
 #include "h700/presentation.hpp"
 #include "h700/lifecycle.hpp"
+#include "gx/resident.hpp"
 #endif
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -1054,6 +1055,13 @@ bool h700::synchronize_game_work() noexcept {
   // captures. Queue-empty/GXDrawDone alone do not provide this ownership evidence.
   return gfx::render_worker::synchronize() == gfx::render_worker::Outcome::Completed &&
          h700::game_work_healthy();
+}
+bool h700::resident_resources_empty() noexcept {
+  if (g_lifecycleMain != std::this_thread::get_id() || g_lifecyclePolling) return false;
+  const auto checkpoint = g_generationLifecycle.result(h700::ShutdownGoal::CpuQuiescence);
+  if (checkpoint.status != h700::ShutdownStatus::CpuQuiescent ||
+      checkpoint.stage != h700::ShutdownStage::Maps) return false;
+  return gx::resident::can_destroy_without_graphics_commands();
 }
 void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
 h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }

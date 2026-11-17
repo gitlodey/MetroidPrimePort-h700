@@ -167,6 +167,20 @@ std::string section(const std::string& text, const char* first, const char* last
   return text.substr(begin, end - begin);
 }
 
+TEST(GenerationLifecycleSource, ResidentGuardReadsRegistriesOnlyAtActualCpuCheckpointWithoutProgress) {
+  const auto guard = section(source("aurora.cpp"), "bool h700::resident_resources_empty() noexcept",
+                             "void h700::request_generation_shutdown()");
+  const auto read = guard.find("gx::resident::can_destroy_without_graphics_commands()");
+  ASSERT_NE(read, std::string::npos);
+  EXPECT_LT(guard.find("g_lifecycleMain != std::this_thread::get_id() || g_lifecyclePolling) return false"), read);
+  EXPECT_LT(guard.find("g_generationLifecycle.result(h700::ShutdownGoal::CpuQuiescence)"), read);
+  EXPECT_LT(guard.find("checkpoint.status != h700::ShutdownStatus::CpuQuiescent"), read);
+  EXPECT_LT(guard.find("checkpoint.stage != h700::ShutdownStage::Maps) return false"), read);
+  for (const auto forbidden : {"poll_", "request_", "main_progress", "reset(", "release(", "drain(", "process(",
+                               "enqueue", "GX_WRITE", ".advance(", ".fail(", "begin_map_retirement("})
+    EXPECT_EQ(guard.find(forbidden), std::string::npos) << forbidden;
+}
+
 TEST(GenerationLifecycleSource, ProducersAndTailFinishBeforeDownstreamCloseAndHolders) {
   const auto aurora = source("aurora.cpp");
   const auto poll = section(aurora, "h700::ShutdownResult poll_h700_shutdown()", "void shutdown() noexcept");

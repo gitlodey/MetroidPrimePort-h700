@@ -2337,6 +2337,159 @@ uint32_t MaterialCube(uint32_t fileId, float params[4]) {
   return gpu.id;
 }
 
+#ifdef AURORA_H700
+namespace {
+
+bool RoomCleanupReady(const decltype(sAreas)& areas, Worker& worker, const World& world,
+                      const PortRoomEnvTiles::TileTable& tiles, const decltype(sTileSets)& tileSets,
+                      const ProbeBlendState& blend, const decltype(sMaterialCubes)& materialCubes) {
+  // CStateManager's destructor calls SetLoadedAreas(empty), which calls RegisterReady
+  // even with no areas. Dirty world state can therefore still submit a volume job.
+  if (world.dirty || world.volume != 0 || tiles.KeyCount() != 0 || !tileSets.empty() ||
+      blend.dst[0] != 0 || blend.dst[1] != 0) {
+    return false;
+  }
+  for (const auto& [fileId, cube] : materialCubes) {
+    if (cube.id != 0) {
+      return false;
+    }
+  }
+  for (const auto& [mrea, area] : areas) {
+    // valid() deliberately rejects ready-but-unconsumed and deferred futures too.
+    if (area.pending.valid() || !area.queued.empty() || (area.loadSeq != 0 && !area.settled) ||
+        area.registered || area.file.tiles != nullptr || area.lightmap != 0) {
+      return false;
+    }
+    for (const GpuCube& cube : area.cubes) {
+      if (cube.id != 0) {
+        return false;
+      }
+    }
+    for (const GpuVolume& volume : area.volumes) {
+      if (volume.id != 0) {
+        return false;
+      }
+    }
+  }
+  // The checkpoint quiesces producers; the worker's own state still needs its mutex.
+  // A joinable but idle worker is harmless and must not reject retail cleanup.
+  const std::lock_guard<std::mutex> lock(worker.mutex);
+  return worker.jobs.empty() && worker.results.empty() && !worker.running;
+}
+
+} // namespace
+
+bool CanDestroyWithoutGraphicsCommands() {
+  return RoomCleanupReady(sAreas, sWorker, sWorld, sTiles, sTileSets, sBlend, sMaterialCubes);
+}
+
+int H700RoomCleanupSelfTest() {
+  int failures = 0;
+  const auto check = [&](bool passed, const char* detail) {
+    if (!passed) {
+      std::fprintf(stderr, "H700 room env cleanup: %s\n", detail);
+      ++failures;
+    }
+  };
+  // Local instances of the actual private state: no Load/Finish/Reset, files or GX.
+  decltype(sAreas) areas;
+  Worker worker;
+  World world;
+  PortRoomEnvTiles::TileTable tiles;
+  decltype(sTileSets) tileSets;
+  ProbeBlendState blend;
+  decltype(sMaterialCubes) materialCubes;
+  const auto ready = [&] {
+    return RoomCleanupReady(areas, worker, world, tiles, tileSets, blend, materialCubes);
+  };
+  check(ready(), "empty state");
+  Area& area = areas[1];
+  areas[2];
+  area.layers = 3;
+  area.visible = false;
+  area.cubes.resize(2);
+  area.cubes[0].failed = true;
+  area.volumes.resize(2);
+  materialCubes[7]; // A material cube lookup with no mod file leaves a zero id.
+  check(ready(), "retail placeholders and zero GPU ids");
+  check(ready() && areas.size() == 2 && area.cubes.size() == 2 && area.cubes[0].failed &&
+            area.volumes.size() == 2 && area.layers == 3 && !area.visible && materialCubes.size() == 1,
+        "query must preserve placeholders and failed lookups");
+
+  std::promise<Loaded> load;
+  area.pending = load.get_future();
+  check(!ready() && area.pending.valid(), "pending load must block without consumption");
+  load.set_value(Loaded{});
+  check(!ready() && area.pending.valid(), "ready unconsumed load must still block");
+  area.pending = {};
+  bool deferredRan = false;
+  area.pending = std::async(std::launch::deferred, [&] { deferredRan = true; return Loaded{}; });
+  check(!ready() && area.pending.valid() && !deferredRan, "deferred load must not run");
+  area.pending = {};
+  area.queued.emplace_back(3, 4);
+  check(!ready() && area.queued.size() == 1, "queued script state must block");
+  area.queued.clear();
+  area.loadSeq = 1;
+  check(!ready() && !area.settled, "unfinished load registration must block without a future");
+  area.settled = true;
+  check(ready(), "settled failed load without tiles or GPU ids");
+  area.registered = true;
+  check(!ready() && area.registered, "registered area must block");
+  area.registered = false;
+  area.file.tiles = std::make_shared<PortRoomEnvTiles::TileSet>();
+  check(!ready() && area.file.tiles.use_count() == 1, "unregistered tile ownership must block");
+  area.file.tiles.reset();
+  area.cubes.back().id = 11;
+  check(!ready() && area.cubes.back().id == 11, "actual cube id must block even without hasFile");
+  area.cubes.back().id = 0;
+  area.volumes.back().id = 12;
+  check(!ready() && area.volumes.back().id == 12, "actual volume id must block");
+  area.volumes.back().id = 0;
+  area.lightmap = 13;
+  check(!ready() && area.lightmap == 13, "actual lightmap id must block");
+  area.lightmap = 0;
+  materialCubes[7].id = 14;
+  check(!ready() && materialCubes[7].id == 14, "material cube id must block");
+  materialCubes[7].id = 0;
+  for (uint32_t& id : blend.dst) {
+    id = 15;
+    check(!ready() && id == 15, "each blend destination must block");
+    id = 0;
+  }
+  areas.clear();
+  world.volume = 16;
+  check(!ready() && world.volume == 16, "world volume must block without areas");
+  world.volume = 0;
+  world.dirty = true;
+  check(!ready() && world.dirty, "RegisterReady/SubmitWorld obligation must block without areas");
+  world.dirty = false;
+  tiles.Register(17, {PortRoomEnvTiles::TileKey{}});
+  check(!ready() && tiles.KeyCount() == 1, "orphan tile registration must block");
+  tiles.Clear();
+  tileSets[18] = std::make_shared<PortRoomEnvTiles::TileSet>();
+  check(!ready() && tileSets[18].use_count() == 1, "orphan tile set must block");
+  tileSets.clear();
+  worker.jobs.emplace_back();
+  check(!ready() && worker.jobs.size() == 1, "queued job must block without areas");
+  worker.jobs.clear();
+  worker.results.emplace_back();
+  check(!ready() && worker.results.size() == 1, "unconsumed GPU result must block");
+  worker.results.front().kind = JobKind::Keep;
+  check(!ready() && worker.results.front().kind == JobKind::Keep, "unconsumed Keep result must block");
+  worker.results.clear();
+  worker.running = true;
+  worker.runningSerial = 19;
+  check(!ready() && worker.running && worker.runningSerial == 19, "running worker must block");
+  worker.running = false;
+  worker.noThread = true;
+  check(ready(), "idle synchronous fallback and stale running serial are not obligations");
+  // An exited, not-yet-joined CPU thread is enough to distinguish joinability from work.
+  worker.thread = std::thread([] {});
+  check(ready() && worker.thread.joinable(), "idle joinable worker must be allowed and left alone");
+  return failures == 0 ? 0 : 1;
+}
+#endif
+
 void Reset() {
   for (const auto& [fileId, gpu] : sMaterialCubes) {
     if (gpu.id != 0) {

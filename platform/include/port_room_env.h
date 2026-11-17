@@ -808,6 +808,14 @@ struct ExposureAverage {
 // A new area's cubes are decoded and its volumes filled in on a worker thread, and handed
 // to the GPU by UpdateFrame; until each is, Select goes without it.
 void SetLoadedAreas(const uint32_t* mreas, size_t count);
+#ifdef AURORA_H700
+// Main thread only, AFTER the actual GM09 CpuQuiescent/Maps checkpoint and before
+// owner destruction. Read-only: no load completion, cancellation or graphics commands.
+// True permits inert retail placeholders, not GPU release or checkpoint completion.
+bool CanDestroyWithoutGraphicsCommands();
+// CPU-only private-state fixtures; run before game/module initialization, without a backend.
+int H700RoomCleanupSelfTest();
+#endif
 // The script layers of an area in memory that are active (bit n: layer n); every layer
 // until it is set.
 void SetAreaLayers(uint32_t mrea, uint64_t active);

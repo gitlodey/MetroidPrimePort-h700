@@ -89,7 +89,15 @@ public:
     mKept.clear();
   }
 
+#ifdef AURORA_H700
+  bool Empty() const { return mKept.empty(); }
+#endif
+
 private:
+#ifdef AURORA_H700
+  // Fixtures inject bookkeeping only, never GX retain/release commands.
+  friend int PortRoomGeo::H700RoomCleanupSelfTest();
+#endif
   std::vector< const void* > mKept;
 };
 
@@ -273,10 +281,18 @@ struct Area {
   std::vector< Pending > pending;
 };
 
+#ifdef AURORA_H700
+// Observe the existing lazy registry without allocating it from a cleanup query.
+const std::unordered_map< uint32_t, Area >* sCleanupAreas = nullptr;
+#endif
+
 // Areas in memory; one without a file has no instances. Never destroyed: the models' tokens
 // must not outlive the game's resource pool, which static destruction would not respect.
 std::unordered_map< uint32_t, Area >& Areas() {
   static auto* const areas = new std::unordered_map< uint32_t, Area >();
+#ifdef AURORA_H700
+  sCleanupAreas = areas;
+#endif
   return *areas;
 }
 
@@ -998,6 +1014,48 @@ struct Prefetched {
 std::unordered_map< uint32_t, Prefetched > sPrefetched;
 constexpr size_t kMaxPrefetched = 16;
 
+#ifdef AURORA_H700
+bool RoomCleanupReady(const std::unordered_map< uint32_t, Area >* areas,
+                      const decltype(sPrefetched)& prefetched) {
+  for (const auto& [mrea, entry] : prefetched) {
+    // Readiness is not consumption; destroying an async future may still wait.
+    if (entry.parsed.valid()) {
+      return false;
+    }
+  }
+  if (areas != nullptr) {
+    for (const auto& [mrea, area] : *areas) {
+      for (const Model& model : area.models) {
+        if (model.data != nullptr || !model.resident.Empty()) {
+          return false;
+        }
+        for (const Level& level : model.levels) {
+          if (level.data != nullptr || !level.resident.Empty()) {
+            return false;
+          }
+        }
+      }
+      for (const Cluster& cluster : area.clusters) {
+        if (cluster.merged != nullptr || !cluster.resident.Empty() || cluster.lights != nullptr) {
+          return false;
+        }
+        for (const Cluster::MergedLevel& level : cluster.levels) {
+          if (level.merged != nullptr || !level.resident.Empty()) {
+            return false;
+          }
+        }
+      }
+      for (const Placed& item : area.items) {
+        if (item.lights != nullptr) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+#endif
+
 void Load(uint32_t mrea, Area& area) {
   const std::string path = PortMods::RoomGeoPath(mrea);
   if (path.empty() || gpResourceFactory == nullptr) {
@@ -1324,6 +1382,86 @@ void Apply(Area& area, const ScriptEdge& edge, int depth) {
 }
 
 } // namespace
+
+#ifdef AURORA_H700
+bool CanDestroyWithoutGraphicsCommands() {
+  return RoomCleanupReady(sCleanupAreas, sPrefetched);
+}
+
+int H700RoomCleanupSelfTest() {
+  int failures = 0;
+  const auto check = [&](bool passed, const char* detail) {
+    if (!passed) {
+      std::fprintf(stderr, "H700 room geo cleanup: %s\n", detail);
+      ++failures;
+    }
+  };
+  const auto* const registryBefore = sCleanupAreas;
+  std::unordered_map< uint32_t, Area > areas;
+  decltype(sPrefetched) prefetched;
+  const auto ready = [&] { return RoomCleanupReady(&areas, prefetched); };
+  check(RoomCleanupReady(nullptr, prefetched), "uninitialized registry");
+  check(ready(), "empty registry");
+  Area& area = areas[1];
+  areas[2];
+  area.placed = true;
+  check(ready(), "retail placeholders");
+  Model& model = area.models.emplace_back();
+  model.id = 3;
+  model.loaded = true;
+  Level& lod = model.levels.emplace_back();
+  lod.id = 4;
+  Cluster& cluster = area.clusters.emplace_back();
+  cluster.model = 0;
+  cluster.scaleSq = 1.f;
+  Cluster::MergedLevel& clusterLod = cluster.levels.emplace_back();
+  check(ready(), "metadata and empty ownership slots are not resident obligations");
+
+  // Empty CModelData has no pool token; its constructor/destructor need no game init.
+  model.data = std::make_unique<CModelData>();
+  const CModelData* const modelBefore = model.data.get();
+  check(!ready() && model.data.get() == modelBefore && model.data->IsNull(),
+        "actual model ownership must block even before resource load");
+  model.data.reset();
+  lod.data = std::make_unique<CModelData>();
+  const CModelData* const lodBefore = lod.data.get();
+  check(!ready() && lod.data.get() == lodBefore && lod.data->IsNull(), "actual LOD ownership must block");
+  lod.data.reset();
+  const auto retained = [&](ResidentKeep& keep, const char* detail) {
+    // Use a live CPU address as bookkeeping, never Keep()/Release(). Remove it
+    // before the fixture's destructor so no GX command is sent even on failure.
+    keep.mKept.push_back(&failures);
+    check(!ready() && keep.mKept.size() == 1 && keep.mKept.front() == &failures, detail);
+    check(!ready() && !keep.Empty(), "repeated query must not release resident ownership");
+    keep.mKept.clear();
+  };
+  retained(model.resident, "model retain without data must block");
+  retained(lod.resident, "LOD retain without data must block");
+  retained(cluster.resident, "cluster retain without merged model must block");
+  retained(clusterLod.resident, "cluster LOD retain without merged model must block");
+  check(ready(), "ownership removed from fixture");
+  check(areas.size() == 2 && area.placed && area.models.size() == 1 && model.id == 3 && model.loaded &&
+            model.levels.size() == 1 && lod.id == 4 && area.clusters.size() == 1 && cluster.levels.size() == 1,
+        "query must preserve area/model/LOD/cluster metadata");
+
+  prefetched[5].path = "unused.roomgeo";
+  check(ready(), "invalid future is only metadata");
+  std::promise<Parsed> parse;
+  prefetched[5].parsed = parse.get_future();
+  check(!ready() && prefetched[5].parsed.valid(), "pending prefetch must block without consumption");
+  check(!RoomCleanupReady(nullptr, prefetched), "prefetch must block even without an area registry");
+  parse.set_value(Parsed{});
+  check(!ready() && prefetched[5].parsed.valid(), "ready unconsumed prefetch must still block");
+  prefetched[5].parsed = {};
+  bool deferredRan = false;
+  prefetched[5].parsed = std::async(std::launch::deferred, [&] { deferredRan = true; return Parsed{}; });
+  check(!ready() && prefetched[5].parsed.valid() && !deferredRan, "deferred prefetch must not run");
+  prefetched[5].parsed = {};
+  check(ready(), "inert again");
+  check(sCleanupAreas == registryBefore, "fixtures must not initialize or replace the live registry");
+  return failures == 0 ? 0 : 1;
+}
+#endif
 
 void Prefetch(uint32_t mrea) {
   if (GetMode() == Mode::Off || Areas().count(mrea) != 0 || sPrefetched.count(mrea) != 0) {

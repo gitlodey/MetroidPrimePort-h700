@@ -798,6 +798,8 @@ if(MP_BUILD_TESTS)
             INCLUDES platform/include extern/aurora/include)
         add_test(NAME port_h700_settings_profile COMMAND metroid_prime_port --h700-profile-selftest)
         set_tests_properties(port_h700_settings_profile PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_room_cleanup COMMAND metroid_prime_port --h700-room-cleanup-selftest)
+        set_tests_properties(port_h700_room_cleanup PROPERTIES TIMEOUT 15 LABELS port)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
         add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)

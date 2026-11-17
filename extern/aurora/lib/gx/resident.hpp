@@ -79,6 +79,14 @@ bool array_range(const void* data, uint32_t size, gfx::Range& out);
 bool store_dl(Entry& entry, const std::vector<uint8_t>& verts, const std::vector<uint8_t>& indices);
 void free_dl(Entry& entry) noexcept;
 
+// Read-only terminal guards, not synchronization. Production callers must use the H700
+// bridge only after actual CpuQuiescent/Maps, before map retirement, with game producers
+// stopped and FIFO/render/compiler joined. Entries exist before any GPU allocation, so
+// used_bytes() == 0 is not evidence of an empty registry. Neither query consumes commands.
+bool processor_registry_empty() noexcept;
+// Checks BOTH the GX producer retain registry and the processor entry registry.
+bool can_destroy_without_graphics_commands() noexcept;
+
 void reset() noexcept;
 uint64_t used_bytes() noexcept;
 

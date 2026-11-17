@@ -89,5 +89,14 @@ ShutdownResult poll_generation_shutdown() noexcept;
 // Pending/Unknown never authorize owner cleanup. A late CPU poll after Maps has begun
 // cannot obtain CpuQuiescent; it retains the current cursor rather than advancing it.
 ShutdownResult poll_generation_cpu_quiescence() noexcept;
+
+// Main-only resident portion of the game's CanDestroyWithoutGraphicsCommands guard.
+// Call only after actual poll_generation_cpu_quiescence() returned CpuQuiescent/Maps,
+// with game producers stopped, and before any full poll resumes Maps retirement.
+// False outside that boundary (without reading registries), or if EITHER producer retains
+// or processor entries remain, even with zero GPU bytes. Read-only: no polling/progress,
+// reset, release, enqueue or command consumption. True is NOT GPU completion/release and
+// does not authorize cleanup of other game-owner obligations.
+bool resident_resources_empty() noexcept;
 #endif
 } // namespace aurora::h700
