@@ -49,6 +49,13 @@ bool CRealDvdRequest::PortCancelled() {
 }
 #endif
 
+#ifdef AURORA_H700
+CARAMDvdRequest::~CARAMDvdRequest() {
+  // ARAM cancellation is a no-op: the destination must survive the actual DMA.
+  WaitUntilComplete();
+}
+#endif
+
 void CARAMDvdRequest::WaitUntilComplete() {
   if (CARAMManager::GetInvalidDMAHandle() == x4_dmaReq) {
     return;

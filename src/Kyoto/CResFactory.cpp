@@ -293,6 +293,11 @@ CResFactory::SLoadingData::SLoadingData(const SObjectTag& tag, CDvdRequest* requ
 }
 
 CResFactory::SLoadingData::~SLoadingData() {
+#ifdef AURORA_H700
+  // An auto_ptr copy transfers ownership but retains a borrowed pointer in the
+  // source. Assignment retires only an owned request, before either buffer dies.
+  x8_dvdReq = rstl::auto_ptr< CDvdRequest >();
+#endif
   if (x24_zip.owner()) {
     inflateEnd(x24_zip.get());
   }

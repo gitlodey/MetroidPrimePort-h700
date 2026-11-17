@@ -43,6 +43,9 @@ private:
 class CARAMDvdRequest : public CDvdRequest {
 public:
   CARAMDvdRequest(uint i) : x4_dmaReq(i) {}
+#ifdef AURORA_H700
+  ~CARAMDvdRequest() override;
+#endif
   void WaitUntilComplete();
   bool IsComplete();
   void PostCancelRequest();

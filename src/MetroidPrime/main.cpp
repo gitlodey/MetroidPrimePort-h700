@@ -29,6 +29,9 @@
 #ifdef AURORA_H700
 #include "port_h700_game_boundary.h"
 #include "port_h700_terminal.h"
+#include "port_room_env.h"
+#include "port_room_geo.h"
+#include "port_room_liquid.h"
 #include <SDL3/SDL_init.h>
 #endif
 
@@ -276,16 +279,43 @@ CSaveRegion::CSaveRegion(CMain& main) {
 }
 
 #ifdef AURORA_H700
-// These helpers are called ONLY from the audited RsMain root unwind set. GM11
-// must provide no-new-graphics owner cleanup before this hold can ever be left.
+// Called ONLY from the audited RsMain root unwind set, never deep GX guards.
 [[noreturn]] static void PortH700RootFailStop(const char* safePoint,
                                            aurora::h700::ShutdownResult checkpoint,
                                            const char* reason) {
   PortLog::Write("port: H700 root terminal fail-stop at %s: status=%d stage=%d (%s); "
                  "retaining main stack/remaining owners and generation; no ordinary cleanup, "
-                 "full poll, return or further unwind (GM11 pending)\n",
+                 "full poll, return or further unwind\n",
                  safePoint, static_cast<int>(checkpoint.status), static_cast<int>(checkpoint.stage), reason);
   for (;;) SDL_Delay(1000);
+}
+
+static bool PortH700CleanupObligationsEmpty() {
+  // The resident bridge verifies the actual held CPU checkpoint before any
+  // room registry read. No query consumes work or initializes a lazy registry.
+  return aurora::h700::resident_resources_empty() &&
+         PortRoomEnv::CanDestroyWithoutGraphicsCommands() &&
+         PortRoomGeo::CanDestroyWithoutGraphicsCommands() &&
+         PortRoomLiquid::CanDestroyWithoutGraphicsCommands();
+}
+
+static void PortH700ClearArchitectureAliases() {
+  gpController = nullptr;
+  CGuiSys::SetGlobalGuiSys(nullptr);
+}
+
+static void PortH700ClearGlobalAliases() {
+  // Keep these alive through the full owner destructor tail, including world
+  // teardown and request retirement. They are aliases, not remaining owners.
+  gpResourceFactory = nullptr;
+  gpSimplePool = nullptr;
+  gpCharacterFactoryBuilder = nullptr;
+  gpGameState = nullptr;
+  gpMemoryCard = nullptr;
+  gpTweakManager = nullptr;
+  gpDefaultFont = nullptr;
+  gpStringTable = nullptr;
+  gpRender = nullptr;
 }
 
 [[noreturn]] static void PortH700PrepareRootUnwind(const char* safePoint) {
@@ -300,6 +330,10 @@ CSaveRegion::CSaveRegion(CMain& main) {
                         checkpoint.status == aurora::h700::ShutdownStatus::Pending
                             ? "30s diagnostic deadline expired before CPU checkpoint"
                             : "exact CPU checkpoint unproven; root unwind forbidden");
+  }
+  if (!PortH700::RootCleanupAllowed(checkpoint, PortH700CleanupObligationsEmpty)) {
+    PortH700RootFailStop(safePoint, checkpoint,
+                        "room/resident obligations forbid no-new-graphics owner cleanup");
   }
   throw PortH700::RootTerminalToken{safePoint, checkpoint};
 }
@@ -964,6 +998,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
   // partial boot. Only root throws below are authorized; deep GX guards can enqueue.
   rstl::single_ptr< CGameGlobalObjects > gameGlobalObjects;
   rstl::single_ptr< CGameArchitectureSupport > archSupport;
+  PortH700::TerminalMilestones terminalMilestones;
   try {
   gameGlobalObjects = rs_new CGameGlobalObjects(x0_osContext, x6d_memorySys);
 #else
@@ -984,6 +1019,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
   x11c_averageDrawTime = 0.2f;
   InitializeSubsystems();
 #ifdef AURORA_H700
+  terminalMilestones.subsystemsInitialized = true;
   PortH700RootSafePoint("boot: subsystems initialized");
 #endif
   gameGlobalObjects->PostInitialize(x0_osContext, x6d_memorySys);
@@ -1378,6 +1414,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
             [&] {
               x164_archSupport = nullptr;
               archSupport = nullptr;
+              PortH700ClearArchitectureAliases();
               oldOwnerDestroyed = true;
             },
             [] { CFrameDelayedKiller::FlushAllAllocations(); },
@@ -1548,6 +1585,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
       [&] {
         x164_archSupport = nullptr;
         archSupport = nullptr;
+        PortH700ClearArchitectureAliases();
         archDestroyed = true;
       },
       [] { CFrameDelayedKiller::FlushAllAllocations(); });
@@ -1567,8 +1605,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
       [] { return CGraphics::PortGameOwnerBoundary(); },
       [&] {
         ShutdownSubsystems();
+        terminalMilestones.subsystemsRetired = true;
         x128_gameGlobalObjects = nullptr;
         gameGlobalObjects = nullptr;
+        PortH700ClearGlobalAliases();
         globalsDestroyed = true;
       },
       [] { CFrameDelayedKiller::FlushAllAllocations(); });
@@ -1583,14 +1623,42 @@ int CMain::RsMain(int argc, const char* const* argv) {
   gameGlobalObjects = nullptr;
 #endif
   CARAMManager::Shutdown();
+#ifdef AURORA_H700
+  terminalMilestones.aramRetired = true;
+#endif
   return 0;
 #ifdef AURORA_H700
   } catch (const PortH700::RootTerminalToken& terminal) {
-    // The outer owners and CMain are still alive. CpuQuiescent is NOT GPU release
-    // or permission to run their normal dtors. No full poll until GM11's explicit
-    // no-new-graphics cleanup exists; do not turn this staged transport into exit.
-    PortH700RootFailStop(terminal.safePoint, terminal.checkpoint,
-                        "root token caught at CPU checkpoint; terminal owner cleanup not implemented");
+    if (!PortH700::RootCleanupAllowed(terminal.checkpoint, PortH700CleanupObligationsEmpty)) {
+      PortH700RootFailStop(terminal.safePoint, terminal.checkpoint,
+                          "terminal cleanup checkpoint/obligations changed before owner retirement");
+    }
+    // The exact CPU checkpoint is held; Maps/native/holders/device remain live.
+    // Actual DVD/DMA destructors wait before freeing their destinations. No
+    // healthy boundary, EndScene, GXDrawDone or full IG11 from this catch.
+    try {
+      const int result = PortH700::CleanupTerminalOwners(
+          terminalMilestones,
+          [&] {
+            x164_archSupport = nullptr;
+            archSupport = nullptr;
+            PortH700ClearArchitectureAliases();
+          },
+          [&] { ShutdownSubsystems(); },
+          [&] {
+            x128_gameGlobalObjects = nullptr;
+            gameGlobalObjects = nullptr;
+            PortH700ClearGlobalAliases();
+          },
+          [] { CFrameDelayedKiller::FlushAllAllocations(); },
+          [] { CARAMManager::Shutdown(); });
+      PortLog::Write("port: H700 terminal game owners retired at %s; returning failure to platform IG11\n",
+                     terminal.safePoint);
+      return result;
+    } catch (...) {
+      PortH700RootFailStop(terminal.safePoint, terminal.checkpoint,
+                          "exception during terminal owner retirement; remaining owners retained");
+    }
   }
 #endif
 }

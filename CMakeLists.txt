@@ -796,11 +796,21 @@ if(MP_BUILD_TESTS)
             INCLUDES platform/include)
         mp_port_test(port_h700_terminal_tests SOURCES tests/port_h700_terminal.cpp
             INCLUDES platform/include extern/aurora/include)
+        mp_port_test(port_h700_delayed_cleanup_tests
+            SOURCES tests/port_h700_delayed_cleanup.cpp src/Kyoto/CFrameDelayedKiller.cpp
+            INCLUDES include extern/aurora/include platform/include
+            DEFINITIONS TARGET_PC VERSION=0 AURORA_H700 CXX_STANDARD 20)
         add_test(NAME port_h700_settings_profile COMMAND metroid_prime_port --h700-profile-selftest)
         set_tests_properties(port_h700_settings_profile PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_room_cleanup COMMAND metroid_prime_port --h700-room-cleanup-selftest)
         set_tests_properties(port_h700_room_cleanup PROPERTIES TIMEOUT 15 LABELS port)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME port_h700_dvd_lifetime_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_dvd_lifetime_wiring.py")
+        set_tests_properties(port_h700_dvd_lifetime_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_terminal_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_terminal_wiring.py")
+        set_tests_properties(port_h700_terminal_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)
         set_tests_properties(port_h700_profile_startup PROPERTIES TIMEOUT 30 LABELS port)

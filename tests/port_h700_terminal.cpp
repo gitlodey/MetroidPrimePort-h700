@@ -128,8 +128,8 @@ void CheckRootTransport(bool inLoop, bool architectureConstructed) {
     CHECK(globals != nullptr);
     CHECK_EQ(architecture != nullptr, architectureConstructed);
     CHECK(!ordinaryCleanup);
-    // The real catch fail-stops here: no owner dtors, delayed flush, full lifecycle
-    // poll or return to platform. Only this CPU harness ends its scope afterwards.
+    // GM10 transport-only coverage: deliberately stop before GM11b cleanup here.
+    // No owner dtors, flush or full lifecycle poll; this harness later ends scope.
   }
   CHECK(caught);
   CHECK_EQ(genericAborts, 0);
@@ -184,8 +184,18 @@ void CheckExactCheckpointOnly() {
       const auto result = script.Prepare();
       CHECK_EQ(result.status, status);
       CHECK_EQ(result.stage, stage);
-      CHECK_EQ(PortH700::RootUnwindReady(result),
-               status == Status::CpuQuiescent && stage == Stage::Maps);
+      const bool exactCheckpoint = status == Status::CpuQuiescent && stage == Stage::Maps;
+      CHECK_EQ(PortH700::RootUnwindReady(result), exactCheckpoint);
+      for (const bool obligationsEmpty : {false, true}) {
+        int queries = 0;
+        CHECK_EQ(PortH700::RootCleanupAllowed(result, [&] {
+                   ++queries;
+                   CHECK(exactCheckpoint);
+                   return obligationsEmpty;
+                 }),
+                 exactCheckpoint && obligationsEmpty);
+        CHECK_EQ(queries, exactCheckpoint ? 1 : 0);
+      }
       CHECK_EQ(script.polls, 1);
       CHECK_EQ(script.idles, 0);
     }
@@ -236,6 +246,318 @@ void CheckOtherExceptionsKeepTheirPath() {
   }
   CHECK(propagated);
 }
+// CPU callback models only: the actual room/resident predicates have separate
+// GM11a tests. These four independent outcomes exercise the production root gate,
+// not a replacement implementation of the actual resource/registry checks.
+struct Obligations {
+  bool roomEnvironmentEmpty = true;
+  bool roomGeometryEmpty = true;
+  bool liquidEmpty = true;
+  bool residentEmpty = true;
+  int queries = 0;
+
+  bool Allowed(Result checkpoint) {
+    return PortH700::RootCleanupAllowed(checkpoint, [&] {
+      ++queries;
+      CHECK(PortH700::RootUnwindReady(checkpoint));
+      return roomEnvironmentEmpty && roomGeometryEmpty && liquidEmpty && residentEmpty;
+    });
+  }
+};
+
+enum class Retirement { Architecture, Subsystems, Globals, Flush, Aram };
+using Events = std::vector<Retirement>;
+
+struct RetirementFailure {
+  Retirement at;
+};
+
+struct TerminalOwner {
+  TerminalOwner*& alias;
+  Events& events;
+  Retirement event;
+
+  TerminalOwner(TerminalOwner*& alias, Events& events, Retirement event)
+  : alias(alias), events(events), event(event) {
+    CHECK(alias == nullptr);
+    alias = this;
+  }
+  ~TerminalOwner() {
+    CHECK(alias == nullptr); // clearing after reset() would already be too late
+    events.push_back(event);
+  }
+};
+
+struct TerminalRoot {
+  PortH700::TerminalMilestones milestones;
+  Obligations obligations;
+  Events events;
+  Events attempts;
+  bool injectFailure = false;
+  Retirement failureAt = Retirement::Architecture;
+  TerminalOwner* architectureAlias = nullptr;
+  TerminalOwner* globalsAlias = nullptr;
+  // Like the real root, nullable owners and milestones outlive its typed try.
+  std::unique_ptr<TerminalOwner> globals;
+  std::unique_ptr<TerminalOwner> architecture;
+
+  TerminalRoot() {
+    CHECK(!milestones.subsystemsInitialized);
+    CHECK(!milestones.subsystemsRetired);
+    CHECK(!milestones.aramRetired);
+    globals = std::make_unique<TerminalOwner>(globalsAlias, events, Retirement::Globals);
+  }
+  ~TerminalRoot() {
+    // Test-scope release only, after all retention assertions. A production
+    // rejected gate/throwing callback fail-stops instead of leaving this scope.
+    architectureAlias = nullptr;
+    globalsAlias = nullptr;
+  }
+
+  void ConstructArchitecture() {
+    REQUIRE(milestones.subsystemsInitialized);
+    architecture = std::make_unique<TerminalOwner>(architectureAlias, events,
+                                                   Retirement::Architecture);
+  }
+
+  void Attempt(Retirement event) {
+    attempts.push_back(event);
+    if (injectFailure && failureAt == event) throw RetirementFailure{event};
+  }
+
+  void RetireArchitecture() {
+    Attempt(Retirement::Architecture);
+    architectureAlias = nullptr;
+    architecture.reset();
+  }
+  void ShutdownSubsystems() {
+    Attempt(Retirement::Subsystems);
+    CHECK(!architecture);
+    CHECK(architectureAlias == nullptr);
+    CHECK(milestones.subsystemsInitialized);
+    CHECK(!milestones.subsystemsRetired);
+    CHECK(globals != nullptr);
+    events.push_back(Retirement::Subsystems);
+  }
+  void RetireGlobals() {
+    Attempt(Retirement::Globals);
+    CHECK(!architecture);
+    CHECK(!milestones.subsystemsInitialized || milestones.subsystemsRetired);
+    globalsAlias = nullptr;
+    globals.reset();
+  }
+  void Flush() {
+    Attempt(Retirement::Flush);
+    CHECK(!architecture);
+    CHECK(!globals);
+    events.push_back(Retirement::Flush);
+  }
+  void ShutdownAram() {
+    Attempt(Retirement::Aram);
+    CHECK(milestones.subsystemsInitialized);
+    CHECK(milestones.subsystemsRetired);
+    CHECK(!milestones.aramRetired);
+    REQUIRE(!events.empty());
+    CHECK_EQ(events.back(), Retirement::Flush);
+    events.push_back(Retirement::Aram);
+  }
+
+  int Cleanup() {
+    // Only the production helper decides order and milestone skips. No graphics,
+    // healthy boundary or full lifecycle poll is provided by these callbacks.
+    return PortH700::CleanupTerminalOwners(
+        milestones, [&] { RetireArchitecture(); }, [&] { ShutdownSubsystems(); },
+        [&] { RetireGlobals(); }, [&] { Flush(); }, [&] { ShutdownAram(); });
+  }
+};
+
+enum class RootPhase { BeforeSubsystems, BeforeArchitecture, LiveArchitecture,
+                       ResetAfterArchitecture, ExitAfterGlobals };
+
+void CheckTerminalCleanup(RootPhase phase) {
+  TerminalRoot root;
+  if (phase != RootPhase::BeforeSubsystems) root.milestones.subsystemsInitialized = true;
+  if (phase == RootPhase::LiveArchitecture || phase == RootPhase::ResetAfterArchitecture ||
+      phase == RootPhase::ExitAfterGlobals)
+    root.ConstructArchitecture();
+  if (phase == RootPhase::ResetAfterArchitecture || phase == RootPhase::ExitAfterGlobals)
+    root.RetireArchitecture(); // old arch gone; replacement has not been constructed
+  if (phase == RootPhase::ExitAfterGlobals) {
+    root.ShutdownSubsystems();
+    root.milestones.subsystemsRetired = true; // healthy shutdown callback returned
+    root.RetireGlobals();
+  }
+  const auto eventsBeforeThrow = root.events;
+  const auto attemptsBeforeThrow = root.attempts;
+  auto* const globalsBeforeThrow = root.globals.get();
+  auto* const architectureBeforeThrow = root.architecture.get();
+  PollScript script{{{Status::Pending, Stage::Render}, {Status::CpuQuiescent, Stage::Maps}}};
+  int rootLocalsDestroyed = 0;
+  int result = -1;
+  bool caught = false;
+  try {
+    RootLocal local{script.checkpointSeen, rootLocalsDestroyed};
+    const auto checkpoint = script.Prepare();
+    REQUIRE(root.obligations.Allowed(checkpoint));
+    CHECK(root.events == eventsBeforeThrow);
+    CHECK(root.attempts == attemptsBeforeThrow);
+    CHECK_EQ(rootLocalsDestroyed, 0);
+    throw Token{"terminal root phase", checkpoint};
+  } catch (const Token& token) {
+    caught = true;
+    CHECK_EQ(rootLocalsDestroyed, 1);
+    CHECK(root.events == eventsBeforeThrow);
+    CHECK(root.globals.get() == globalsBeforeThrow);
+    CHECK(root.architecture.get() == architectureBeforeThrow);
+    REQUIRE(root.obligations.Allowed(token.checkpoint));
+    result = root.Cleanup();
+  }
+  CHECK(caught);
+  CHECK_EQ(result, 1);
+  CHECK_EQ(root.obligations.queries, 2); // pre-throw and catch independently gate
+  CHECK_EQ(script.polls, 2); // cleanup never resumes polling towards full release
+  CHECK_EQ(script.idles, 1);
+  CHECK(!root.architecture);
+  CHECK(!root.globals);
+  CHECK(root.architectureAlias == nullptr);
+  CHECK(root.globalsAlias == nullptr);
+  const bool initialized = phase != RootPhase::BeforeSubsystems;
+  CHECK_EQ(root.milestones.subsystemsInitialized, initialized);
+  CHECK_EQ(root.milestones.subsystemsRetired, initialized);
+  CHECK_EQ(root.milestones.aramRetired, initialized);
+
+  Events expected;
+  if (phase == RootPhase::LiveArchitecture || phase == RootPhase::ResetAfterArchitecture ||
+      phase == RootPhase::ExitAfterGlobals)
+    expected.push_back(Retirement::Architecture);
+  if (initialized) expected.push_back(Retirement::Subsystems);
+  expected.push_back(Retirement::Globals);
+  expected.push_back(Retirement::Flush);
+  if (initialized) expected.push_back(Retirement::Aram);
+  CHECK(root.events == expected);
+
+  // Both shutdown milestones (including an already retired ARAM) suppress a
+  // second callback; nullable owner callbacks remain harmless, flush still runs.
+  root.attempts.clear();
+  REQUIRE(root.obligations.Allowed({Status::CpuQuiescent, Stage::Maps}));
+  CHECK_EQ(root.Cleanup(), 1);
+  expected.push_back(Retirement::Flush);
+  CHECK(root.events == expected);
+  const Events repeated{Retirement::Architecture, Retirement::Globals, Retirement::Flush};
+  CHECK(root.attempts == repeated);
+  CHECK_EQ(root.milestones.subsystemsRetired, initialized);
+  CHECK_EQ(root.milestones.aramRetired, initialized);
+  CHECK_EQ(script.polls, 2);
+}
+
+void CheckEachObligationBlocksTransport() {
+  const std::vector<bool Obligations::*> guards{
+      &Obligations::roomEnvironmentEmpty, &Obligations::roomGeometryEmpty,
+      &Obligations::liquidEmpty, &Obligations::residentEmpty};
+  for (const auto guard : guards) {
+    TerminalRoot root;
+    root.milestones.subsystemsInitialized = true;
+    root.ConstructArchitecture();
+    root.obligations.*guard = false;
+    auto* const globals = root.globals.get();
+    auto* const architecture = root.architecture.get();
+    PollScript script{{{Status::Pending, Stage::Fifo}, {Status::Pending, Stage::Render},
+                       {Status::Pending, Stage::Compiler}, {Status::CpuQuiescent, Stage::Maps}}};
+    bool caught = false;
+    bool reachedHold = false;
+    int rootLocalsDestroyed = 0;
+    try {
+      RootLocal local{script.checkpointSeen, rootLocalsDestroyed};
+      const auto checkpoint = script.Prepare();
+      CHECK_EQ(checkpoint.status, Status::CpuQuiescent);
+      CHECK_EQ(checkpoint.stage, Stage::Maps);
+      CHECK_EQ(root.obligations.queries, 0);
+      if (root.obligations.Allowed(checkpoint)) throw Token{"blocked obligation", checkpoint};
+      reachedHold = true;
+      CHECK_EQ(root.obligations.queries, 1);
+      CHECK_EQ(rootLocalsDestroyed, 0); // fail-stop point, before any root unwind
+      CHECK(root.globals.get() == globals);
+      CHECK(root.architecture.get() == architecture);
+      CHECK(root.globalsAlias == globals);
+      CHECK(root.architectureAlias == architecture);
+      CHECK(root.events.empty());
+      CHECK(root.attempts.empty());
+      CHECK(!root.milestones.subsystemsRetired);
+      CHECK(!root.milestones.aramRetired);
+      // Only the test now leaves scope; production must hold at this point.
+    } catch (const Token&) {
+      caught = true;
+    }
+    CHECK(!caught);
+    CHECK(reachedHold);
+    CHECK_EQ(script.polls, 4);
+    CHECK_EQ(script.idles, 3);
+    CHECK(root.events.empty());
+    CHECK(root.attempts.empty());
+
+    // A token is not cached permission: the catch must query actual obligations
+    // again, and retain owners if any one outcome no longer permits cleanup.
+    root.obligations.*guard = true;
+    const Result checkpoint{Status::CpuQuiescent, Stage::Maps};
+    REQUIRE(root.obligations.Allowed(checkpoint));
+    int result = -1;
+    try {
+      throw Token{"catch recheck", checkpoint};
+    } catch (const Token& token) {
+      root.obligations.*guard = false;
+      if (root.obligations.Allowed(token.checkpoint)) result = root.Cleanup();
+    }
+    CHECK_EQ(result, -1);
+    CHECK_EQ(root.obligations.queries, 3);
+    CHECK(root.globals.get() == globals);
+    CHECK(root.architecture.get() == architecture);
+    CHECK(root.globalsAlias == globals);
+    CHECK(root.architectureAlias == architecture);
+    CHECK(root.events.empty());
+    CHECK(root.attempts.empty());
+    CHECK(!root.milestones.subsystemsRetired);
+    CHECK(!root.milestones.aramRetired);
+  }
+}
+
+void CheckThrowingRetirementStopsCleanup() {
+  const Events order{Retirement::Architecture, Retirement::Subsystems, Retirement::Globals,
+                     Retirement::Flush, Retirement::Aram};
+  for (size_t failure = 0; failure < order.size(); ++failure) {
+    TerminalRoot root;
+    root.milestones.subsystemsInitialized = true;
+    root.ConstructArchitecture();
+    root.injectFailure = true;
+    root.failureAt = order[failure];
+    PollScript script{{{Status::CpuQuiescent, Stage::Maps}}};
+    const auto checkpoint = script.Prepare();
+    REQUIRE(root.obligations.Allowed(checkpoint));
+    int result = -1;
+    bool caught = false;
+    try {
+      result = root.Cleanup();
+    } catch (const RetirementFailure& error) {
+      caught = true;
+      CHECK_EQ(error.at, order[failure]);
+    }
+    CHECK(caught);
+    CHECK_EQ(result, -1); // no swallowed failure or invented return1
+    const Events attempted(order.begin(), order.begin() + failure + 1);
+    const Events completed(order.begin(), order.begin() + failure);
+    CHECK(root.attempts == attempted);
+    CHECK(root.events == completed);
+    CHECK(root.milestones.subsystemsInitialized);
+    CHECK_EQ(root.milestones.subsystemsRetired, failure > 1);
+    CHECK(!root.milestones.aramRetired); // set only AFTER successful ARAM return
+    CHECK_EQ(root.architecture != nullptr, failure == 0);
+    CHECK_EQ(root.globals != nullptr, failure <= 2);
+    CHECK(root.architectureAlias == root.architecture.get());
+    CHECK(root.globalsAlias == root.globals.get());
+    CHECK_EQ(script.polls, 1);
+    CHECK_EQ(script.idles, 0);
+    // No retry: production fail-stops with exactly these later owners/milestones.
+  }
+}
 } // namespace
 
 int main() {
@@ -246,5 +568,11 @@ int main() {
   CheckExactCheckpointOnly();
   CheckMainThreadRequiredBeforePoll();
   CheckOtherExceptionsKeepTheirPath();
+  for (const auto phase : {RootPhase::BeforeSubsystems, RootPhase::BeforeArchitecture,
+                           RootPhase::LiveArchitecture, RootPhase::ResetAfterArchitecture,
+                           RootPhase::ExitAfterGlobals})
+    CheckTerminalCleanup(phase);
+  CheckEachObligationBlocksTransport();
+  CheckThrowingRetirementStopsCleanup();
   return PORT_TEST_RESULT();
 }

@@ -90,6 +90,13 @@ ShutdownResult poll_generation_shutdown() noexcept;
 // cannot obtain CpuQuiescent; it retains the current cursor rather than advancing it.
 ShutdownResult poll_generation_cpu_quiescence() noexcept;
 
+// Read-only main-thread query, false during polling or outside the actual held
+// CpuQuiescent/Maps boundary (including Unknown or Maps retirement already begun).
+// Does not poll, progress, request shutdown or manufacture a checkpoint. True permits
+// no-new-graphics CPU cleanup only, NOT GPU completion or generation release.
+// Game producers must remain stopped until the explicit full shutdown resumes Maps.
+bool generation_cpu_quiescence_held() noexcept;
+
 // Main-only resident portion of the game's CanDestroyWithoutGraphicsCommands guard.
 // Call only after actual poll_generation_cpu_quiescence() returned CpuQuiescent/Maps,
 // with game producers stopped, and before any full poll resumes Maps retirement.

@@ -194,7 +194,7 @@ Reset и normal exit выполняются на main safe-point:
 
 ### GM-11. Terminal owner cleanup по milestones — разделён на GM-11a/GM-11b
 
-Исходные дизайн и критерии D9/§4.2 сохранены; пользователь утвердил только разделение карточки. Каждый подшаг закрывается своей проверкой, документацией, commit/push.
+Исходные дизайн и критерии D9/§4.2 сохранены; пользователь утвердил разделение карточки, затем 2026-11-17 — узкое расширение GM-11b для pending-DVD lifetime. Каждый подшаг закрывается своей проверкой, документацией, commit/push.
 
 #### GM-11a. Read-only guards/query seams
 
@@ -207,9 +207,9 @@ Reset и normal exit выполняются на main safe-point:
 #### GM-11b. Milestone cleanup и terminal return
 
 - **Цель/риск:** освободить только фактически созданных retail owners после CPU joins, без новых graphics commands и преждевременного GPU release.
-- **Зависимости:** GM-10/GM-11a. **Файлы:** game main/terminal policy, CFDk и установленные retail destructor seams/tests.
+- **Зависимости:** GM-10/GM-11a. **Файлы:** game main/terminal policy, CFDk и установленные retail destructor seams/tests; согласованное расширение — `CWorld`/`CDummyWorld`, `CResFactory::SLoadingData`, DVD request retirement и focused CPU tests.
 - **Решение:** milestones вне try, actual guards после checkpoint **до throw/destruction**, clear aliases/retire game owners+subsystems/globals, final no-command delayed flush/ARAM, return1 через RsMain/metroid_main; platform resume существующего полного IG11. Unknown удерживает необходимые holders, не fake release.
-- **Проверка/готово:** partial boot, уже уничтоженный arch/globals, failure guards, no enqueue after terminal seal, сохранённые DMA/in-flight waits и nonzero propagation. Каждый created owner released по доказанному пути либо retained в fail-stop.
+- **Проверка/готово:** partial boot, уже уничтоженный arch/globals, failure guards, no enqueue after terminal seal, сохранённые DMA/in-flight waits и nonzero propagation. Pending DVD request завершает безопасную отмену/drain, включая callback return, **до** освобождения destination; также проверить completed/null/transferred ownership и ARAM wait. Каждый created owner released по доказанному пути либо retained в fail-stop.
 - **Safety/оценка/docs:**1–2ч; более широкий destructor redesign или unsupported retail enqueue — stop/replan. Обновить этот план/прогресс; separate commit/push. GPU/device не запускать.
 
 ### GM-12. Skinning waits и allocation failure
@@ -530,4 +530,18 @@ Resident bridge `aurora::h700::resident_resources_empty()` до чтения п�
 
 Это доказанный unsafe порядок **при pending non-ARAM read**, не наблюдавшийся device crash. `DVDGetDriveStatus` не подходит для guard (возвращает END по initialized). Existing `DVDCancelAll` ждёт active request, но вызывает callbacks и не закрывает admission; его безусловный вызов не принят как доказанный terminal barrier. Диск закрывать до owners нельзя; game/factory pump после seal не является безопасным решением.
 
-**Реализация переноса остановлена:** production code GM-11b не менялся, typed catch удерживает owners. GM-10 и GM-11a завершены/отправлены, их результаты не отменены. Нужно отдельно согласовать расширение GM-11b: узкое исправление request-before-destination retirement с сохранением actual cancel/drain/callback waits и pending-read regressions либо дополнительный проверенный terminal DVD guard/barrier. Нельзя молча включать cleanup, менять renderer/dependencies или выдавать этот блокер за исправленный. GPU/device не запускались; новых build/tests после read-only аудита не требовалось.
+**На момент остановки:** production code GM-11b не менялся, typed catch удерживал owners. GM-10 и GM-11a завершены/отправлены, их результаты не отменены. Нужно отдельно согласовать расширение GM-11b: узкое исправление request-before-destination retirement с сохранением actual cancel/drain/callback waits и pending-read regressions либо дополнительный проверенный terminal DVD guard/barrier. Нельзя молча включать cleanup, менять renderer/dependencies или выдавать этот блокер за исправленный. GPU/device не запускались; новых build/tests после read-only аудита не требовалось.
+
+**Расширение утверждено пользователем 2026-11-17:** выбран узкий request-before-destination retirement в выявленных retail destructors с сохранением штатного cancel/drain/callback lifetime и CPU regressions. Не вводим global DVD shutdown/barrier, game pump после terminal seal или смену renderer/dependencies. Это часть GM-11b, затем milestone cleanup/return по прежнему контракту. Остановка снята; результат ниже.
+
+### GM-11b — LOCAL PASS: terminal owner cleanup и DVD destination lifetime
+
+H700 `CWorld`/`CDummyWorld` явно уничтожают request перед destination; `CResFactory::SLoadingData` присваивает пустой `auto_ptr`, сохраняя transfer/borrowed semantics. `CRealDvdRequest` по-прежнему использует no-throw `DVDClose`/actual worker drain, включая callback return, без `IsComplete`/искусственного completion. H700 `CARAMDvdRequest` destructor сохраняет фактическое DMA wait. Глобального DVD barrier/close/pump не добавлено; другие платформы не меняют поведение.
+
+`RsMain` хранит nullable owners и initialization/retirement milestones вне try. После exact checkpoint **до throw** проверяются actual resident+room predicates; catch повторяет живую проверку. Отказ сохраняет fail-stop до destruction. Terminal helper явно выполняет architecture → только живые initialized subsystems → globals → final no-command delayed flush → только живой ARAM → return1. Owner aliases очищаются до destruction, service aliases — после нужного destructor tail; CMain/allocator и disc остаются живы до конца. Unknown/timeout не стали разрешением на освобождение. Existing platform audio/services → full IG11 → known release → disc-close order сохранён, double shutdown не добавлен.
+
+Independent source review дополнительно установил retail pause-screen dtors, вызывающие CFDk stall. В предусмотренном CFDk scope исправлено: `generation_cpu_quiescence_held()` read-only проверяет main/!polling и exact held CpuQuiescent/Maps до начала Maps retirement; **только тогда** CFDk выполняет flush без `GXDrawDone`. Healthy/non-H700 barrier сохранён. Это не общий ignore-GX режим; actual resident bridge использует тот же checkpoint query.
+
+Проверки в exact offline ARM64 image: full game build; **21/21 CPU/no-init/DVD CTest**, включая реальные DVD worker и SLoadingData destructor, END/FATAL callback-return, pending/transferred/null owners, deferred ARQ/ARAM, production CFDk queues/frees, root policy и source bindings; **269/269 FIFO**, **53/53 render/lifecycle/source** — PASS. Full non-H700 core/GX и changed game TUs (`main`, `CWorld`, `CResFactory`, `CDvdRequest`, CFDk) compile PASS. Source tests миров/двух pause dtors не подменяются runtime game coverage. Одна первая новая Python wiring-проверка имела ошибку вызова helper (отсутствующий аргумент), исправлена без ослабления assertions; повторный набор PASS. Final read-only review снял pause blocker, новых blockers в проверенном terminal scope не нашёл.
+
+Commands/logs: ignored `gm11b-*`. GPU/device, реальный device-loss и игра не запускались. Синхронные DVD/DMA waits не получили auto-timeout/free: неизвестное завершение сохраняет данные, не объявляется success. Deep skinning throw пока не подключён; далее GM-12.

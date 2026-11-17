@@ -17,6 +17,43 @@ inline bool RootUnwindReady(aurora::h700::ShutdownResult result) noexcept {
          result.stage == aurora::h700::ShutdownStage::Maps;
 }
 
+// Kept outside the encompassing try alongside the nullable owners. Root-only
+// transport cannot interrupt InitializeSubsystems; mark it only after return.
+struct TerminalMilestones {
+  bool subsystemsInitialized = false;
+  bool subsystemsRetired = false;
+  bool aramRetired = false;
+};
+
+// Checkpoint first: the read-only obligation queries are not thread barriers.
+// Both the pre-throw path and the catch must use the actual predicates.
+template <class ObligationsEmpty>
+bool RootCleanupAllowed(aurora::h700::ShutdownResult checkpoint, ObligationsEmpty obligationsEmpty) {
+  return RootUnwindReady(checkpoint) && obligationsEmpty();
+}
+
+// No healthy boundary, GXDrawDone, progress or full IG11 here. Callbacks must
+// retire nullable owners explicitly; their actual DVD/DMA dtors retain waits.
+// A thrown callback leaves later milestones untouched; production fail-stops.
+template <class RetireArchitecture, class RetireSubsystems, class RetireGlobals,
+          class FlushDelayed, class RetireAram>
+int CleanupTerminalOwners(TerminalMilestones& milestones, RetireArchitecture retireArchitecture,
+                          RetireSubsystems retireSubsystems, RetireGlobals retireGlobals,
+                          FlushDelayed flushDelayed, RetireAram retireAram) {
+  retireArchitecture();
+  if (milestones.subsystemsInitialized && !milestones.subsystemsRetired) {
+    retireSubsystems();
+    milestones.subsystemsRetired = true;
+  }
+  retireGlobals();
+  flushDelayed();
+  if (milestones.subsystemsInitialized && !milestones.aramRetired) {
+    retireAram();
+    milestones.aramRetired = true;
+  }
+  return 1;
+}
+
 // Shared CPU policy, not a GPU simulator. Production poll must be GM09's actual
 // poll_generation_cpu_quiescence (it requests terminal shutdown itself). Only the
 // exact checkpoint permits the caller to throw, with owners OUTSIDE its root try.

@@ -313,6 +313,32 @@ if (TARGET aurora::dvd)
   endif ()
 
   gtest_discover_tests(dvd_tests)
+
+  if (AURORA_H700)
+    # Actual request/owner/DMA destructors plus the DVD worker, CPU only; no
+    # disc image, renderer, game globals, or replacement completion backend.
+    add_executable(h700_dvd_lifetime_tests
+      dvd_lifetime_test.cpp
+      dvd_test_stubs.cpp
+      ../lib/logging.cpp
+      ../lib/dolphin/AR.cpp
+      ../lib/dolphin/os/OSCache.cpp
+      ../../../src/Kyoto/CDvdRequest.cpp
+      ../../../src/Kyoto/CARAMManager.cpp
+      ../../../src/Kyoto/CResFactory.cpp
+    )
+    target_include_directories(h700_dvd_lifetime_tests PRIVATE
+      ../../../include ../../../platform/include)
+    target_compile_features(h700_dvd_lifetime_tests PRIVATE cxx_std_20)
+    target_compile_definitions(h700_dvd_lifetime_tests PRIVATE AURORA_H700 VERSION=0)
+    target_compile_options(h700_dvd_lifetime_tests PRIVATE
+      -fsigned-char -fno-strict-aliasing -fwrapv -ffunction-sections -fdata-sections
+      -include "${CMAKE_CURRENT_SOURCE_DIR}/../../../platform/compat.h")
+    target_link_options(h700_dvd_lifetime_tests PRIVATE -Wl,--gc-sections)
+    target_link_libraries(h700_dvd_lifetime_tests PRIVATE
+      aurora::dvd ZLIB::ZLIB Tracy::TracyClient gtest_main)
+    gtest_discover_tests(h700_dvd_lifetime_tests PROPERTIES TIMEOUT 15 LABELS "port;h700;dvd")
+  endif ()
 endif ()
 
 add_executable(os_alloc_tests

@@ -5,6 +5,10 @@
 #include <dolphin/gx/GXManage.h>
 #include <rstl/list.hpp>
 
+#ifdef AURORA_H700
+#include "../../extern/aurora/lib/h700/lifecycle.hpp"
+#endif
+
 #if NONMATCHING || defined(TARGET_PC)
 #include <stdint.h>
 #endif
@@ -101,6 +105,14 @@ void CFrameDelayedKiller::FlushAllAllocations() {
 }
 
 void CFrameDelayedKiller::StallAndFlushAllAllocations() {
+#ifdef AURORA_H700
+  // Retail pause dtors also reach this entry point during terminal owner cleanup.
+  // Actual joined CPU owners, held before Maps, replace the now-sealed FIFO barrier.
+  if (aurora::h700::generation_cpu_quiescence_held()) {
+    FlushAllAllocations();
+    return;
+  }
+#endif
   GXDrawDone();
   FlushAllAllocations();
 }

@@ -147,6 +147,23 @@ TEST(GenerationLifecycleTest, CpuPollDoesNotMistakeUnknownOrAlreadyRetiringMapsF
   EXPECT_FALSE(lifecycle.begin());
 }
 
+TEST(GenerationLifecycleTest, UnknownInvalidatesEvenPreviouslyHeldCpuCheckpoint) {
+  GenerationLifecycle lifecycle;
+  constexpr auto goal = ShutdownGoal::CpuQuiescence;
+  ASSERT_TRUE(lifecycle.begin());
+  lifecycle.fail();
+  lifecycle.request_stop();
+  for (const auto stage : {ShutdownStage::Producers, ShutdownStage::Fifo, ShutdownStage::Render,
+                           ShutdownStage::Compiler}) ASSERT_TRUE(lifecycle.advance(stage, goal));
+  ASSERT_EQ(lifecycle.result(goal).status, ShutdownStatus::CpuQuiescent);
+  ASSERT_EQ(lifecycle.result(goal).stage, ShutdownStage::Maps);
+  lifecycle.unknown();
+  EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Unknown);
+  EXPECT_EQ(lifecycle.result(goal).stage, ShutdownStage::Unknown);
+  EXPECT_FALSE(lifecycle.begin_map_retirement(goal));
+  EXPECT_FALSE(lifecycle.begin());
+}
+
 TEST(GenerationLifecycleTest, CpuStatusPreservesExistingDiagnosticValues) {
   EXPECT_EQ(static_cast<int>(ShutdownStatus::Pending), 0);
   EXPECT_EQ(static_cast<int>(ShutdownStatus::Released), 1);
@@ -167,15 +184,25 @@ std::string section(const std::string& text, const char* first, const char* last
   return text.substr(begin, end - begin);
 }
 
+TEST(GenerationLifecycleSource, HeldCpuCheckpointQueryIsMainOnlyReadOnlyAndDoesNotManufactureProof) {
+  const auto query = section(source("aurora.cpp"), "bool h700::generation_cpu_quiescence_held() noexcept",
+                             "bool h700::resident_resources_empty() noexcept");
+  const auto read = query.find("g_generationLifecycle.result(h700::ShutdownGoal::CpuQuiescence)");
+  ASSERT_NE(read, std::string::npos);
+  EXPECT_LT(query.find("g_lifecycleMain != std::this_thread::get_id() || g_lifecyclePolling) return false"), read);
+  EXPECT_NE(query.find("return checkpoint.status == h700::ShutdownStatus::CpuQuiescent &&"), std::string::npos);
+  EXPECT_NE(query.find("checkpoint.stage == h700::ShutdownStage::Maps;"), std::string::npos);
+  for (const auto forbidden : {"poll_", "request_", "main_progress", "reset(", "release(", "drain(", "process(",
+                               "enqueue", "GX_WRITE", ".advance(", ".fail(", ".unknown(", "begin_map_retirement("})
+    EXPECT_EQ(query.find(forbidden), std::string::npos) << forbidden;
+}
+
 TEST(GenerationLifecycleSource, ResidentGuardReadsRegistriesOnlyAtActualCpuCheckpointWithoutProgress) {
   const auto guard = section(source("aurora.cpp"), "bool h700::resident_resources_empty() noexcept",
                              "void h700::request_generation_shutdown()");
   const auto read = guard.find("gx::resident::can_destroy_without_graphics_commands()");
   ASSERT_NE(read, std::string::npos);
-  EXPECT_LT(guard.find("g_lifecycleMain != std::this_thread::get_id() || g_lifecyclePolling) return false"), read);
-  EXPECT_LT(guard.find("g_generationLifecycle.result(h700::ShutdownGoal::CpuQuiescence)"), read);
-  EXPECT_LT(guard.find("checkpoint.status != h700::ShutdownStatus::CpuQuiescent"), read);
-  EXPECT_LT(guard.find("checkpoint.stage != h700::ShutdownStage::Maps) return false"), read);
+  EXPECT_LT(guard.find("if (!h700::generation_cpu_quiescence_held()) return false"), read);
   for (const auto forbidden : {"poll_", "request_", "main_progress", "reset(", "release(", "drain(", "process(",
                                "enqueue", "GX_WRITE", ".advance(", ".fail(", "begin_map_retirement("})
     EXPECT_EQ(guard.find(forbidden), std::string::npos) << forbidden;

@@ -270,6 +270,10 @@ bool CWorld::CheckWorldComplete(CStateManager* mgr, TAreaId aid, CAssetId mreaId
 }
 
 CWorld::~CWorld() {
+#ifdef AURORA_H700
+  // Retire the read (including callback return) before releasing its destination.
+  x3c_loadToken = nullptr;
+#endif
   CMemory::Free(x40_loadBuf.release());
   StopSounds();
   CWorldTransManager* transManager = gpGameState->WorldTransitionManager().GetPtr();
@@ -502,7 +506,12 @@ CDummyWorld::CDummyWorld(CAssetId mlvlId, const bool loadMap)
   x30_loadToken = gpResourceFactory->GetResLoader().LoadResourceAsync(mlvl, x34_loadBuf.get());
 }
 
-CDummyWorld::~CDummyWorld() {}
+CDummyWorld::~CDummyWorld() {
+#ifdef AURORA_H700
+  // The buffer's member destructor otherwise runs before the request's.
+  x30_loadToken = nullptr;
+#endif
+}
 
 bool CDummyWorld::ICheckWorldComplete() {
   switch (x8_phase) {
