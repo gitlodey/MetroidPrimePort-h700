@@ -423,4 +423,14 @@ Pressure алгоритм не переписан: poll5s, repeat30s, moderate36
 
 Проверки: полный incremental game build на staged output GM-03 + оба H700 CPU targets, **6/6 CTest PASS**,27settings keys/16actual startup rejects, non-H700 compile изменённых main/memory TU PASS. Первый test run остановился на `tmpfile()` fixture: glibc игнорирует TMPDIR для этого API, `/tmp` read-only. Fixture заменён на `fmemopen` для того же FILE parser, sandbox не расширялся, meaningful checks сохранены. Initial failure и recheck logs остались в ignored `build/h700-game-gm03/gm04-*`; recheck Commands records сохраняют actual commands/timeouts. Independent review без blockers.
 
-Ни GPU, ни device RAM route не проверялись; sampled-ok не означает acceptance PASS. Next GM-05: actual initialization gate до game owners.
+Ни GPU, ни device RAM route не проверялись; sampled-ok не означает acceptance PASS. GM-04 commit/push: `2a231b2a7`.
+
+### GM-05 — LOCAL PASS: actual initialization gate до game owners
+
+Actual `AuroraInfo` больше не игнорируется в H700 main: OpenGLES + window + native640×480 и main-only `initialization_ready()` проверяются сразу после init, до post-init GX/settings и `metroid_main`. Readiness query требует Running lifecycle без failure, gfx/FIFO/UI milestones, native presenter/import readiness и render health. Это startup safe-point, не универсальный runtime-health API.
+
+При отказе game owners не создаются. `PollInitFailureShutdown` использует существующий request/poll IG11; один app-side запрос, без второго `aurora_shutdown`. Только Released/FailedReleased разрешают диагностический return1. Unknown или Pending после30s диагностического deadline → fail-stop с сохранением main stack/runtime, без unwinding, `_Exit`, retry или automatic kill. Synchronous driver call не может быть прерван C++ deadline; release не подделывается. Normal game exit/owner destruction остаются задачами GM-06…11.
+
+Верификация: incremental полный H700 game/core/GX compile/link и **7/7 CPU/no-init CTest PASS** (добавлен `port_h700_init_tests`). Injected policy cases: actual-info acceptance, partial/no-owner init outcomes, pending→Released/FailedReleased, Unknown, timeout с неизменным Pending, exactly-once request/no second cleanup. Это не исполнение настоящего GPU partial-init failure. В отдельном fresh output `build/h700-game-gm05-nonh700` выполнен **полный compile `aurora_core` + `aurora_gx` с AURORA_H700=OFF**, не выборочные TU. Image/pins не менялись, GPU/device не запускались; independent lifecycle review без blockers.
+
+Actual commands/timeouts сохранены в ignored `build/h700-game-gm03/gm05-*` и отдельном non-H700 output. Следующая GM-06 — healthy game-owner barrier; дополнительное согласование локальных итераций не требуется.

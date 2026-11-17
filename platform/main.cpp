@@ -44,6 +44,9 @@
 #include "port_imgui_fonts.h"
 #ifdef AURORA_H700
 #include "port_h700_profile.h"
+#include "port_h700_init.h"
+#include <chrono>
+#include <thread>
 #endif
 
 #include <SDL3/SDL_dialog.h>
@@ -1477,7 +1480,40 @@ int main(int argc, char** argv) {
     // marker only after all startup-policy checks have passed.
     std::ofstream(glesMarker) << "1\n";
 #endif
+#ifdef AURORA_H700
+    const AuroraInfo info = aurora_initialize(argc, argv, &config);
+    const bool initializationReady = aurora::h700::initialization_ready();
+    if (!PortH700::InitAccepted(info, initializationReady)) {
+        PortLog::Write("port: H700 initialization rejected: backend=%d window=%s ready=%d native=%ux%u; "
+                       "no game owners or post-init GX settings, no backend retry\n",
+                       static_cast<int>(info.backend), info.window != nullptr ? "present" : "null",
+                       static_cast<int>(initializationReady), info.windowSize.native_fb_width,
+                       info.windowSize.native_fb_height);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+        const auto shutdown = PortH700::PollInitFailureShutdown(
+            [] { aurora::h700::request_generation_shutdown(); },
+            [] { return aurora::h700::poll_generation_shutdown(); },
+            [] { std::this_thread::sleep_for(std::chrono::milliseconds{1}); },
+            [&] { return std::chrono::steady_clock::now() >= deadline; });
+        if (shutdown.status == aurora::h700::ShutdownStatus::Released ||
+            shutdown.status == aurora::h700::ShutdownStatus::FailedReleased) {
+            PortLog::Write("port: H700 rejected initialization released: status=%d stage=%d; exiting 1\n",
+                           static_cast<int>(shutdown.status), static_cast<int>(shutdown.stage));
+            // The lifecycle already released partial-init owners. Do not call aurora_shutdown again.
+            return 1;
+        }
+        PortLog::Write("port: H700 initialization fail-stop: status=%d stage=%d (%s); "
+                       "release unproven, retaining main stack/runtime; no unwind, retry or GPU recovery\n",
+                       static_cast<int>(shutdown.status), static_cast<int>(shutdown.stage),
+                       shutdown.status == aurora::h700::ShutdownStatus::Pending
+                           ? "30s diagnostic deadline expired" : "unknown ownership");
+        // Never return/_Exit or release unknown owners. Synchronous driver calls inside the
+        // poll above can hang before this point; the diagnostic deadline cannot preempt them.
+        for (;;) std::this_thread::sleep_for(std::chrono::seconds{1});
+    }
+#else
     aurora_initialize(argc, argv, &config);
+#endif
     // The settings file, JSON and the logs read and write numbers with the C
     // library, in the "C" format. A toolkit loaded with the window (a GTK
     // decoration plugin, an input method) may call setlocale(LC_ALL, ""), which

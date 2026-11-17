@@ -51,7 +51,8 @@ private:
 // PresentationState records separately, while consumers live. No application worker/capacity
 // wait is allowed in poll. Main-side raw Dawn/EGL/GL/SDL calls themselves remain synchronous:
 // a firmware driver stall inside such a call cannot be preempted by the caller's deadline.
-// Graphics CLI remains IG12-gated.
+// Main-only startup query; no event dispatch or GPU calls. Used before game owners exist.
+bool initialization_ready() noexcept;
 void request_generation_shutdown() noexcept;
 ShutdownResult poll_generation_shutdown() noexcept;
 #endif

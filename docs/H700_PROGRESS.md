@@ -12,7 +12,8 @@
 
 - **GM-02 LOCAL PASS:** fresh full compile/link `metroid_prime_port` за494s, no-init `--version` exit0, ELF64/AArch64 metadata; image/pins/исходники игры не менялись.30/30helper +5/5profile tests в Linux PASS. Это ещё не lifecycle/ABI/device готовность. Commit/push: `95c156a5a`.
 - **GM-03 LOCAL PASS:** H700 new-install defaults + fixed unpinned retail allocation/backend, Dawn validation/robustness protection и override rejection; fresh full build,5/5CPU/no-init CTest (27settings keys/12actual startup rejections), non-H700 compile изменённых game TU PASS. Existing INI не перезаписывается; GPU/device не запускались. Commit/push: `119418fae`.
-- **GM-04 LOCAL PASS:** pressure192/128MiB, bounded1s RAM/RSS-HWM/min-available diagnostics с96MiB sampled gate;6/6CPU/no-init CTest (16startup rejects), non-H700 changed-TU compile PASS. Eviction/GLOBAL algorithm и buffer limits не менялись; device RAM PASS не заявлен.
+- **GM-04 LOCAL PASS:** pressure192/128MiB, bounded1s RAM/RSS-HWM/min-available diagnostics с96MiB sampled gate;6/6CPU/no-init CTest (16startup rejects), non-H700 changed-TU compile PASS. Eviction/GLOBAL algorithm и buffer limits не менялись; device RAM PASS не заявлен. Commit/push: `2a231b2a7`.
+- **GM-05 LOCAL PASS:** actual Aurora init backend/window/native/readiness gate до game owners; partial init использует IG11, Unknown/timeout не разрешают unwind.7/7CPU/no-init CTest и полный non-H700 core+GX compile PASS; реальный GPU partial-init failure не инъецировался.
 
 ## Что подтверждено
 
@@ -30,7 +31,7 @@
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-05: actual init-result/partial-init gate до game owners, без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-06: healthy game-owner barrier (finish-frame once/FIFO/render/callback tail), без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 

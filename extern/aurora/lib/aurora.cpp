@@ -1010,6 +1010,17 @@ void end_frame(bool fifoDrained = false) noexcept {
 } // namespace
 
 #if defined(AURORA_H700) && defined(AURORA_ENABLE_GX)
+bool h700::initialization_ready() noexcept {
+  if (g_lifecycleMain != std::this_thread::get_id() ||
+      g_generationLifecycle.stage() != h700::ShutdownStage::Running || g_generationLifecycle.failed() ||
+      !g_gfxStarted || !g_fifoStarted || !g_uiStarted || !g_initialFrame ||
+      !window::get_sdl_window() || !h700::presenter_ready() || !webgpu::presentation_ready()) return false;
+  const auto state = h700::presentation_state();
+  if (!state) return false;
+  const auto snapshot = state->snapshot();
+  return snapshot.phase == h700::PresentationPhase::Running && !snapshot.first_error &&
+         gfx::render_worker::wait_healthy();
+}
 void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
 h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }
 #endif

@@ -34,6 +34,11 @@ Memory logs use the existing1-second sampling cadence and include RSS high-water
 remains `unknown`; `sampled-ok` is not device acceptance and cannot rule out
 between-sample drops. Logs never trigger automatic termination during CARD IO.
 Threshold/eviction environment overrides are rejected in this fixed profile.
+The H700 entry checks actual Aurora backend/window/native output and runtime
+readiness before creating game owners. Failed initialization must complete the
+existing generation cleanup before returning1. Unknown ownership or a30-second
+diagnostic timeout keeps the process in fail-stop; it is not permission to
+unwind owners, retry a backend or automatically kill a save-capable process.
 
 
 - Keyboard defaults: WASD / IJKL for sticks, X/Z/C/V for A/B/X/Y, Return for
