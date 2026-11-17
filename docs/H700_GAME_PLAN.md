@@ -411,4 +411,16 @@ cmake --build /out/build --target metroid_prime_port port_h700_profile_tests --p
 ctest --test-dir /out/build -R '^(port_h700_profile_tests|port_h700_settings_profile|port_h700_profile_startup|port_settings_roundtrip|port_version)$' --output-on-failure --timeout 30
 ```
 
-Ни GPU, ни устройство не запускались. Logs/results — ignored build; independent read-only review после исправления guard без blockers. Next GM-04; новое разрешение на локальные карточки не требуется.
+Ни GPU, ни устройство не запускались. Logs/results — ignored build; independent read-only review после исправления guard без blockers. GM-03 commit/push: `119418fae`; новое разрешение на локальные карточки не требуется.
+
+### GM-04 — LOCAL PASS: pressure policy и bounded RAM diagnostics
+
+H700 pipeline/replacement thresholds192/128MiB теперь заданы явными constants и логируются как policy, не измеренный headroom. Environment overrides thresholds/eviction отвергаются, включая отключение через0; actual startup rejection suite расширен до16cases. Другие платформы сохраняют прежние defaults.
+
+`PortMemoryLog::Tick` использует прежний sample1s, H700 пишет не чаще1строки/sample, без catch-up/thread/extra polling loops. Добавлены kernel RSS `VmHWM`, sampled minimum `MemAvailable` и status `sampled-ok`/`below-96MiB`/`unknown`. Неудачное чтение sampled данных не стирается поздним успешным чтением; известный breach также не стирается. Нет auto-kill/exit или изменения CARD handling. Минимум не видит провалы между samples, RSS/HWM не равны всей shared GPU/system RAM. Staging/ring/cache limits не менялись; existing growth/allocation diagnostics сохраняются.
+
+Pressure алгоритм не переписан: poll5s, repeat30s, moderate3600/severe1800 idle frames; texture logic и Aurora GLOBAL/pinned eviction неизменны. Новый CPU test включает production implementation с узкими Aurora stubs и проверяет реальные threshold decisions/equality/timing, byte conversion, unknown/disabled cases, `/proc` parser, sticky gate и Tick cadence. Это **не execution test реального eviction/GLOBAL retention**; сохранность его алгоритма проверена по отсутствию соответствующих source changes.
+
+Проверки: полный incremental game build на staged output GM-03 + оба H700 CPU targets, **6/6 CTest PASS**,27settings keys/16actual startup rejects, non-H700 compile изменённых main/memory TU PASS. Первый test run остановился на `tmpfile()` fixture: glibc игнорирует TMPDIR для этого API, `/tmp` read-only. Fixture заменён на `fmemopen` для того же FILE parser, sandbox не расширялся, meaningful checks сохранены. Initial failure и recheck logs остались в ignored `build/h700-game-gm03/gm04-*`; recheck Commands records сохраняют actual commands/timeouts. Independent review без blockers.
+
+Ни GPU, ни device RAM route не проверялись; sampled-ok не означает acceptance PASS. Next GM-05: actual initialization gate до game owners.

@@ -788,6 +788,8 @@ if(MP_BUILD_TESTS)
     if(AURORA_H700)
         mp_port_test(port_h700_profile_tests SOURCES tests/port_h700_profile.cpp
             INCLUDES platform/include extern/aurora/include)
+        mp_port_test(port_h700_memory_tests SOURCES tests/port_h700_memory.cpp
+            INCLUDES platform/include extern/aurora/include DEFINITIONS AURORA_H700)
         add_test(NAME port_h700_settings_profile COMMAND metroid_prime_port --h700-profile-selftest)
         set_tests_properties(port_h700_settings_profile PROPERTIES TIMEOUT 15 LABELS port)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)

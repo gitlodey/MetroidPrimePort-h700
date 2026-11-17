@@ -11,6 +11,9 @@
 // the same policy is exercised by the CPU tests before game owners exist.
 namespace PortH700 {
 
+inline constexpr int kPressureModerateMiB = 192;
+inline constexpr int kPressureSevereMiB = 128;
+
 template <class Lookup>
 const char* ConflictingOverride(Lookup lookup) {
   // These consumers use presence, or can pin/replace the allocation policy.
@@ -26,7 +29,9 @@ const char* ConflictingOverride(Lookup lookup) {
                            "MP_GPU_NO_CORE", "AURORA_NO_BC", "MP_RESIZE_WAIT", "MP_WGSL_OVERRIDE",
                            "MP_WGSL_DUMP", "AURORA_GPU_SELFTEST", "MP_GPU_SELFTEST", "AURORA_OVERDRAW", "MP_STORAGE_CLAMP",
                            "MP_MEM1_MB", "MP_ROOM_GEO_RESIDENT", "MP_ROOM_GEO_RESIDENT_MB",
-                           "MP_PIPELINE_LAZY", "MP_PIPELINE_SEED", "MP_PIPELINE_PBR", "MP_GPU_DRIVER"}) {
+                           "MP_PIPELINE_LAZY", "MP_PIPELINE_SEED", "MP_PIPELINE_PBR", "MP_GPU_DRIVER",
+                                                      "MP_PIPELINE_TRIM_MIB", "MP_PIPELINE_TRIM_SEVERE_MIB", "MP_PIPELINE_EVICT",
+                                                      "MP_TEXTURE_PRESSURE_MIB", "MP_TEXTURE_PRESSURE_SEVERE_MIB"}) {
     if (const char* value = lookup(name); value != nullptr && value[0] != '\0') return name;
   }
   for (const auto& [name, expected] : {std::pair{"SDL_VIDEODRIVER", "sdl2"},

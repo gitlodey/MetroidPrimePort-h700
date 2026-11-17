@@ -5,6 +5,7 @@
 #include <string>
 
 int main() {
+  REQUIRE(PortH700::kPressureModerateMiB == 192 && PortH700::kPressureSevereMiB == 128);
   std::map<std::string, std::string> env;
   const auto lookup = [&](const char* key) -> const char* {
     const auto found = env.find(key);
@@ -26,7 +27,9 @@ int main() {
                            "MP_GPU_NO_CORE", "AURORA_NO_BC", "MP_RESIZE_WAIT", "MP_WGSL_OVERRIDE",
                            "MP_WGSL_DUMP", "AURORA_GPU_SELFTEST", "MP_GPU_SELFTEST", "AURORA_OVERDRAW", "MP_STORAGE_CLAMP",
                            "MP_MEM1_MB", "MP_ROOM_GEO_RESIDENT", "MP_ROOM_GEO_RESIDENT_MB",
-                           "MP_PIPELINE_LAZY", "MP_PIPELINE_SEED", "MP_PIPELINE_PBR", "MP_GPU_DRIVER"}) {
+                           "MP_PIPELINE_LAZY", "MP_PIPELINE_SEED", "MP_PIPELINE_PBR", "MP_GPU_DRIVER",
+                                                      "MP_PIPELINE_TRIM_MIB", "MP_PIPELINE_TRIM_SEVERE_MIB", "MP_PIPELINE_EVICT",
+                                                      "MP_TEXTURE_PRESSURE_MIB", "MP_TEXTURE_PRESSURE_SEVERE_MIB"}) {
     env = {{name, "1"}};
     REQUIRE(std::string(PortH700::ConflictingOverride(lookup)) == name);
   }

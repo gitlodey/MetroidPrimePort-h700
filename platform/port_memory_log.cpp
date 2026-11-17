@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if defined(AURORA_H700)
+#include <cerrno>
+#endif
 #endif
 
 #if defined(__linux__)
@@ -36,13 +39,20 @@ namespace PortMemoryLog {
 namespace {
 
 constexpr uint64_t kSampleNs = 1000000000ull;
+#if defined(AURORA_H700)
+constexpr uint64_t kPeriodNs = kSampleNs;
+#else
 constexpr uint64_t kPeriodNs = 30 * kSampleNs;
+#endif
 constexpr int64_t kProcessJumpKb = 64 * 1024;
 constexpr int64_t kSystemJumpKb = 128 * 1024;
 
 struct ProcessMemory {
   int64_t residentKb = -1;
   int64_t commitKb = -1; // Windows: the private bytes this process charges against the commit limit
+#if defined(AURORA_H700)
+  int64_t highWaterKb = -1; // Linux VmHWM: kernel RSS high-water, not a sampled maximum
+#endif
 };
 
 struct SystemMemory {
@@ -57,7 +67,68 @@ struct SystemMemory {
   int64_t gpuUsageKb = -1;
 };
 
+#if defined(AURORA_H700)
+constexpr int64_t kMinHeadroomKb = 96 * 1024;
+
+struct H700MemoryDiagnostics {
+  int64_t minAvailableKb = -1;
+  bool incomplete = false;
+
+  void Sample(const ProcessMemory& process, const SystemMemory& system) {
+    if (system.availableKb >= 0) {
+      minAvailableKb = minAvailableKb < 0 ? system.availableKb : std::min(minAvailableKb, system.availableKb);
+    }
+    // Missing samples cannot establish that the run stayed above the gate.
+    incomplete |= system.availableKb < 0 || process.residentKb < 0 || process.highWaterKb < 0;
+  }
+
+  const char* GateStatus() const {
+    if (minAvailableKb >= 0 && minAvailableKb < kMinHeadroomKb) {
+      return "below-96MiB";
+    }
+    return minAvailableKb < 0 || incomplete ? "unknown" : "sampled-ok";
+  }
+};
+H700MemoryDiagnostics sH700Diagnostics;
+#endif
+
 #if defined(__linux__)
+#if defined(AURORA_H700)
+// /proc reports KiB as "kB". A missing/malformed field remains unknown, never zero or success.
+int64_t ReadProcKb(const char* line, const char* key) {
+  const size_t keyLength = std::strlen(key);
+  if (std::strncmp(line, key, keyLength) != 0) {
+    return -1;
+  }
+  const char* start = line + keyLength;
+  char* end = nullptr;
+  errno = 0;
+  const long long value = std::strtoll(start, &end, 10);
+  if (end == start || errno == ERANGE || value < 0) {
+    return -1;
+  }
+  end += std::strspn(end, " \t");
+  if (std::strncmp(end, "kB", 2) != 0) {
+    return -1;
+  }
+  end += 2;
+  return end[std::strspn(end, " \t\r\n")] == '\0' ? value : -1;
+}
+
+int64_t ReadHighWaterKb(FILE* file) {
+  if (file == nullptr) {
+    return -1;
+  }
+  char line[128];
+  while (std::fgets(line, sizeof(line), file) != nullptr) {
+    if (std::strncmp(line, "VmHWM:", 6) == 0) {
+      return ReadProcKb(line, "VmHWM:");
+    }
+  }
+  return -1;
+}
+#endif
+
 // Resident size of this process, in KiB; -1 when /proc can't say.
 int64_t ProcessKb() {
   FILE* file = std::fopen("/proc/self/statm", "r");
@@ -71,7 +142,17 @@ int64_t ProcessKb() {
   return read == 2 ? resident * (sysconf(_SC_PAGESIZE) / 1024) : -1;
 }
 
-ProcessMemory ReadProcess() { return ProcessMemory{.residentKb = ProcessKb()}; }
+ProcessMemory ReadProcess() {
+  ProcessMemory memory{.residentKb = ProcessKb()};
+#if defined(AURORA_H700)
+  FILE* file = std::fopen("/proc/self/status", "r");
+  memory.highWaterKb = ReadHighWaterKb(file);
+  if (file != nullptr) {
+    std::fclose(file);
+  }
+#endif
+  return memory;
+}
 
 SystemMemory ReadSystem() {
   SystemMemory memory;
@@ -82,9 +163,17 @@ SystemMemory ReadSystem() {
   char line[128];
   while (std::fgets(line, sizeof(line), file) != nullptr) {
     if (std::strncmp(line, "MemTotal:", 9) == 0) {
+#if defined(AURORA_H700)
+      memory.totalKb = ReadProcKb(line, "MemTotal:");
+#else
       memory.totalKb = std::strtoll(line + 9, nullptr, 10);
+#endif
     } else if (std::strncmp(line, "MemAvailable:", 13) == 0) {
+#if defined(AURORA_H700)
+      memory.availableKb = ReadProcKb(line, "MemAvailable:");
+#else
       memory.availableKb = std::strtoll(line + 13, nullptr, 10);
+#endif
     }
   }
   std::fclose(file);
@@ -242,8 +331,16 @@ void WriteLine(const ProcessMemory& process, const SystemMemory& system, bool te
     std::snprintf(extra + n, sizeof(extra) - n, ", gpu %lld of %lld MiB budget used", Mib(system.gpuUsageKb),
                   Mib(system.gpuBudgetKb));
   }
+#if defined(AURORA_H700)
+  PortLog::Write("port: memory: process %lld MiB, system %lld of %lld MiB available%s%s, "
+                 "rss_hwm %lld KiB, sampled_min_available %lld KiB, headroom_gate %s (96 MiB, sampled only)\n",
+                 Mib(process.residentKb), Mib(system.availableKb), Mib(system.totalKb), extra, gpu,
+                 static_cast< long long >(process.highWaterKb),
+                 static_cast< long long >(sH700Diagnostics.minAvailableKb), sH700Diagnostics.GateStatus());
+#else
   PortLog::Write("port: memory: process %lld MiB, system %lld of %lld MiB available%s%s\n", Mib(process.residentKb),
                  Mib(system.availableKb), Mib(system.totalKb), extra, gpu);
+#endif
 }
 
 #if defined(__ANDROID__)
@@ -343,7 +440,14 @@ void LogStartup() {
 #if defined(__ANDROID__)
   LogPreviousExit();
 #endif
+#if defined(AURORA_H700)
+  const ProcessMemory process = ReadProcess();
+  const SystemMemory system = ReadSystem();
+  sH700Diagnostics.Sample(process, system);
+  WriteLine(process, system, false);
+#else
   WriteLine(ReadProcess(), ReadSystem(), false);
+#endif
 }
 
 void Tick(uint64_t nowNs) {
@@ -351,12 +455,23 @@ void Tick(uint64_t nowNs) {
   static uint64_t sLastLineNs = 0;
   static int64_t sLineProcessKb = -1;
   static int64_t sLineAvailableKb = -1;
+#if defined(AURORA_H700)
+  static bool sHasSample = false;
+  if (sHasSample && nowNs - sLastSampleNs < kSampleNs) {
+    return;
+  }
+  sHasSample = true;
+#else
   if (sLastSampleNs != 0 && nowNs - sLastSampleNs < kSampleNs) {
     return;
   }
+#endif
   sLastSampleNs = nowNs;
   const ProcessMemory process = ReadProcess();
   SystemMemory system = ReadSystem();
+#if defined(AURORA_H700)
+  sH700Diagnostics.Sample(process, system);
+#endif
   ReadGpu(system);
   const int64_t headroomKb = HeadroomKb(system);
   CheckTexturePressure(headroomKb);

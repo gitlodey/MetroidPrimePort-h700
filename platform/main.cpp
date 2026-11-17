@@ -1114,14 +1114,23 @@ int main(int argc, char** argv) {
     // turns a level off), MP_PIPELINE_EVICT (a fixed idle sweep).
     uint32_t pipelineEvictFrames = 0;
     if (pipelineLazy) {
-#ifdef __ANDROID__
+#ifdef AURORA_H700
+        constexpr int kDefaultTrimMib = PortH700::kPressureModerateMiB;
+        constexpr int kDefaultSevereMib = PortH700::kPressureSevereMiB;
+#elif defined(__ANDROID__)
         constexpr int kDefaultTrimMib = 0;
+        constexpr int kDefaultSevereMib = 512;
 #else
         constexpr int kDefaultTrimMib = 1024;
+        constexpr int kDefaultSevereMib = 512;
 #endif
         const int trimMib = port::EnvInt("MP_PIPELINE_TRIM_MIB", kDefaultTrimMib);
-        const int severeMib = port::EnvInt("MP_PIPELINE_TRIM_SEVERE_MIB", 512);
+        const int severeMib = port::EnvInt("MP_PIPELINE_TRIM_SEVERE_MIB", kDefaultSevereMib);
         PortMemoryLog::SetPipelinePressure(trimMib, severeMib);
+#ifdef AURORA_H700
+        PortLog::Write("port: H700 pipeline pressure policy: moderate %d MiB, severe %d MiB "
+                       "(profile defaults, not measured headroom)\n", trimMib, severeMib);
+#endif
         if (port::EnvString("MP_PIPELINE_TRIM_MIB") != nullptr ||
             port::EnvString("MP_PIPELINE_TRIM_SEVERE_MIB") != nullptr) {
             PortLog::Write("port: pipeline trim under %d MiB available, all idle under %d MiB "
@@ -1134,9 +1143,20 @@ int main(int argc, char** argv) {
     // replacements and loads new ones smaller, under 512 MiB more of both. Overrides:
     // MP_TEXTURE_PRESSURE_MIB and MP_TEXTURE_PRESSURE_SEVERE_MIB (0 turns a level off).
     {
-        const int textureMib = port::EnvInt("MP_TEXTURE_PRESSURE_MIB", 1024);
-        const int textureSevereMib = port::EnvInt("MP_TEXTURE_PRESSURE_SEVERE_MIB", 512);
+#ifdef AURORA_H700
+        constexpr int kDefaultTextureMib = PortH700::kPressureModerateMiB;
+        constexpr int kDefaultTextureSevereMib = PortH700::kPressureSevereMiB;
+#else
+        constexpr int kDefaultTextureMib = 1024;
+        constexpr int kDefaultTextureSevereMib = 512;
+#endif
+        const int textureMib = port::EnvInt("MP_TEXTURE_PRESSURE_MIB", kDefaultTextureMib);
+        const int textureSevereMib = port::EnvInt("MP_TEXTURE_PRESSURE_SEVERE_MIB", kDefaultTextureSevereMib);
         PortMemoryLog::SetTexturePressure(textureMib, textureSevereMib);
+#ifdef AURORA_H700
+        PortLog::Write("port: H700 replacement pressure policy: moderate %d MiB, severe %d MiB "
+                       "(profile defaults, retail replacement pack OFF)\n", textureMib, textureSevereMib);
+#endif
         if (port::EnvString("MP_TEXTURE_PRESSURE_MIB") != nullptr ||
             port::EnvString("MP_TEXTURE_PRESSURE_SEVERE_MIB") != nullptr) {
             PortLog::Write("port: texture pressure under %d MiB headroom, severe under %d MiB "

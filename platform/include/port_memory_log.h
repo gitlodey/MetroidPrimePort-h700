@@ -13,6 +13,9 @@ namespace PortMemoryLog {
 void LogStartup();
 // Each frame, on the main thread: samples once a second and writes a line every
 // 30 s, or sooner when the process or the system's free memory moved a lot.
+// H700 writes each sample (at most once a second), including kernel RSS high-water,
+// sampled MemAvailable minimum and a diagnostic-only 96 MiB gate. Missing data is unknown;
+// sampled-ok is not a measured RAM budget or proof of headroom between samples.
 void Tick(uint64_t nowNs);
 // Android only (false elsewhere): whether the device is short on RAM (under 4096 MiB in
 // total, or ActivityManager.isLowRamDevice()); `why` says which. Issue #162.
@@ -21,7 +24,7 @@ bool LowRamDevice(char* why, size_t whySize);
 // commit (Windows) and what is left of the GPU's memory budget (Windows, DXGI).
 // Lazy pipeline cache (issue #187): Tick checks the headroom every 5 s and, below
 // moderateMib or severeMib, asks Aurora to release built pipelines no recent frame drew with (idle
-// for 3600 frames, or for 16). 0 turns a level off; both 0 (the default) turns the check off.
+// for 3600 frames, or for 1800). 0 turns a level off; both 0 (the default) turns the check off.
 void SetPipelinePressure(int64_t moderateMib, int64_t severeMib);
 // Texture replacements (issue #266): Tick passes the headroom to Aurora every second. Below
 // moderateMib it frees replacements idle for 600 frames and loads new ones at most 2048 px; below

@@ -15,6 +15,8 @@ def main():
         ("MP_GPU_SELFTEST", "1"), ("MP_GRAPHICS_BACKEND", "Null"),
         ("SDL_VIDEODRIVER", "dummy"), ("SDL3SHIM_SDL2_VIDEODRIVER", "offscreen"),
         ("MP_PIPELINE_LAZY", "0"), ("MP_PIPELINE_SEED", "1"),
+        ("MP_PIPELINE_TRIM_MIB", "0"), ("MP_PIPELINE_TRIM_SEVERE_MIB", "0"),
+        ("MP_TEXTURE_PRESSURE_MIB", "0"), ("MP_TEXTURE_PRESSURE_SEVERE_MIB", "0"),
     ]
     with tempfile.TemporaryDirectory(prefix="h700-profile-") as temp:
         root = Path(temp)

@@ -27,6 +27,14 @@ existing in-memory INI overrides without reading/writing files or initializing
 SDL/GPU. It is only available in H700 builds. The ordinary
 `--settings-selftest` remains the whole settings-table roundtrip check.
 
+H700 pipeline/replacement pressure thresholds are192/128MiB, with the existing
+5-second pipeline check,30-second repeat and3600/1800-frame idle windows.
+Memory logs use the existing1-second sampling cadence and include RSS high-water
+(`VmHWM`), sampled minimum `MemAvailable` and the96MiB gate status. Missing data
+remains `unknown`; `sampled-ok` is not device acceptance and cannot rule out
+between-sample drops. Logs never trigger automatic termination during CARD IO.
+Threshold/eviction environment overrides are rejected in this fixed profile.
+
 
 - Keyboard defaults: WASD / IJKL for sticks, X/Z/C/V for A/B/X/Y, Return for
   Start, arrows for D-pad, Q/E for L/R, and F for Z. Existing mappings take
