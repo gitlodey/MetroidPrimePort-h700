@@ -17,7 +17,9 @@
 - **GM-06 LOCAL PASS:** reusable healthy owner barrier/frame-once/FIFO→render+callback-return/capture release, без закрытия roots/GPU-idle.8/8game +45/45render/lifecycle +262/262FIFO CPU tests и full non-H700 core/GX compile PASS; Commit/push: `5e184e0c5`.
 - **GM-07 LOCAL PASS:** reset boundary→alias clear/owner destruction→destructor-tail boundary→no-command flush→new owner в том же generation;8/8CPU/no-init tests и non-H700 game-main compile PASS. На failure сохраняется fail-stop до будущего terminal transport; actual device reset ещё не проверен. Commit/push: `0292af263`.
 - **GM-08 LOCAL PASS:** normal owner/subsystem/global retirement + final delayed flush/ARAM до full IG11; audio/services stopped до SDL_Quit, disc close только после known release, без double shutdown.8/8CPU/no-init tests и non-H700 main compile PASS; terminal transport ещё впереди. Commit/push: `6f7f12d32`.
-- **GM-09 LOCAL PASS:** explicit CpuQuiescent checkpoint до Maps после actual CPU joins, repeat hold/full resume;8/8game +50/50render/lifecycle +262/262FIFO tests и full non-H700 core/GX compile PASS. Это не GPU release, owner cleanup/unwinding ещё не подключены.
+- **GM-09 LOCAL PASS:** explicit CpuQuiescent checkpoint до Maps после actual CPU joins, repeat hold/full resume;8/8game +50/50render/lifecycle +262/262FIFO tests и full non-H700 core/GX compile PASS. Это не GPU release. Commit/push: `5a83894e5`.
+- **GM-10 LOCAL PASS:** root-only typed transport после exact CPU checkpoint, оба owners вне boot+loop try; full game build,9/9CPU/no-init CTest и non-H700 game-main compile PASS. Typed catch пока удерживает owners; actual terminal cleanup/return — GM-11b, deep throw не подключён.
+- **Split GM-11 утверждён 2026-11-17:** GM-11a actual read-only guards/query seams, GM-11b milestone cleanup/return wiring. D1…D11/архитектура/дальнейший план не меняются. Остановка снята; сначала завершаем GM-10.
 
 ## Что подтверждено
 
@@ -35,7 +37,7 @@
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-10: root typed transport только после CPU checkpoint, owners вне boot+loop try. Deep graphics/skinning throw требует отдельной проверки unwind guards до GM-12; без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. GM-10 проверен; после separate commit/push выполняем утверждённые GM-11a/GM-11b guards/cleanup. Deep graphics/skinning throw пока не подключён, GPU/device не запускались. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 

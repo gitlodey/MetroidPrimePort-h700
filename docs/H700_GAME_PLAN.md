@@ -2,6 +2,8 @@
 
 **Редакция 1, 2026-11-16. УТВЕРЖДЁН пользователем: «Прочитал короткую версию плана. Даю добро на все». Решения D1…D11 и локальные GM-01…GM-17 разрешены; commit/push после каждой завершённой итерации подтверждены отдельно. Device-окна по D11 согласуются отдельно.**
 
+**Согласованное уточнение, 2026-11-17:** пользователь разрешил только разбивку GM-11 на GM-11a/GM-11b без изменения D1…D11 и дальнейшего плана. Сначала завершить/проверить/commit+push GM-10, затем последовательно GM-11a и GM-11b; остановка на согласование split снята.
+
 Цель: воспроизводимо собрать **Metroid Prime Unbound v0.46.0** и получить корректно работающую игру на **ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda**: графика, интерфейс, встроенный контроллер, звук, штатные сохранение/загрузка. **Достижение 30 FPS — следующий отдельный этап**, не критерий завершения этого плана.
 
 Короткая версия — [H700_GAME_SUMMARY.md](H700_GAME_SUMMARY.md). Правила — [H700_WORKFLOW.md](H700_WORKFLOW.md); состояние — [H700_PROGRESS.md](H700_PROGRESS.md). Основание: новая база `c872da704` / v0.46.0, интеграция на `03dff0827`, [архитектурное решение](H700_ARCHITECTURE_DECISION.md), [IG-план](H700_INTEGRATION_PLAN.md) и [device evidence](H700_INTEGRATION_GATE.md).
@@ -190,18 +192,30 @@ Reset и normal exit выполняются на main safe-point:
 - **Проверка/готово:** boot partial-init и loop terminal transport, token не caught как runtime_error, owners остаются живы до checkpoint; unknown/hung case не unwinds. Запрет throw через C/noexcept/worker проверен по затронутым call sites.
 - **Safety/docs:** никакого global exception redesign; таблица safe-points и return propagation.
 
-### GM-11. Terminal owner cleanup по milestones
+### GM-11. Terminal owner cleanup по milestones — разделён на GM-11a/GM-11b
 
-- **Цель/риск:** обычные game dtors публикуют commands в уже закрытый FIFO.
-- **Зависимости:** GM-08/GM-10. **Файлы:** game main, CFDk, конкретные destructor seams renderer/room/resident cleanup и их tests.
-- **Решение:** только явный no-new-graphics path после CPU checkpoint, no-command delayed flush, partial construction milestones; проверка отсутствия non-retail live cleanup obligations, затем resume IG11. Unknown GPU state сохраняет необходимые holders, не fake release.
-- **Проверка/готово:** no enqueue после terminal seal; каждый созданный owner либо безопасно released, либо явно retained при Unknown; destructor-generated retail frees покрыты. Непустой неподдержанный room/resident cleanup → диагностический blocker, не silent skip.
-- **Safety/docs:** если безопасный no-command cleanup требует более широкого redesign, остановить план. Оценка1–2ч для установленных retail seams, не обещание любого destructor rewrite.
+Исходные дизайн и критерии D9/§4.2 сохранены; пользователь утвердил только разделение карточки. Каждый подшаг закрывается своей проверкой, документацией, commit/push.
+
+#### GM-11a. Read-only guards/query seams
+
+- **Цель/риск:** после закрытия FIFO нельзя разрушать owners с actual room/resident command-producing obligations; инертные retail placeholders не являются такими obligations.
+- **Зависимости:** GM-08/GM-10. **Файлы:** room-env/geo/liquid implementation+headers, producer+processor resident registries, узкий H700 query bridge и CPU tests.
+- **Решение:** side-effect-free predicates фактических future/queue/worker/resource states, обе resident registries; без Reset/Free/enqueue или общего режима ignore-GX. Проверять только после CPU checkpoint; пока typed catch удерживает owners.
+- **Проверка/готово:** inert/empty разрешены, pending/nonempty и producer/processor mismatch отвергаются; query не меняет ownership. Actual nonempty unsupported obligation — fail-stop, не silent skip. Runtime/device claims не ставятся.
+- **Safety/оценка/docs:**1–2ч, no device; rollback собственных изменений без удаления partial. Guards/read scope и результаты записать здесь/в прогресс.
+
+#### GM-11b. Milestone cleanup и terminal return
+
+- **Цель/риск:** освободить только фактически созданных retail owners после CPU joins, без новых graphics commands и преждевременного GPU release.
+- **Зависимости:** GM-10/GM-11a. **Файлы:** game main/terminal policy, CFDk и установленные retail destructor seams/tests.
+- **Решение:** milestones вне try, actual guards после checkpoint **до throw/destruction**, clear aliases/retire game owners+subsystems/globals, final no-command delayed flush/ARAM, return1 через RsMain/metroid_main; platform resume существующего полного IG11. Unknown удерживает необходимые holders, не fake release.
+- **Проверка/готово:** partial boot, уже уничтоженный arch/globals, failure guards, no enqueue after terminal seal, сохранённые DMA/in-flight waits и nonzero propagation. Каждый created owner released по доказанному пути либо retained в fail-stop.
+- **Safety/оценка/docs:**1–2ч; более широкий destructor redesign или unsupported retail enqueue — stop/replan. Обновить этот план/прогресс; separate commit/push. GPU/device не запускать.
 
 ### GM-12. Skinning waits и allocation failure
 
 - **Цель/риск:** busy-wait ring token на main может остановить present/progress; failure не должен установить неверный workspace.
-- **Зависимости:** GM-10/GM-11. **Файлы:** `src/Kyoto/Animation/DolphinCSkinnedModel.cpp`, связанные headers/tests; SkinPool только если конкретный call site требует status propagation.
+- **Зависимости:** GM-10/GM-11b. **Файлы:** `src/Kyoto/Animation/DolphinCSkinnedModel.cpp`, связанные headers/tests; SkinPool только если конкретный call site требует status propagation.
 - **Решение:** §4.3, progress/health вне locks; ordered token/wrap, invalid-size guard, pending/terminal до pointer assignment; running jobs retain inputs.
 - **Проверка/готово:** pending→actual token completion, wrap/reclaim, impossible size, terminal без allocation/workspace use, cancelled waiter не освобождает running data. Не immediate-token mock вместо FIFO semantics.
 - **Safety/docs:** ring32MiB и scheduler не менять; записать token invariants и реальные failure paths.
@@ -341,7 +355,7 @@ Reset и normal exit выполняются на main safe-point:
 
 ## 10. Оценка и порядок утверждения
 
-**21 карточка**, ориентир **около 30–42 часов активной работы** при отсутствии новых фундаментальных блокеров: local integration GM-01…17, три отдельных device-окна GM-18…20, итог GM-21. Это не гарантия срока: cold full builds/очередь пользователя/прохождение к late scenes/новые согласуемые исправления отдельно. GM-02 и GM-11 особенно чувствительны к ещё не измеренному объёму; их completion не гарантирован одной карточкой.
+**21 исходная карточка, GM-11 разбита на два согласованных подшага**, ориентир **около 30–42 часов активной работы** при отсутствии новых фундаментальных блокеров: local integration GM-01…17, три отдельных device-окна GM-18…20, итог GM-21. Это не гарантия срока: cold full builds/очередь пользователя/прохождение к late scenes/новые согласуемые исправления отдельно. GM-02 и GM-11 особенно чувствительны к ещё не измеренному объёму; их completion не гарантирован одной карточкой.
 
 Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
 
@@ -471,4 +485,28 @@ GM-08 commit/push: `6f7f12d32`.
 
 Перед GM-10 узко проверен unwind set root safe-points RsMain: два owning single_ptr должны быть вне boot+loop try, throws только после возврата вложенных calls. Root typed catch сначала удерживает owners; explicit terminal cleanup — GM-11. Нельзя подключать deep throw из произвольного graphics/skinning call без проверки guards: `SPortVisorGuard`/`PortInventoryScope` действительно отправляют GX-команды из деструкторов. Применимость к конкретным skinning waits проверяется в GM-12, не speculative scheduler rewrite. Пока это не заявляется отменой существующих deep busy-waits.
 
-Следующая GM-10 — typed root transport с pre-throw CPU checkpoint и живыми outer owners.
+GM-09 commit/push: `5a83894e5`.
+
+### GM-10 — LOCAL PASS: root-only terminal transport
+
+Новые `port_h700_terminal.h`/CPU tests: H700 owners вне encompassing boot+loop try, root safe-points после возврата вложенных calls, typed inner rethrow, outer catch удерживает owners в fail-stop, H700 RsMain→metroid_main return propagation подготовлена. Exact CpuQuiescent/Maps требуется до throw; Pending/Unknown/Released и неверная стадия не разрешают unwind. Token не наследует std::exception/runtime_error. Actual deep throw не подключён; explicit terminal cleanup/return из typed catch остаются GM-11b, а не выдаются за уже работающий exit.
+
+Выполнены полный incremental game compile/link, **9/9 CPU/no-init CTest PASS**, non-H700 game-main compile PASS. Cases проверяют checkpoint-before-throw, partial boot/loop owners alive in catch, inner typed rethrow, отсутствие destruction/unwind при Unknown/timeout и запрет не-main polling. Independent source review root unwind set ранее не нашёл blockers; graphics/skinning command-producing guards этим transport не пересекаются. GPU/device не запускались; commands/logs — ignored `gm10-*`. После согласования split остановка снята; GM-10 завершён до начала GM-11a.
+
+### История остановки: разделение GM-11 утверждено 2026-11-17
+
+Source review GM-11 установил actual write/query scope, который не следует скрывать в одной карточке1–2ч:
+
+1. Retail texture/palette/model/renderer dtors преимущественно освобождают CPU ownership; общий режим «игнорировать GX» не нужен. DMA/replacement in-flight lifetime waits нельзя отключать. Существующий no-command CFDk flush подходит.
+2. `CStateManager` destructor вызывает room cleanup; room-env `SetLoadedAreas(empty)` может перейти в RegisterReady/SubmitWorld и `GXDestroyPBR*`, room-geo ResidentKeep публикует `GXPortReleaseResident`. Для liquid empty guard консервативный, отдельный FIFO release не доказан.
+3. Полных read-only predicates нет. Нужно проверять actual pending futures/queues/worker-running/resources, не `Areas().empty()` — retail создаёт инертные placeholders. Для resident нужны **обе** registries: producer `sRetained` в GXDispList и processor entries в gx/resident; used_bytes0 недостаточно.
+4. Guards должны быть выполнены после CPU checkpoint **до throw/owner destruction**. Непустая неподдержанная obligation означает fail-stop, не silent skip.
+
+Утверждено без смены D9/архитектуры/providers/приёмки:
+
+- **GM-11a (1–2ч):** read-only guards/query seams для трёх room owners и producer+processor resident, CPU regressions на инертные/непустые/pending состояния; catch по-прежнему удерживает owners.
+- **GM-11b (1–2ч):** milestones вне try, pre-throw guard wiring, no-new-graphics terminal owner/subsystem/global cleanup, final no-command flush/ARAM и actual nonzero return; full IG11 остаётся platform path, с existing audio/disc lifetime order.
+
+Минимальные затрагиваемые seams: game main/terminal policy/tests; `platform/port_room_{env,geo,liquid}.cpp` и их headers; resident producer/processor + узкий H700 query bridge. Переписывать retail resource dtors или поддерживать optional mod cleanup этим не предлагается. Это изменение **границ итерации**, а не новый renderer или ослабление safety. До согласования реализация/build/tests были остановлены по workflow; GM-10 partial и чужие local changes сохранены. После явного согласия пользователя остановка снята: сначала завершаем GM-10, затем два подшага GM-11.
+
+Deep guards `SPortVisorGuard`/`PortInventoryScope` остаются отдельным вопросом применимости для конкретных skinning waits GM-12. Их существование не разрешает заранее расширять scheduler или вводить deep exceptions.

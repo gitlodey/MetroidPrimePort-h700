@@ -28,6 +28,8 @@
 #include "port_watchdog.h"
 #ifdef AURORA_H700
 #include "port_h700_game_boundary.h"
+#include "port_h700_terminal.h"
+#include <SDL3/SDL_init.h>
 #endif
 
 #include "stdint.h"
@@ -273,13 +275,61 @@ CSaveRegion::CSaveRegion(CMain& main) {
   mSaveBuffer = main.OsContext().AllocFromArena(128);
 }
 
+#ifdef AURORA_H700
+// These helpers are called ONLY from the audited RsMain root unwind set. GM11
+// must provide no-new-graphics owner cleanup before this hold can ever be left.
+[[noreturn]] static void PortH700RootFailStop(const char* safePoint,
+                                           aurora::h700::ShutdownResult checkpoint,
+                                           const char* reason) {
+  PortLog::Write("port: H700 root terminal fail-stop at %s: status=%d stage=%d (%s); "
+                 "retaining main stack/remaining owners and generation; no ordinary cleanup, "
+                 "full poll, return or further unwind (GM11 pending)\n",
+                 safePoint, static_cast<int>(checkpoint.status), static_cast<int>(checkpoint.stage), reason);
+  for (;;) SDL_Delay(1000);
+}
+
+[[noreturn]] static void PortH700PrepareRootUnwind(const char* safePoint) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
+  const auto checkpoint = PortH700::PrepareRootUnwind(
+      [] { return SDL_IsMainThread(); },
+      [] { return aurora::h700::poll_generation_cpu_quiescence(); },
+      [] { SDL_Delay(1); },
+      [&] { return std::chrono::steady_clock::now() >= deadline; });
+  if (!PortH700::RootUnwindReady(checkpoint)) {
+    PortH700RootFailStop(safePoint, checkpoint,
+                        checkpoint.status == aurora::h700::ShutdownStatus::Pending
+                            ? "30s diagnostic deadline expired before CPU checkpoint"
+                            : "exact CPU checkpoint unproven; root unwind forbidden");
+  }
+  throw PortH700::RootTerminalToken{safePoint, checkpoint};
+}
+
+static void PortH700RootSafePoint(const char* safePoint) {
+  // Check SDL affinity before even querying the main-owned GM09 lifecycle. Its
+  // actual poll also checks generation-thread identity and rejects recursive polls.
+  if (!SDL_IsMainThread()) {
+    PortH700RootFailStop(safePoint,
+                        {aurora::h700::ShutdownStatus::Unknown, aurora::h700::ShutdownStage::Unknown},
+                        "root transport requires the SDL main thread");
+  }
+  if (!aurora::h700::game_work_healthy()) PortH700PrepareRootUnwind(safePoint);
+}
+#endif
+
 // Port: called from platform/main.cpp after Aurora and the disc are initialized.
 extern "C" int metroid_main(int argc, char** argv) {
   DVDSetAutoFatalMessaging(TRUE);
   SetErrorHandlers();
   CMain* main = new (&sMainSpace) CMain();
+#ifdef AURORA_H700
+  int result = 0;
+#endif
   try {
+#ifdef AURORA_H700
+    result = gpMain->RsMain(argc, argv);
+#else
     gpMain->RsMain(argc, argv);
+#endif
   } catch (...) {
     main->~CMain();
     gpMain = nullptr;
@@ -287,7 +337,11 @@ extern "C" int metroid_main(int argc, char** argv) {
   }
   main->~CMain();
   gpMain = nullptr;
+#ifdef AURORA_H700
+  return result;
+#else
   return 0;
+#endif
 }
 
 extern "C" void* __sys_alloc(const size_t len) { return CMemory::Alloc(len); }
@@ -905,9 +959,21 @@ int CMain::RsMain(int argc, const char* const* argv) {
   CStopwatch timer;
   LCEnable();
 
+#ifdef AURORA_H700
+  // Both owners must survive the encompassing boot+loop typed catch, including
+  // partial boot. Only root throws below are authorized; deep GX guards can enqueue.
+  rstl::single_ptr< CGameGlobalObjects > gameGlobalObjects;
+  rstl::single_ptr< CGameArchitectureSupport > archSupport;
+  try {
+  gameGlobalObjects = rs_new CGameGlobalObjects(x0_osContext, x6d_memorySys);
+#else
   rstl::single_ptr< CGameGlobalObjects > gameGlobalObjects(
       rs_new CGameGlobalObjects(x0_osContext, x6d_memorySys));
+#endif
   x128_gameGlobalObjects = gameGlobalObjects.get();
+#ifdef AURORA_H700
+  PortH700RootSafePoint("boot: game globals constructed");
+#endif
 
   for (int i = 0; i < 4; ++i) {
     AddFrameTime(xf0_tickTimes, 0.3f);
@@ -917,7 +983,13 @@ int CMain::RsMain(int argc, const char* const* argv) {
   x118_averageTickTime = 0.3f;
   x11c_averageDrawTime = 0.2f;
   InitializeSubsystems();
+#ifdef AURORA_H700
+  PortH700RootSafePoint("boot: subsystems initialized");
+#endif
   gameGlobalObjects->PostInitialize(x0_osContext, x6d_memorySys);
+#ifdef AURORA_H700
+  PortH700RootSafePoint("boot: globals PostInitialize returned");
+#endif
   x70_tweaks.RegisterTweaks();
   AddWorldPaks();
 
@@ -934,10 +1006,21 @@ int CMain::RsMain(int argc, const char* const* argv) {
 
     FillInAssetIDs();
 
+#ifdef AURORA_H700
+    PortH700RootSafePoint("boot: before architecture construction");
+    archSupport = rs_new CGameArchitectureSupport(x0_osContext);
+#else
     rstl::single_ptr< CGameArchitectureSupport > archSupport(
         rs_new CGameArchitectureSupport(x0_osContext));
+#endif
     x164_archSupport = archSupport.get();
+#ifdef AURORA_H700
+    PortH700RootSafePoint("boot: architecture constructed");
+#endif
     archSupport->PreloadAudio();
+#ifdef AURORA_H700
+    PortH700RootSafePoint("boot: architecture preload returned");
+#endif
 
     srand(timer.GetElapsedMicros());
 
@@ -976,6 +1059,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
 #endif
     try {
     while (!x160_24_finished) {
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: before event pump");
+#endif
       const uint64_t loopStartNs = SDL_GetTicksNS();
       bool presented = false;
       PortWatchdog::Heartbeat(s_frameLog + 1);
@@ -998,6 +1084,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
         PortSaveState::SetEventPumpSafe(true);
         const AuroraEvent* event = aurora_update();
         PortSaveState::SetEventPumpSafe(false);
+#ifdef AURORA_H700
+        PortH700RootSafePoint("loop: event pump returned, snapshot safety cleared");
+#endif
         PortPointer::BeginFrame();
         while (event != nullptr && event->type != AURORA_NONE) {
           // Menu pointer gestures; ImGui keeps the events it wants itself.
@@ -1141,6 +1230,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
       PortPrompts::Poll();
       const uint64_t inputDoneNs = SDL_GetTicksNS();
       // Port: run ARAM transfer callbacks completed by Aurora's ARQ.
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: before audio and loader polling");
+#endif
       aurora::phase::set(aurora::phase::Main, "audio and loader polling");
       ARQPoll();
       // Port: service the streamed-audio AI DMA callback on the main thread.
@@ -1153,8 +1245,15 @@ int CMain::RsMain(int argc, const char* const* argv) {
       }
       CARAMManager::CollectGarbage();
       CARAMToken::UpdateAllDMAs();
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: before game tick");
+#endif
       aurora::phase::set(aurora::phase::Main, "game tick (UpdateTicks)");
-      if (!archSupport->UpdateTicks()) {
+      const bool ticksContinue = archSupport->UpdateTicks();
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: game tick returned, before draw");
+#endif
+      if (!ticksContinue) {
         PortSaveState::ResumeQuitCleanly();
         x160_24_finished = true;
       }
@@ -1224,6 +1323,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
         AsyncIdle(idleMicros);
 
         gpRender->EndScene();
+#ifdef AURORA_H700
+        PortH700RootSafePoint("loop: draw and EndScene returned");
+#endif
         aurora::phase::set(aurora::phase::Main, "after EndScene");
         presented = true;
 
@@ -1232,6 +1334,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
           x161_24_gameFrameDrawn = false;
         }
       } else {
+#ifdef AURORA_H700
+        PortH700RootSafePoint("loop: no BeginScene, before loader continuation");
+#endif
         aurora::phase::set(aurora::phase::Main, "loader idle (frame not drawn)");
         gpResourceFactory->AsyncIdle(1000);
         // A minimized/paused window still services events and audio, but never
@@ -1239,6 +1344,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
         SDL_Delay(5);
       }
 
+#ifdef AURORA_H700
+      PortH700RootSafePoint("loop: draw/loader path returned");
+#endif
       archSupport->Update();
       for (uint i = 0; i < sTicksAdvanced; ++i) {
         CSfxManager::Update(dt);
@@ -1281,14 +1389,12 @@ int CMain::RsMain(int argc, const char* const* argv) {
               tmp->PreloadAudio();
             });
         if (!reset) {
-          PortLog::Write("port: H700 reset fail-stop: boundary failed %s owner destruction; "
-                         "completion unproven, retaining main stack/remaining owners; "
-                         "no delayed flush, new owner or unwind\n",
+          PortLog::Write("port: H700 reset: boundary failed %s owner destruction; "
+                         "preparing root CPU checkpoint, retaining remaining owners\n",
                          oldOwnerDestroyed ? "after" : "before");
-          // GM-09/10 will provide CPU quiescence and typed transport. Until then even
-          // return/throw/_Exit could release owners still in use; do not leave this scope.
-          for (;;) SDL_Delay(1000);
+          PortH700PrepareRootUnwind("reset: owner boundary failed");
         }
+        PortH700RootSafePoint("reset: construction and preload returned");
 #else
         CGraphics::SetIsBeginSceneClearFb(true);
         if (CGraphics::BeginScene()) {
@@ -1403,6 +1509,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
       if (firstFrameNs == 0 && presented)
         firstFrameNs = SDL_GetTicksNS();
     }
+#ifdef AURORA_H700
+    } catch (const PortH700::RootTerminalToken&) {
+      throw; // only the outer typed catch may hold terminal owners at the CPU checkpoint
+#endif
     } catch (...) {
       // Port: an exception out of the loop would unwind into ~CResLoader, which
       // waits for paks that no longer load and hangs on the logo (issue #8).
@@ -1442,10 +1552,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
       },
       [] { CFrameDelayedKiller::FlushAllAllocations(); });
   if (!archRetired) {
-    PortLog::Write("port: H700 normal exit fail-stop: architecture boundary failed %s destruction; "
-                   "retaining main stack/remaining owners; no delayed flush or unwind\n",
+    PortLog::Write("port: H700 normal exit: architecture boundary failed %s destruction; "
+                   "preparing root CPU checkpoint, retaining remaining owners\n",
                    archDestroyed ? "after" : "before");
-    for (;;) SDL_Delay(1000);
+    PortH700PrepareRootUnwind("normal exit: architecture boundary failed");
   }
 #endif
   }
@@ -1463,10 +1573,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
       },
       [] { CFrameDelayedKiller::FlushAllAllocations(); });
   if (!globalsRetired) {
-    PortLog::Write("port: H700 normal exit fail-stop: subsystem/global boundary failed %s destruction; "
-                   "retaining main stack/remaining owners; no final delayed flush, ARAM shutdown or unwind\n",
+    PortLog::Write("port: H700 normal exit: subsystem/global boundary failed %s destruction; "
+                   "preparing root CPU checkpoint, retaining remaining owners\n",
                    globalsDestroyed ? "after" : "before");
-    for (;;) SDL_Delay(1000);
+    PortH700PrepareRootUnwind("normal exit: subsystem/global boundary failed");
   }
 #else
   ShutdownSubsystems();
@@ -1474,6 +1584,15 @@ int CMain::RsMain(int argc, const char* const* argv) {
 #endif
   CARAMManager::Shutdown();
   return 0;
+#ifdef AURORA_H700
+  } catch (const PortH700::RootTerminalToken& terminal) {
+    // The outer owners and CMain are still alive. CpuQuiescent is NOT GPU release
+    // or permission to run their normal dtors. No full poll until GM11's explicit
+    // no-new-graphics cleanup exists; do not turn this staged transport into exit.
+    PortH700RootFailStop(terminal.safePoint, terminal.checkpoint,
+                        "root token caught at CPU checkpoint; terminal owner cleanup not implemented");
+  }
+#endif
 }
 
 // Port: the least time the resource loader gets per frame, in microseconds.
