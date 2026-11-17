@@ -181,3 +181,35 @@ SSH после пользовательского reboot остаётся timeou
 Подготовлен штатный muOS content handoff в отдельный performance clone, но installed marker/dispatch semantics и сам clone **ещё не подтверждены**.32offline protocol checks не заменяют live attestation. Entry явно задаёт одинаковые menu/profile flags и UBO0/1; guard делает максимум один TERM только identity-bound own game и сохраняет launcher drain/lock contract. Bare SDL поверх frontend, frontend stop/restart и KILL запрещены.
 
 **PERF-03 не завершён:** новый candidate не установлен/не запускался, прирост FPS и визуальная корректность UBO на Mali не измерены. Нужна физически доступная приставка с Wi-Fi/SSH, не новое approval. После восстановления связи: installed-route/isolation check → baseline/UBO-on одного меню → решение по actual FPS/API/errors/RAM. Если UBO не помогает, не делать его default; выбрать следующий upload/draw path по измерению, а не по числу локальных зелёных tests.
+
+## 9. Использование потоков и четырёх Cortex-A53
+
+По дополнительному запросу пользователя проверены actual game/render/IO/audio callers и сохранённые PERF-01/02 proc records. Разрешение на необходимые threading fixes подтверждено; оно не требует добавлять workers без применимой причины. Это source/saved-evidence audit, не новый device benchmark.
+
+| Активный путь H700 | Где выполняется / последовательная граница |
+| --- | --- |
+| Simulation/input/game state | Main; actor `Think`, movement/collision/scripts изменяют общий мир последовательно. Произвольное параллельное исполнение меняет порядок и создаёт гонки. |
+| THP movie decode и resource processing | Main: `CFrontEndUI::UpdateMovies → CMoviePlayer::Update → DecodeFromRead`; DVD reads асинхронны, но video decode, PAK inflate и factories не становятся от этого workers. |
+| GX FIFO | Отдельный ordered worker; main дожидается actual FIFO consumption на EOF перед закрытием recorder. |
+| Rendering | Отдельный render worker записывает passes в encoder. Фактический GL replay кадра последовательный в `Queue::Submit`, через основной Dawn GL context. Resource GL operations могут ждать этот же context; ещё один producer worker не делит replay на части. |
+| Pipeline compilation | Отдельный worker; текущая GLES policy выбирает **один compiler worker**, не один поток всей игры. Cache writer — отдельная работа. Нет evidence, что больше compiler workers ускорят steady menu без compile/warning lines. |
+| IO/audio | Один DVD worker и независимый SDL/MusyX audio callback. AI DMA poll и movie-audio refill частично остаются main. Optional mods/tool pools не считаются полезными retail workers без actual activity. |
+| Driver/GPU | Аппаратный Mali-G31/OpenGLES, не CPU adapter; несколько Mali driver workers активны. Их роль как shader compiler и GPU utilization по proc records не установлены. |
+
+### Что действительно показывают CPU records
+
+В подтверждённом неизменном меню PERF-02 все20samples содержат **21live thread**, из них18набили положительный CPU delta за выбранное окно. Суммарное потребление игры — **38,705% ёмкости четырёх CPU ≈1,548полностью занятых ядра**. Формула collector: `100 × Δthread_ticks / Δaggregate_cpu_ticks`;100% здесь означает все4CPU, а не одно ядро.
+
+Main/render/FIFO потребляют соответственно **29,61/9,14/3,79% одного ядра**; четыре hottest Mali utility threads вместе — около1,025ядра. Основные потоки часто sampled на futex: main13/20, render20/20, FIFO19/20. Это sparse observations, не проценты wall-времени ожидания и не идентификация конкретного mutex. Системный busy за это CPU-окно~50,51%, то есть устойчивого насыщения всех четырёх CPU не видно. CPU-окно1,1229–58,2906s не совпадает с54,4674s FPS-окном; их не смешивать.
+
+Main, FIFO, render и каждый из четырёх utility threads наблюдались с `stat.processor` на **CPU0,1,2,3**. Это последний CPU исполнения, не affinity mask/распределение времени по ядрам; `Cpus_allowed_list` не сохранён. Source affinity `SharedCache` выбирает множество разрешённых CPU cache domain, не принудительно одно ядро. Версия «забыли включить остальные ядра» не подтверждается. В позднем PERF-01 один utility thread доходил до~93% одного ядра, но неизменность сцены там не подтверждена, и сравнение не является threading A/B.
+
+### Решение по оптимизации
+
+- **Не увеличивать число потоков/не менять affinity вслепую:** текущий game menu не показывает нехватки готовых CPU workers или дефекта размещения.21threads не означают oversubscription, когда большинство ждут.
+- Для cold compilation отдельно может быть полезен compiler-count эксперимент, но он не объясняет автоматически steady8,299FPS и не оправдывает снятие device/context synchronization.
+- Bounded THP video worker с immutable input/YUV ownership — возможный последующий кандидат, **только если decode окажется на критическом пути**. OLD тоже декодировал movie на CPU, поэтому это не установленная причина OLD/NEW регрессии. Не вводить worker, который main немедленно join-ит.
+- Следующий решающий runtime check прежний: готовый GL API probe/UBO OFF–ON при1×/640×480. Если длинный Submit не объясняется измеренными GL calls — адресно проверить context/device-lock waits. Не снимать FIFO/map/native completion/lifetime guards ради «загрузки CPU».
+- AArch64 game build уже использует `-mcpu=cortex-a53` и `-O2`. Это разрешает подходящую генерацию CPU-кода, но не доказывает NEON-векторизацию каждой горячей функции и не является поводом слепо добавлять `-Ofast`/unsafe math.
+
+Источники: `extern/aurora/lib/gx/fifo.cpp:96–168,299–326`, `gfx/render_worker.cpp:46–67`, `aurora.cpp:784–797,929–938`, `gfx/pipeline_cache.cpp:1442–1531,1980–1992`, `thread.cpp:105–165,237–249`; `src/MetroidPrime/CMFGame.cpp:116–159`, `src/Kyoto/Graphics/CCubeMoviePlayer.cpp:396–478`, `src/Kyoto/CResFactory.cpp:236–266,306–354`, `extern/aurora/lib/dolphin/dvd/dvd.cpp:533–584`, `extern/musyx/src/musyx/runtime/hw_pc.c:1002–1103`, `platform/ai_dma.cpp:109–134`, `cmake/h700/InitialCache.cmake:5–7`. Pinned Dawn context locking: сохранённые `DeviceGL.h:90–112,186–232`, `ContextEGL.cpp:372–417`, `QueueGL.cpp:81–90` в ignored contract review. OLD active per-pass execution: `gfx/common.cpp:1641–1677,1720–1740`, `gl/pass.cpp:296–343`; его отдельного FIFO worker нет. Production threading changes/build/device runs в этом audit не выполнялись; новый read-only SSH снова timeout.
