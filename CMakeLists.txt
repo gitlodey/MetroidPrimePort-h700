@@ -786,6 +786,8 @@ if(MP_BUILD_TESTS)
     enable_testing()
     include(cmake/PortTests.cmake)
     if(AURORA_H700)
+        mp_port_test(port_h700_paths_probe SOURCES tests/port_h700_paths.cpp
+            INCLUDES platform/include LIBRARIES SDL3::SDL3 CXX_STANDARD 20 NO_TEST)
         mp_port_test(port_h700_profile_tests SOURCES tests/port_h700_profile.cpp
             INCLUDES platform/include extern/aurora/include)
         mp_port_test(port_h700_memory_tests SOURCES tests/port_h700_memory.cpp
@@ -823,6 +825,10 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_room_cleanup COMMAND metroid_prime_port --h700-room-cleanup-selftest)
         set_tests_properties(port_h700_room_cleanup PROPERTIES TIMEOUT 15 LABELS port)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME port_h700_installation COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_installation.py"
+            $<TARGET_FILE:metroid_prime_port> $<TARGET_FILE:port_h700_paths_probe>)
+        set_tests_properties(port_h700_installation PROPERTIES TIMEOUT 30 LABELS port)
         add_test(NAME port_h700_dvd_lifetime_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_dvd_lifetime_wiring.py")
         set_tests_properties(port_h700_dvd_lifetime_wiring PROPERTIES TIMEOUT 15 LABELS port)

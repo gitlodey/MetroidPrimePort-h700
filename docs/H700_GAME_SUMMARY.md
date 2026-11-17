@@ -6,7 +6,7 @@
 
 Нужна **Metroid Prime Unbound v0.46.0 на RG40XX H / H700 под muOS 2601.0 Jacaranda**, а не новый framework или идеальная тестовая матрица. Графика/UI, pad, слышимый звук, CARD save/load обязательны.30FPS — потом.
 
-GM-01…GM-13 уже завершены локально. GM-12 включил root handshake, checked sizing/progress-aware waits и замкнутых consumers: full ARM64 game build,38/38CPU/no-init/DVD CTest и изменённые non-H700 game TUs PASS. Подробности трёх итераций — в полном остатке. Настоящий игровой executable собирается, backend и lifecycle механизмы есть. **Новая игра на приставке ещё не проверена.** Железо/ОС/build facts берём из документов, заново не исследуем.
+GM-01…GM-14 уже завершены локально. GM-12 включил root handshake, checked sizing/progress-aware waits и замкнутых consumers: full ARM64 game build,38/38CPU/no-init/DVD CTest и изменённые non-H700 game TUs PASS. Подробности трёх итераций — в полном остатке. Настоящий игровой executable собирается, backend и lifecycle механизмы есть. **Новая игра на приставке ещё не проверена.** Железо/ОС/build facts берём из документов, заново не исследуем.
 
 ## Остаток — от известного дефекта к реальной игре
 
@@ -39,4 +39,4 @@ Skinning выполняется безопасными рабочими commits:
 
 **Если обнаружится реальный runtime-дефект:** минимальный local fix того же решения + regression + новый hash/RC, с теми же image/pins; повторяем failing/зависимые проверки. Для окончательного результата обязательные пункты должны быть подтверждены на принятом RC, старый PASS новому binary самовольно не переносится. Новые device-процессы согласуются отдельно. Архитектурная смена/ослабление safety/критериев — остановка, обычная техническая правка — нет.
 
-**Текущее выполнение:** правила работы закреплены в AGENTS/CLAUDE/workflow; утверждённый GM-12 завершён тремя проверенными итерациями. GM-13 подтвердил согласованные game/Aurora CPU tests и non-H700 compile; далее чистая установка/launcher/package; без нового круга общего планирования. Реальные device-окна ещё не разрешены.
+**Текущее выполнение:** правила работы закреплены в AGENTS/CLAUDE/workflow; утверждённый GM-12 завершён тремя проверенными итерациями. GM-13 подтвердил согласованные game/Aurora CPU tests и non-H700 compile; GM-14 подтвердил own paths и actual INI/binding persistence (48/48scoped CTest); далее launcher/package; без нового круга общего планирования. Реальные device-окна ещё не разрешены.

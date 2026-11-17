@@ -828,6 +828,14 @@ int main(int argc, char** argv) {
         return PortDebug::SettingsSelfTest();
     }
 #ifdef AURORA_H700
+    if (argc >= 2 && std::strcmp(argv[1], "--h700-settings-persistence-selftest") == 0) {
+        if (argc != 4) {
+            std::fprintf(stderr, "usage: %s --h700-settings-persistence-selftest write|read <absolute-fixture-directory>\n",
+                         argv[0]);
+            return 2;
+        }
+        return PortDebug::H700SettingsPersistenceSelfTest(argv[2], argv[3]);
+    }
     if (argc == 2 && std::strcmp(argv[1], "--h700-profile-selftest") == 0) {
         return PortDebug::H700SettingsSelfTest();
     }

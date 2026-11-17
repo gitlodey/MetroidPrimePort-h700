@@ -913,6 +913,96 @@ void SaveSettings() {
 namespace PortDebug {
 
 #if defined(AURORA_H700)
+int H700SettingsPersistenceSelfTest(const char* mode, const char* fixtureDirectory) {
+  namespace fs = std::filesystem;
+  const auto fail = [](int code, const char* detail) {
+    std::fprintf(stderr, "H700 settings persistence self-test: %s\n", detail);
+    return code;
+  };
+  const bool write = mode != nullptr && std::string(mode) == "write";
+  if ((!write && (mode == nullptr || std::string(mode) != "read")) || fixtureDirectory == nullptr) {
+    return fail(2, "expected write|read and an explicit absolute fixture directory");
+  }
+  // Validate before SettingsFilePath can resolve/cache any default or personal folder.
+  const char* user = std::getenv("MP_USER_PATH");
+  const fs::path directory = PortUtf8::FromUtf8(fixtureDirectory);
+  std::error_code ec;
+  if (!directory.is_absolute() || user == nullptr || std::string(fixtureDirectory) != user ||
+      !fs::is_directory(directory, ec) || ec) {
+    return fail(2, "fixture must be an existing absolute directory exactly matching explicit MP_USER_PATH");
+  }
+  const fs::path target = PortUtf8::FromUtf8(SettingsFilePath());
+  if (target.lexically_normal() != (directory / "port_settings.ini").lexically_normal()) {
+    return fail(2, "SettingsFilePath did not resolve inside the explicit fixture");
+  }
+  const fs::file_status status = fs::symlink_status(target, ec);
+  if (ec && ec != std::errc::no_such_file_or_directory) {
+    return fail(2, "could not inspect fixture INI");
+  }
+  if (write) {
+    if (fs::exists(status)) {
+      return fail(2, "refusing to overwrite an existing INI");
+    }
+    fs::path partial = target;
+    partial += ".tmp";
+    ec.clear();
+    const fs::file_status partialStatus = fs::symlink_status(partial, ec);
+    if ((ec && ec != std::errc::no_such_file_or_directory) || fs::exists(partialStatus)) {
+      return fail(2, "refusing to overwrite an existing or inaccessible INI temporary file");
+    }
+  } else if (!fs::is_regular_file(status)) {
+    return fail(2, "read requires an existing regular fixture INI");
+  }
+  if (sInitialized) {
+    return fail(2, "fixture must run before normal settings initialization");
+  }
+
+  // Only this early-exit fixture enables SaveSettings locally. EnsureInitialized
+  // would register exit persistence and start unrelated network/audio services.
+  sInitialized = true;
+  sSettingsDirty = false;
+  ApplyH700Defaults();
+  if (sHudScale == 90 || PortInput::Get().shiftBindings[2] == 9) {
+    return fail(1, "fixture values must differ from startup defaults");
+  }
+  if (write) {
+    // Real table reader and PortInput parser/writer, not a synthetic INI serializer.
+    // SDL gamepad button 9 is the left shoulder; the default shift_pad is unbound.
+    if (!ApplySetting("hud_scale", "90") || !PortInput::ApplySetting("pad_preset", "modern") ||
+        !PortInput::ApplySetting("shift_pad", "9")) {
+      return fail(1, "fixture setting keys were not accepted");
+    }
+    sSettingsDirty = true;
+    SaveSettings(); // Actual .tmp write and atomic rename; only success clears dirty.
+    if (sSettingsDirty) {
+      return fail(1, "SaveSettings did not complete");
+    }
+    std::ifstream file(target);
+    if (!file.is_open()) {
+      return fail(1, "saved fixture INI is missing");
+    }
+    const auto values = SettingsValues(std::string(std::istreambuf_iterator<char>(file), {}));
+    const auto matches = [&](const char* key, const char* expected) {
+      const auto found = values.find(key);
+      return found != values.end() && found->second == expected;
+    };
+    if (file.bad() || !matches("hud_scale", "90") || !matches("pad_preset", "modern") ||
+        !matches("shift_pad", "9")) {
+      return fail(1, "saved fixture values do not match");
+    }
+  } else {
+    // A separate process reaches here with defaults, never the write-mode values.
+    LoadSettings();
+  }
+  if (sHudScale != 90 || PortInput::Get().padPreset != 2 || PortInput::Get().shiftBindings[2] != 9 ||
+      sSettingsDirty) {
+    return fail(1, "expected hud_scale=90 pad_preset=modern shift_pad=9 without pending save");
+  }
+  std::fprintf(stderr, "H700 settings persistence self-test: %s PASS hud_scale=90 pad_preset=modern shift_pad=9\n",
+               mode);
+  return 0;
+}
+
 int H700SettingsSelfTest() {
   // Use the actual one-time startup initializer, not a separate test preset.
   // Do not call EnsureInitialized: it reads files and registers persistence.

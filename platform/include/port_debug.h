@@ -23,6 +23,10 @@ int SettingsSelfTest();
 #if defined(AURORA_H700)
 // Checks the startup defaults and in-memory INI overrides. No file or graphics initialization.
 int H700SettingsSelfTest();
+// Separate-process INI fixture, no normal initialization or exit-save registration.
+// write refuses an existing INI; read never saves. Directory must already exist
+// and be absolute, with exactly the same spelling as explicit MP_USER_PATH.
+int H700SettingsPersistenceSelfTest(const char* mode, const char* fixtureDirectory);
 #endif
 
 // Live game state for the debug menu (set every simulation tick by
