@@ -204,6 +204,7 @@
 {"Video", "Quality", "Quality", "Sharpen when upscaled", "sharpening cas upscale blurry soft dynamic resolution"},
 {"Video", "Quality", "Quality", "Sharpening", "sharpen strength cas upscale"},
 {"Video", "Quality", "Quality", "HD font", "font text high resolution hd"},
+{"Video", "Frame rate", "Frame rate", "Show FPS counter", "fps counter overlay frame time milliseconds performance"},
 {"Video", "Frame rate", "Frame rate", "60 FPS cap (target)", "fps limit cap framerate 60"},
 {"Video", "Frame rate", "Frame rate", "FPS cap", "fps limit cap framerate number"},
 {"Video", "Frame rate", "Frame rate", "Smooth uncapped frames", "smooth uncapped frame pacing interpolate"},

@@ -11,6 +11,11 @@ namespace PortDebug {
 
 void DrawPerformanceTab() {
   ImGui::SeparatorText("Frame rate");
+  if (ImGui::Checkbox("Show FPS counter", &sShowFpsCounter)) {
+    MarkDirty();
+  }
+  ItemHelp("A small FPS and average frame-interval readout over the game, even with this menu closed.\n"
+           "It takes no input. Milliseconds include pacing and waits, not just GPU work.");
   const bool locked = BeginOriginalLocked();
   bool frameLimit = sFrameLimitEnabled;
   if (ImGui::Checkbox("60 FPS cap (target)", &frameLimit)) {

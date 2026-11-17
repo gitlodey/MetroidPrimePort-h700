@@ -72,6 +72,7 @@ class H700Installation(unittest.TestCase):
             run([*command, "write", user], env, old)
             ini = user / "port_settings.ini"
             saved = ini.read_bytes()
+            self.assertIn(b"\nshow_fps_counter=0\n", saved)
             self.assertFalse(ini.with_suffix(".ini.tmp").exists())
             run([*command, "read", user], env, old)  # fresh actual game process
             self.assertEqual(ini.read_bytes(), saved)  # read cannot rewrite INI

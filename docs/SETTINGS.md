@@ -22,7 +22,7 @@ are not removed. A stale GLES startup marker produces an explicit failure, not
 AUTO fallback. This policy is not proof of device compatibility or30FPS;
 see [the approved game plan](H700_GAME_PLAN.md).
 
-`metroid_prime_port --h700-profile-selftest` checks27 baseline settings and
+`metroid_prime_port --h700-profile-selftest` checks28 baseline settings and
 existing in-memory INI overrides without reading/writing files or initializing
 SDL/GPU. It is only available in H700 builds. The ordinary
 `--settings-selftest` remains the whole settings-table roundtrip check.
@@ -80,6 +80,13 @@ unwind owners, retry a backend or automatically kill a save-capable process.
   rate "60 FPS cap (target)", persisted as `frame_limit`, on by default, always on
   under Original experience) holds presented frames to the game's 60 Hz; with it
   off, `fps_cap` sets the limit.
+- **Show FPS counter** (F1/PortMenu > Video > Frame rate, `show_fps_counter`): a
+  small non-interactive readout at the top right, visible with PortMenu closed.
+  It reuses the existing Presented FPS sample, including rates below1 FPS; the
+  milliseconds are its reciprocal average wall-frame interval, including pacing
+  and waits, **not GPU execution time**. No valid sample is shown as `--`.
+  Enabled by default on H700, off elsewhere; an existing saved0 stays off.
+  It does not enable GPU profiling or alter the frame cap or simulation rate.
 - Settings changed in the F1 overlay (aspect, vsync, render scale, frame limit,
   mouse aim/inversion/sensitivity, audio mutes) are saved to
   `port_settings.ini` in the user folder (`user/` beside the executable, see above) and restored on the next launch. The System page shows the

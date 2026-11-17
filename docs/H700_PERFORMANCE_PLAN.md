@@ -53,3 +53,27 @@
 Read-only preflight: установленный executable и configured entry hashes совпали с RC5; game/copier/launcher отсутствуют, lock отсутствует,5firmware baseline hashes unchanged, MemAvailable822512KiB (~803MiB). Никаких deploy/no-init/config/cache changes, game launches или signals не выполнялось. Collector пока не запущен и требует explicit main-menu confirmation; следующий шаг — один manual Ports launch пользователя, затем180s наблюдения по этой карточке. Private evidence — только `build/h700-perf01-rc5/`.
 
 После PERF-01 конкретное production-исправление предъявляется отдельным коротким планом с файлами, regression и сопоставимой проверкой. **Не обещаем заранее единственный виновный компонент, величину ускорения или достижение30FPS.** Завершённые GM-01…17/backend/pins не переоткрываются; safeguards и качество картинки сохраняются.
+
+## FPS-01 — компактный экранный счётчик, УТВЕРЖДЁН
+
+Пользователь предложил вывести FPS на экран и ответил **«Конечно»** на конкретное предложение постоянной FPS/ms-строки с выключателем на основе существующих измерений, без GPU profiler/input capture. Это отдельное разрешение локально реализовать/проверить/собрать UI feature, **не** performance fix, deploy, новый device run или завершение текущего процесса.
+
+| Поле | Ограниченная итерация FPS-01 |
+| --- | --- |
+| Цель / вопрос | Пользователь не может отличить остановку меню от крайне низкого FPS. Дать читаемый непрерывный readout прямо поверх игры, без навигации по тормозящему PortMenu. |
+| Решение / source | Existing main-owned `sActualFps` (та же Presented FPS, что на Video/Frame rate), обновляемая RecordFrame примерно раз в секунду; ms=1000/FPS — средний wall interval, не CPU/GPU execution. Без новых timers. При отсутствии корректного положительного sample — `--`, без деления на0. `aurora_get_fps` с окном1s не используется для этой строки: при<2presents оно даёт0 и неполезно для наблюдавшихся ~1s stalls. |
+| UI / объём | Маленькое ImGui-окно справа сверху viewport, FPS/ms, существующие font/presentation pass; NoInputs/NoNav/NoFocusOnAppearing/NoSavedSettings. Вызов вне sVisible guard, поэтому работает при закрытом PortMenu. Checkbox Show FPS counter на Video/Frame rate; existing BoolKey show_fps_counter, defaultON только AURORA_H700, OFF других платформ, saved0 уважается. |
+| Файлы | platform/debug_ui.cpp, debug_ui/{debug_ui_internal.h,overlays.cpp,window.cpp,performance.cpp,settings.cpp}, port_settings_index.inc; direct settings fixtures/docs входят в этот же scope. Renderer/clock/cap/simulation/validation/robustness не меняются. |
+| Проверка / приёмка local | Game compile/link; actual settings roundtrip, H700 default+override selftest, two-process fixture с сохранённым show_fps_counter=0; settings-index check, compile changed UI на non-H700. Никакой game/GPU runtime в container. Local PASS не подтверждает физическую читаемость/невлияние на pad — это pending будущего отдельно разрешённого run. |
+| Безопасность / откат | Никаких SSH/deploy/INI/cache/card изменений текущей установки. Чистая новая сборка имеет новый hash; RC5 сохраняется. Counter выключается checkbox, будущий update только после actual exit. Текущий PERF-01 process по последнему snapshot жив, lock не трогать. |
+| Завершение / оценка | До1–2ч активной локальной реализации и проверок, ожидание package build отдельно. Code/tests/docs → commit/push → отдельный package/hash; не обещаем улучшение FPS от UI feature. Для последующих before/after сравнивать одинаковое состояние counter. |
+
+PERF-01 capture уже собрал60samples/180s без критических errors; scene confirmation и normal Exit остаются pending. Предварительно один mali-utility-wo занял23,266% total CPU capacity (4CPUs), main5,767%, render1,030%, FIFO0,727% на отрезке31,23–178,04s; это CPU work/wchan samples, не GPU time и не доказанная compiler role. На этом позднем отрезке0slow-compile warnings/0new-miss log lines. Эти данные не являются разрешением на изменение driver/render path.
+
+### FPS-01 — LOCAL PASS, package готовится
+
+Counter реализован в existing ImGui frame: NoInputs/NoNav/NoFocus/NoSavedSettings, вызов вне закрытого PortMenu guard. DefaultON на H700/OFF elsewhere, persisted show_fps_counter=0 уважается; checkbox и search-index на Video/Frame rate. Нет новых GPU queries, timers, threads или render-owner APIs. При invalid/nonpositive FPS выводится `--`; средний ms interval не объявляется GPU duration.
+
+Full incremental game compile/link PASS;7/7 relevant CPU/no-init/settings/profile/install/index CTest PASS, actual H700 defaults/overrides28keys PASS. Persistence fixture выполняет actual write/read в разных процессах, проверяет show_fps_counter=0 и отсутствие перезаписи old/home sentinels. Пять изменённых platform UI TUs компилируются без AURORA_H700; independent read-only review direct caller/lifecycle/units/input flags/default/load-save blockers не нашёл. Source/CPU checks не заменяют physical visibility/pad check. Evidence — ignored `build/h700-game-gm03/fps01-*`.
+
+Изменённый RC6 получает отдельный immutable package/hash; RC5 не пересобирается и не обновляется на устройстве. Текущий device process/lock по последнему snapshot живы; production UI feature local approval не означает permission на kill/update/run.

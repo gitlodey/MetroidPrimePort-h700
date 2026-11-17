@@ -237,6 +237,7 @@ const SettingKey kSettingKeys[] = {
      "playstation", "keyboard"},
     BoolKey< &sShowShaderCompilation >("show_shader_compilation"),
     BoolKey< &sShowMenuHint >("show_menu_hint"),
+    BoolKey< &sShowFpsCounter >("show_fps_counter"),
     {"hud_scale",
      [](const std::string& value) {
        const int s = std::atoi(value.c_str());
@@ -962,13 +963,14 @@ int H700SettingsPersistenceSelfTest(const char* mode, const char* fixtureDirecto
   sInitialized = true;
   sSettingsDirty = false;
   ApplyH700Defaults();
-  if (sHudScale == 90 || PortInput::Get().shiftBindings[2] == 9) {
+  if (sHudScale == 90 || PortInput::Get().shiftBindings[2] == 9 || !sShowFpsCounter) {
     return fail(1, "fixture values must differ from startup defaults");
   }
   if (write) {
     // Real table reader and PortInput parser/writer, not a synthetic INI serializer.
     // SDL gamepad button 9 is the left shoulder; the default shift_pad is unbound.
-    if (!ApplySetting("hud_scale", "90") || !PortInput::ApplySetting("pad_preset", "modern") ||
+    if (!ApplySetting("hud_scale", "90") || !ApplySetting("show_fps_counter", "0") ||
+        !PortInput::ApplySetting("pad_preset", "modern") ||
         !PortInput::ApplySetting("shift_pad", "9")) {
       return fail(1, "fixture setting keys were not accepted");
     }
@@ -987,7 +989,7 @@ int H700SettingsPersistenceSelfTest(const char* mode, const char* fixtureDirecto
       return found != values.end() && found->second == expected;
     };
     if (file.bad() || !matches("hud_scale", "90") || !matches("pad_preset", "modern") ||
-        !matches("shift_pad", "9")) {
+        !matches("shift_pad", "9") || !matches("show_fps_counter", "0")) {
       return fail(1, "saved fixture values do not match");
     }
   } else {
@@ -995,10 +997,10 @@ int H700SettingsPersistenceSelfTest(const char* mode, const char* fixtureDirecto
     LoadSettings();
   }
   if (sHudScale != 90 || PortInput::Get().padPreset != 2 || PortInput::Get().shiftBindings[2] != 9 ||
-      sSettingsDirty) {
-    return fail(1, "expected hud_scale=90 pad_preset=modern shift_pad=9 without pending save");
+      sShowFpsCounter || sSettingsDirty) {
+    return fail(1, "expected hud_scale=90 pad_preset=modern shift_pad=9 show_fps_counter=0 without pending save");
   }
-  std::fprintf(stderr, "H700 settings persistence self-test: %s PASS hud_scale=90 pad_preset=modern shift_pad=9\n",
+  std::fprintf(stderr, "H700 settings persistence self-test: %s PASS hud_scale=90 pad_preset=modern shift_pad=9 show_fps_counter=0\n",
                mode);
   return 0;
 }
@@ -1039,6 +1041,7 @@ int H700SettingsSelfTest() {
       {"fullscreen", "1", "0"},
       {"music_boost", "100", "200"},
       {"sfx_boost", "100", "200"},
+      {"show_fps_counter", "1", "0"},
   };
   int failures = 0;
   const auto check = [&](bool passed, const char* detail) {

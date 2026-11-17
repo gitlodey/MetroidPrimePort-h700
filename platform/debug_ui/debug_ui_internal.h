@@ -92,6 +92,7 @@ inline constexpr const char* kPromptGlyphs[] = {"auto",   "xbox",     "playstati
                                                 "steamdeck"};
 extern bool sShowShaderCompilation;
 extern bool sShowMenuHint;
+extern bool sShowFpsCounter;
 extern int sHudScale;
 extern int sScanSpread;
 extern int sHudOpacity[PortDebug::kHudOpacityPartCount]; // indexed by PortDebug::HudOpacityPart
@@ -453,6 +454,7 @@ void CloseGallery();
 void DrawGalleryWindow();
 
 // overlays.cpp
+void DrawFpsCounter();
 void PhotoTouchEvent(const SDL_Event& event);
 void DrawStaleImportToast();
 void BeginTopToastStack();

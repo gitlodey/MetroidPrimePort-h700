@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
@@ -39,6 +40,29 @@
 #include <vector>
 
 namespace PortDebug {
+
+void DrawFpsCounter() {
+  if (!sShowFpsCounter) {
+    return;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x - 8.f, viewport->Pos.y + 8.f),
+                          ImGuiCond_Always, ImVec2(1.f, 0.f));
+  ImGui::SetNextWindowBgAlpha(0.7f);
+  if (ImGui::Begin("##fps-counter", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoInputs |
+                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing |
+                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize)) {
+    // The existing wall-rate sample also represents sub-1 FPS; its reciprocal is
+    // the mean frame interval, not the GPU duration or the simulation tick rate.
+    if (std::isfinite(sActualFps) && sActualFps > 0.0) {
+      ImGui::Text("%.1f FPS | %.1f ms", sActualFps, 1000.0 / sActualFps);
+    } else {
+      ImGui::TextUnformatted("-- FPS | -- ms");
+    }
+  }
+  ImGui::End();
+}
 
 // Once per launch, a few seconds, no input taken: a Remastered import from an older importer.
 void DrawStaleImportToast() {

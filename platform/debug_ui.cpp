@@ -99,6 +99,11 @@ bool sMenuExit = true;
 std::atomic< int > sPromptGlyphs{0};
 bool sShowShaderCompilation = true;
 bool sShowMenuHint = true;
+#ifdef AURORA_H700
+bool sShowFpsCounter = true;
+#else
+bool sShowFpsCounter = false;
+#endif
 int sHudScale = PortDebug::kHudScaleMax;
 #if defined(PORT_TOUCH_CONTROLS)
 int sScanSpread = PortDebug::kScanSpreadMin; // touch controls cover the screen edges
