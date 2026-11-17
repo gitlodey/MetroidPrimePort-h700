@@ -1,4 +1,5 @@
 #include "h700/presentation_state.hpp"
+#include "h700/presentation_timing.hpp"
 
 #include <gtest/gtest.h>
 
@@ -8,6 +9,39 @@
 
 namespace aurora::h700 {
 namespace {
+
+TEST(H700PresentationTiming, WallMillisecondsKeepNestedEnvelopesSeparate) {
+  using T = FrameWallTimings;
+  using namespace std::chrono_literals;
+  T timing;
+  timing.acquired = T::Clock::time_point{} + 1s;
+  timing.submit_begin = timing.acquired + 10ms;
+  timing.queue_returned = timing.submit_begin + 3ms;
+  timing.submit_returned = timing.submit_begin + 5ms;
+  timing.completion_observed = timing.submit_returned + 200ms;
+  const auto present_begin = timing.completion_observed + 2ms;
+  const auto sample = timing.sample(present_begin, present_begin + 4ms, present_begin + 19ms, present_begin + 20ms);
+  EXPECT_DOUBLE_EQ(sample[T::Prepare], 10);
+  EXPECT_DOUBLE_EQ(sample[T::Submit], 5);
+  EXPECT_DOUBLE_EQ(sample[T::Queue], 3);
+  EXPECT_DOUBLE_EQ(sample[T::CompletionObserved], 200);
+  EXPECT_DOUBLE_EQ(sample[T::Present], 20);
+  EXPECT_DOUBLE_EQ(sample[T::Swap], 15);
+}
+
+TEST(H700PresentationTiming, FixedSummaryReportsIndependentMeansMaximaAndResets) {
+  FrameWallSummary summary;
+  EXPECT_EQ(summary.mean(), FrameWallTimings::Sample{});
+  summary.record({1, 2, 3, 4, 5, 6});
+  summary.record({3, 4, 5, 6, 7, 8});
+  EXPECT_EQ(summary.frames, 2);
+  EXPECT_EQ(summary.mean(), (FrameWallTimings::Sample{2, 3, 4, 5, 6, 7}));
+  EXPECT_EQ(summary.maximum, (FrameWallTimings::Sample{3, 4, 5, 6, 7, 8}));
+  summary = {};
+  EXPECT_EQ(summary.frames, 0);
+  EXPECT_EQ(summary.mean(), FrameWallTimings::Sample{});
+  EXPECT_EQ(summary.maximum, FrameWallTimings::Sample{});
+}
 
 static_assert(!std::is_copy_assignable_v<FrameDescriptor>);
 static_assert(!std::is_move_assignable_v<FrameDescriptor>);

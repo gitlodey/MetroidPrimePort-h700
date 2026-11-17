@@ -1,5 +1,6 @@
 #include "presentation.hpp"
 #include "diagnostics.hpp"
+#include "presentation_timing.hpp"
 
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
@@ -41,6 +42,7 @@ struct NativeFlight {
   bool forward_observed = false; // remaining fields are main-only
   EGLSyncKHR reverse = EGL_NO_SYNC_KHR;
   bool reverse_wait_failed = false;
+  FrameWallTimings wall; // worker timestamps use the published release/acquire; observation/presentation are main-only
 };
 struct Backend {
   explicit Backend(uint64_t id) : generation(id), state(std::make_shared<PresentationState>(id)) {}
@@ -64,6 +66,8 @@ struct Backend {
   std::mutex flights_mutex; // never held across a Dawn/GL/EGL call or a wait
   std::array<std::shared_ptr<NativeFlight>, 2> flights;
   uint64_t next_frame = 0;
+  FrameWallSummary frame_wall;
+  FrameWallTimings::Clock::time_point last_wall_report = FrameWallTimings::Clock::now();
   bool progressing = false;
   bool presenter_ready = false;
   bool dawn_attempted = false;
@@ -419,6 +423,7 @@ void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
     quarantine_frame(flight->descriptor, "H700 forward work-done wait/status failed");
     return;
   }
+  flight->wall.completion_observed = FrameWallTimings::Clock::now();
   const auto ownership = backend->state->snapshot();
   const auto& slot = ownership.slots[flight->descriptor.slot];
   if (!slot.descriptor || *slot.descriptor != flight->descriptor) {
@@ -514,6 +519,26 @@ void poll_reverse(const std::shared_ptr<NativeFlight>& flight) {
   }
   recycle_safe(flight);
 }
+void report_frame_wall(const NativeFlight& flight, FrameWallTimings::Clock::time_point present_begin,
+                       FrameWallTimings::Clock::time_point swap_begin, FrameWallTimings::Clock::time_point swap_returned) {
+  const auto now = FrameWallTimings::Clock::now();
+  backend->frame_wall.record(flight.wall.sample(present_begin, swap_begin, swap_returned, now));
+  if (now - backend->last_wall_report < std::chrono::seconds(2)) return;
+  const auto mean = backend->frame_wall.mean();
+  const auto& maximum = backend->frame_wall.maximum;
+  using T = FrameWallTimings;
+  Log.info("H700 frame wall gen={} last={} frames={} window_ms={:.1f} mean/max: "
+           "prepare_ms={:.2f}/{:.2f} submit_ms={:.2f}/{:.2f} queue_ms={:.2f}/{:.2f} "
+           "completion_observed_ms={:.2f}/{:.2f} present_ms={:.2f}/{:.2f} swap_ms={:.2f}/{:.2f}; "
+           "overlapping wall envelopes, not GPU time",
+           flight.descriptor.generation, flight.descriptor.frame, backend->frame_wall.frames,
+           std::chrono::duration<double, std::milli>(now - backend->last_wall_report).count(),
+           mean[T::Prepare], maximum[T::Prepare], mean[T::Submit], maximum[T::Submit],
+           mean[T::Queue], maximum[T::Queue], mean[T::CompletionObserved], maximum[T::CompletionObserved],
+           mean[T::Present], maximum[T::Present], mean[T::Swap], maximum[T::Swap]);
+  backend->frame_wall = {};
+  backend->last_wall_report = now;
+}
 void present_ready() {
   if (!window::is_presentable()) return;
   if (const auto front = backend->state->front_submission()) {
@@ -524,6 +549,7 @@ void present_ready() {
   if (!descriptor) return;
   const auto flight = flight_for(*descriptor);
   const auto* slot = native_slot(*descriptor);
+  const auto present_begin = FrameWallTimings::Clock::now();
   if (!flight || !slot || !restore_presenter()) {
     quarantine_frame(*descriptor, "H700 cannot acquire the matching native presenter target");
     return;
@@ -576,15 +602,18 @@ void present_ready() {
   }
   // The pinned SDL2 shim returns true unconditionally; only the actual EGL return
   // can attest a successful swap. SDL still owns this display/surface unchanged.
+  const auto swap_begin = FrameWallTimings::Clock::now();
   if (eglSwapBuffers(backend->display, backend->draw) != EGL_TRUE) {
     const EGLint error = eglGetError();
     quarantine_frame(*descriptor, fmt::format("H700 eglSwapBuffers failed: EGL error {:#x}", error));
     return;
   }
+  const auto swap_returned = FrameWallTimings::Clock::now();
   if (!backend->state->complete_swap(*descriptor)) {
     quarantine_frame(*descriptor, "H700 swap completion transition failed");
     return;
   }
+  report_frame_wall(*flight, present_begin, swap_begin, swap_returned);
   gfx::after_present(); // statistics only, never a game callback
 }
 } // namespace
@@ -662,7 +691,9 @@ bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& 
     backend->state->fail("H700 native Submit boundary rejected");
     return false;
   }
+  flight->wall.submit_begin = FrameWallTimings::Clock::now();
   webgpu::g_queue.Submit(1, &commands); // irreversible boundary: no rollback after mark_submitted
+  flight->wall.queue_returned = FrameWallTimings::Clock::now();
   flight->forward = webgpu::g_queue.OnSubmittedWorkDone(
       wgpu::CallbackMode::WaitAnyOnly,
       [flight](wgpu::QueueWorkDoneStatus status, wgpu::StringView) {
@@ -671,6 +702,7 @@ bool submit_frame(const FrameDescriptor& descriptor, const wgpu::CommandBuffer& 
       });
   if (const auto observation = diagnostic::current()) observation->event(diagnostic::Kind::Submitted, descriptor.frame, false);
   const bool published = backend->state->publish_submitted(descriptor, flight->forward.id);
+  flight->wall.submit_returned = FrameWallTimings::Clock::now();
   flight->published.store(true, std::memory_order_release);
   // Even after synchronous loss/error, the real future stays published/owned for main/IG-11.
   if (!published || !flight->forward.id || backend->state->snapshot().phase == PresentationPhase::Failed) {
