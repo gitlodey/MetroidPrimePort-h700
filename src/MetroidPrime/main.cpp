@@ -26,6 +26,9 @@
 #include "port_prompts.h"
 #include "port_crash.h"
 #include "port_watchdog.h"
+#ifdef AURORA_H700
+#include "port_h700_game_boundary.h"
+#endif
 
 #include "stdint.h"
 #include "stdio.h"
@@ -1256,6 +1259,34 @@ int CMain::RsMain(int argc, const char* const* argv) {
         x12c_restartMode = kRM_Default;
         CStreamAudioManager::StopAll();
         PADRecalibrate(0xf0000000);
+#ifdef AURORA_H700
+        // Already at the reset safe-point: no ticks/draw or game reentry during either boundary.
+        bool oldOwnerDestroyed = false;
+        const bool reset = PortH700::ResetGameOwner(
+            [] { return CGraphics::PortGameOwnerBoundary(); },
+            [&] {
+              x164_archSupport = nullptr;
+              archSupport = nullptr;
+              oldOwnerDestroyed = true;
+            },
+            [] { CFrameDelayedKiller::FlushAllAllocations(); },
+            [&] {
+              CGraphics::SetIsBeginSceneClearFb(true);
+              CGameArchitectureSupport* tmp = rs_new CGameArchitectureSupport(x0_osContext);
+              archSupport = tmp;
+              x164_archSupport = archSupport.get();
+              tmp->PreloadAudio();
+            });
+        if (!reset) {
+          PortLog::Write("port: H700 reset fail-stop: boundary failed %s owner destruction; "
+                         "completion unproven, retaining main stack/remaining owners; "
+                         "no delayed flush, new owner or unwind\n",
+                         oldOwnerDestroyed ? "after" : "before");
+          // GM-09/10 will provide CPU quiescence and typed transport. Until then even
+          // return/throw/_Exit could release owners still in use; do not leave this scope.
+          for (;;) SDL_Delay(1000);
+        }
+#else
         CGraphics::SetIsBeginSceneClearFb(true);
         if (CGraphics::BeginScene()) {
           CGraphics::EndScene();
@@ -1267,6 +1298,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
         archSupport = tmp;
         x164_archSupport = archSupport.get();
         tmp->PreloadAudio();
+#endif
       }
       CheckTweakManagerDebugOptions();
 

@@ -443,4 +443,12 @@ Root admission не закрывается; compiler joins, shutdown, universal 
 
 Проверки: full H700 game/core/GX build; **8/8 game CPU/no-init CTest,45/45 render/lifecycle/wait tests,262/262 FIFO tests PASS**. Новый actual worker regression удерживает возврат after-submit-подобного callback и отдельно destruction capture; sync должен дождаться обоих, roots остаются открыты и следующая работа принимается. Первый run выявил test-cleanup assertion: healthy hook проверял roots уже в shutdown. Hook снимается только после тестовых задержек в RAII cleanup; проверка открытого admission в boundary не удалена. Initial/recheck logs сохранены в ignored `gm06-*`. Полный non-H700 core+GX compile PASS; GPU/device не запускались. Independent lifecycle review production blockers не нашёл.
 
-Следующая GM-07 — подключение этой границы к reset owners. Локальные шаги продолжаются без нового approval.
+GM-06 commit/push: `5e184e0c5`. Локальные шаги продолжаются без нового approval.
+
+### GM-07 — LOCAL PASS: same-generation reset owners
+
+H700 reset использует production/test `ResetGameOwner`: pre-dtor boundary → raw alias=null → old archSupport destruction → destructor-tail boundary → existing no-command delayed flush → восстановление clear-FB policy → новый archSupport/alias/audio preload. Новое generation не создаётся, roots/backend/workers остаются живыми. Non-H700 reset сохранён. При false до/после destruction — diagnostic fail-stop с удержанием main scope/remaining owners, без flush/new owner/throw/return; GM-09…11 позднее добавят terminal CPU checkpoint/transport.
+
+Проверки: полный incremental game compile/link, **8/8 CPU/no-init CTest PASS**, non-H700 compile game main PASS. Boundary suite дополнен ordering/destructor-generated queued cleanup/delayed-free и alias/new-owner assertions, включая отказ обеих границ и failure после обработки tail. Final compile/boundary rerun после сохранения clear-FB default PASS. Independent lifecycle review без blockers. Actual reset на приставке остаётся GM-19, не засчитывается CPU tests. Logs/commands — ignored `gm07-*` staged output.
+
+Следующая GM-08 — normal game exit с subsystem/global destructor tails; отдельное разрешение на локальный шаг не требуется.

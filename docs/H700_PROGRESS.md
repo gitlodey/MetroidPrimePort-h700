@@ -14,7 +14,8 @@
 - **GM-03 LOCAL PASS:** H700 new-install defaults + fixed unpinned retail allocation/backend, Dawn validation/robustness protection и override rejection; fresh full build,5/5CPU/no-init CTest (27settings keys/12actual startup rejections), non-H700 compile изменённых game TU PASS. Existing INI не перезаписывается; GPU/device не запускались. Commit/push: `119418fae`.
 - **GM-04 LOCAL PASS:** pressure192/128MiB, bounded1s RAM/RSS-HWM/min-available diagnostics с96MiB sampled gate;6/6CPU/no-init CTest (16startup rejects), non-H700 changed-TU compile PASS. Eviction/GLOBAL algorithm и buffer limits не менялись; device RAM PASS не заявлен. Commit/push: `2a231b2a7`.
 - **GM-05 LOCAL PASS:** actual Aurora init backend/window/native/readiness gate до game owners; partial init использует IG11, Unknown/timeout не разрешают unwind.7/7CPU/no-init CTest и полный non-H700 core+GX compile PASS; реальный GPU partial-init failure не инъецировался. Commit/push: `e5fdeac74`.
-- **GM-06 LOCAL PASS:** reusable healthy owner barrier/frame-once/FIFO→render+callback-return/capture release, без закрытия roots/GPU-idle.8/8game +45/45render/lifecycle +262/262FIFO CPU tests и full non-H700 core/GX compile PASS; reset/exit wiring ещё впереди.
+- **GM-06 LOCAL PASS:** reusable healthy owner barrier/frame-once/FIFO→render+callback-return/capture release, без закрытия roots/GPU-idle.8/8game +45/45render/lifecycle +262/262FIFO CPU tests и full non-H700 core/GX compile PASS; Commit/push: `5e184e0c5`.
+- **GM-07 LOCAL PASS:** reset boundary→alias clear/owner destruction→destructor-tail boundary→no-command flush→new owner в том же generation;8/8CPU/no-init tests и non-H700 game-main compile PASS. На failure сохраняется fail-stop до будущего terminal transport; actual device reset ещё не проверен.
 
 ## Что подтверждено
 
@@ -32,7 +33,7 @@
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-07: reset игровых owners через healthy boundary и destructor-tail flush, без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-08: normal exit/subsystem/global destructor tails, без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 
