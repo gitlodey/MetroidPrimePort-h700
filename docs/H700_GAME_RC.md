@@ -1,10 +1,10 @@
 # H700 — игровой RC и результат повторной fresh build
 
-**Локальный package PASS, device acceptance PENDING.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь выбрал GameCube USA1.00 в ISO и сообщил, что образ уже на приставке, приставка свободна. Это пользовательские сведения, не fresh device verification; SSH/deploy/run ещё не разрешены. 30 FPS — следующий отдельный этап.
+**Локальный package PASS; окно A / GM-18 FAIL: runtime fail-stop, actual exit не достигнут.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
 
 ## Выбранный неизменяемый payload
 
-Для будущего окна A выбран **ровно `rc3`**, без пересборки после проверок:
+Для выполненного окна A выбран **ровно `rc3`**, без пересборки после проверок:
 
 | Artifact | Bytes | SHA256 |
 | --- | ---: | --- |
@@ -62,20 +62,33 @@ Payload path/mode/size sets совпали; **все payload files, включа
 
 Manifest/SHA256SUMS/archive hashes закономерно различаются вслед за executable. **Bit-identical build не заявлен.** Production код не менялся ради удаления timestamp. Проверка и подробный локальный отчёт — `build/h700-game-rc3/reproducibility.json`.
 
-## Установка, legal scope и оставшийся шаг к A
+## Установка, legal scope и окно A
 
 [Physical layout, launcher, manual install/update/rollback](../packaging/h700/README.md) входят в проверенный payload. Использовать отдельный physical `.metroid-prime-unbound-h700` рядом с Ports entry; сохранять собственные user/cache между запусками. Template `DISC=''` намеренно не запускает игру до приватной настройки одного literal absolute readable disc path. Не искать старые settings/cards и не менять firmware libraries.
 
 Пакет — **private local RC, не разрешение public distribution**. `licenses/game-coverage.json` сохраняет шесть unresolved групп primary grant/revision evidence; отсутствующие grants не заменены портовой MIT. Нет игровых ресурсов или личных данных.
 
-Пользователь подтвердил выбор: **GameCube USA1.00, ISO уже на приставке**, приставка свободна. Локальная подготовка GM-17 завершена; actual image metadata/path ещё не читались. Существующий ISO не переносим/не изменяем, private absolute path уточняем перед запуском в отдельно разрешённом preflight и не пишем в Git.
+Пользователь подтвердил выбор: **GameCube USA1.00, ISO уже на приставке**, приставка свободна. В разрешённом preflight read-only header32bytes подтвердил GM8E01/disc0/revision0 и GameCube magic; размер1459978240bytes. Full ISO hash не измерялся; образ не переносился/не изменялся, private absolute path в Git не записан.
 
 Маршрут окна A: **New Game → intro → первая управляемая площадка Frigate Orpheon / Exterior Docking Hangar**, движение, прицеливание и стрельба; затем **PortMenu → Game → Exit game → Exit**, actual child exit и возврат в Ports.
 
-Следующее действие требует отдельного явного разрешения A до20мин active time: SSH preflight/transfer выбранного RC3, отдельная physical установка по existing layout, один no-init `--version` для loader check и один ручной запуск игры из Ports со штатным log copier. Агент наблюдает логи/имеющиеся RAM diagnostics, пользователь подтверждает physical graphics/pad/audio. Не трогаем старый порт/данные/ISO/firmware и не применяем kill/reset/retry при зависании. Никаких SSH/device действий до permission. Сведения о свободной приставке повторно проверяются только как необходимый session-safety preflight, не новый inventory.
+Пользователь явно разрешил A до20мин active time: SSH preflight/transfer выбранного RC3, отдельная установка, один no-init `--version` и один ручной запуск из Ports с наблюдением логов/RAM. Это разрешение использовано; нового approval на уже выполненные действия не требуется. После failure повторный запуск, kill/reset/reboot не разрешены автоматически. Старый порт/данные/ISO/firmware не менялись.
 
 A проверяет физические graphics/HUD/fonts/orientation, встроенный pad, слышимые movie/music/SFX, actual disc/nod path и normal Exit; exit0/CPU tests не заменяют пользовательское подтверждение. Station route требуется к B, late Thermal/X-ray scenes — перед C, не перед A. Actual memory sampled96MiB headroom остаётся runtime gate, не измеренной гарантией.
 
+## GM-18 / A — FAIL, процесс удерживается в fail-stop
+
+- Изолированная установка RC3 опубликована отдельной записью `Metroid Prime Unbound`;102 package/manifest/checksum files совпали. Wrapper настроен одним literal private disc path, syntax/hash checks PASS. Перед первым запуском собственные user/cache отсутствовали.
+- Единственный разрешённый no-init `--version` вернул0 и `0.46.0`. Один full game process запущен вручную пользователем через Ports, не агентом по SSH. Лог подтверждает Mali-G31/OpenGLES, native640×480, validation/robustness ON, disc USA1.00 и распознанный `muOS-Keys`.
+- Пользователь подтвердил запуск и слышимый звук, затем тормоза и предполагаемое зависание. Ранний gameplay/move/aim/fire, physical HUD/colors/orientation и pad ещё не подтверждены; station save/load не проверялись.
+- Один ранний интервал240frames:14,3FPS, worst310,2ms; отдельные draw stalls280–326ms и pipeline compilation349–496ms. Это baseline отдельных интервалов, не измерение устойчивого gameplay FPS и не установленная причина отказа.
+- Наблюдаемая последовательность: `game failure=1` на `loop: no BeginScene, before loader continuation`, `FIFO downstream wait failed`, root terminal owner retirement, `Dawn release incomplete: imports, contexts or current bindings remain`, затем `normal exit fail-stop: status=3 stage=12 (unknown ownership)`. Watchdog сообщает отсутствие кадров60,1s на frame1024. Эти сообщения не устанавливают первопричину; watchdog stage labels не доказывают, что поток всё ещё выполняет старый UpdateTicks/queue submit.
+- Actual child жив (sleeping), install lock удерживается. Normal Exit/возврат в Ports не достигнуты. Никаких signals/kill/reset/retry, новых игровых процессов, очистки lock/log/user/cache или исправлений production code не выполнялось.
+- Последний logged sampled minimum MemAvailable357456KiB (~349MiB), выше96MiB; RSS high-water в process snapshot613096KiB. После частичного teardown MemAvailable598296KiB (~584MiB). В полученном логе нет признака OOM; полную причину отказа это не исключает.
+- Все5 baseline firmware hashes совпали до установки, после no-init и после failure при ещё живом процессе. Это не post-exit verification: actual exit пока отсутствует.
+
+Активное окно A остановлено с FAIL. Дальше — локальная минимальная диагностика конкретного failure path; принудительное освобождение устройства и любой повторный device run требуют отдельного разрешения. B/C pending, перенос не принят.
+
 ## Evidence на локальном диске
 
-Оба completed outputs сохраняют `source.json`, `input-manifest.json`, environment/packages/provider/ELF records, command logs, package audit/notices/manifest/SHA256SUMS и `package-result.json`. Выбранный archive и comparison report — в `build/h700-game-rc3/`. Большие artifacts/raw logs в Git не добавлены. Текущий краткий статус — [H700_PROGRESS.md](H700_PROGRESS.md).
+Оба completed outputs сохраняют `source.json`, `input-manifest.json`, environment/packages/provider/ELF records, command logs, package audit/notices/manifest/SHA256SUMS и `package-result.json`. Выбранный archive и comparison report — в `build/h700-game-rc3/`. Большие artifacts/raw logs в Git не добавлены. Device evidence A, raw logs и приватные transport/session records — только ignored `build/h700-game-a-rc3/`; `window-a-result.json` фиксирует FAIL и удержанный процесс. Текущий краткий статус — [H700_PROGRESS.md](H700_PROGRESS.md).
