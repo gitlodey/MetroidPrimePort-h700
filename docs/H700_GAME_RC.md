@@ -95,7 +95,23 @@ A проверяет физические graphics/HUD/fonts/orientation, вст
 
 Добавлен только failure-path output: однократный уже latched first_error перед draining, разные причины EGL observation failure с counters и summary rejected Dawn-release proof (trustworthy/events/live contexts/Dawn bindings/imports). Нет нового logging protocol, изменения renderer/scheduler/ownership, увеличения лимитов, обхода certification, retry или ослабления fail-stop.
 
-Full incremental game compile/link,44/44 scoped presentation/lifecycle/no-init CTest,54/54 complete render/lifecycle tests и non-H700 `aurora_core` compile PASS. Source regression проверяет wiring новой диагностики; CPU PASS не воспроизводит зависание Mali. Independent read-only diff review blockers не нашёл. Evidence — existing `build/h700-game-gm03/gm18-diagnostics-*` и non-H700 output. Эта правка требует нового artifact/hash для следующего разрешённого запуска; прежний RC3 и его FAIL неизменны.
+Full incremental game compile/link,44/44 scoped presentation/lifecycle/no-init CTest,54/54 complete render/lifecycle tests и non-H700 `aurora_core` compile PASS. Source regression проверяет wiring новой диагностики; CPU PASS не воспроизводит зависание Mali. Independent read-only diff review blockers не нашёл. Evidence — existing `build/h700-game-gm03/gm18-diagnostics-*` и non-H700 output. Прежний RC3 и его FAIL неизменны. Новый diagnostic artifact подготовлен ниже; на устройство он не переносился.
+
+### RC4 diagnostics — LOCAL package PASS, device permission pending
+
+После diagnostic commit/push `cb06a13e868ae705ef5aab29fabe3e62bf1a6ab4` выполнен существующий fresh recipe, без смены image/14inputs/backend/профиля:
+
+```sh
+python3 -B tools/h700_game/build.py --package --output build/h700-game-rc4-diagnostics --jobs 2
+```
+
+- Fresh configure18,169s, full compile/link558,337s;126/126scoped CPU/no-init CTest,269/269FIFO,39/39shared +34/34game helpers PASS. Staged ABI/provider/notices/content/hash/archive/no-init gates PASS.
+- Source3344files, dirty-source list пуст; source SHA256 `f9f0742f5827573e2a29854ffcd7770a746df4522d04cc5174baa23ec60c04b7`.
+- Archive `build/h700-game-rc4-diagnostics/h700-game-rc.tar.gz`,77463802bytes, SHA256 `7308f9a98ba41a4e08405b8073666b38eecc6f614e135740784fdba65e74a64c`.
+- Executable SHA256 `bb4e95c4ab11f5398bed03d74a2d70b1fa554eae47516be261025605500ce61b`; SDL тот же `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b`.
+- Это диагностический кандидат, **не исправление зависания, не device PASS и не public distribution clearance**. RC3 не перезаписан; новую сборку после gates не меняли.
+
+Следующий минимальный device-шаг отдельно согласуется: до10мин active time, SSH preflight после пользовательской перезагрузки, проверка отсутствия game/copier данной установки, снятие только собственного stale lock при доказанно завершённом процессе, update только payload/с сохранением собственного user/cache, один no-init loader check нового binary и один manual Ports run до того же меню. Ждать повторения отказа либо до5мин наблюдать responsive menu, затем normal Exit; New Game/station/save/reset не включать. Логи/RAM наблюдает агент, пользователь подтверждает экран/звук/реакцию меню. Нет automatic kill/reset/retry; любой hang/unknown останавливает run. Это диагностический повтор failure path, не автоматически A PASS. До явного permission никаких post-reboot SSH/deploy/run не выполнять.
 
 ## Evidence на локальном диске
 
