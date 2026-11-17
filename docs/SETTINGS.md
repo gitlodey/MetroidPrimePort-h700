@@ -87,6 +87,8 @@ unwind owners, retry a backend or automatically kill a save-capable process.
   and waits, **not GPU execution time**. No valid sample is shown as `--`.
   Enabled by default on H700, off elsewhere; an existing saved0 stays off.
   It does not enable GPU profiling or alter the frame cap or simulation rate.
+  It is drawn by the same UI loop, so it also freezes if rendering stops; it is
+  not an independent heartbeat.
 - Settings changed in the F1 overlay (aspect, vsync, render scale, frame limit,
   mouse aim/inversion/sensitivity, audio mutes) are saved to
   `port_settings.ini` in the user folder (`user/` beside the executable, see above) and restored on the next launch. The System page shows the

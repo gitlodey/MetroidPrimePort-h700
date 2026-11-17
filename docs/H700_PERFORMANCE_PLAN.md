@@ -70,10 +70,10 @@ Read-only preflight: установленный executable и configured entry h
 
 PERF-01 capture уже собрал60samples/180s без критических errors; scene confirmation и normal Exit остаются pending. Предварительно один mali-utility-wo занял23,266% total CPU capacity (4CPUs), main5,767%, render1,030%, FIFO0,727% на отрезке31,23–178,04s; это CPU work/wchan samples, не GPU time и не доказанная compiler role. На этом позднем отрезке0slow-compile warnings/0new-miss log lines. Эти данные не являются разрешением на изменение driver/render path.
 
-### FPS-01 — LOCAL PASS, package готовится
+### FPS-01 — LOCAL PASS, RC6 package готов
 
 Counter реализован в existing ImGui frame: NoInputs/NoNav/NoFocus/NoSavedSettings, вызов вне закрытого PortMenu guard. DefaultON на H700/OFF elsewhere, persisted show_fps_counter=0 уважается; checkbox и search-index на Video/Frame rate. Нет новых GPU queries, timers, threads или render-owner APIs. При invalid/nonpositive FPS выводится `--`; средний ms interval не объявляется GPU duration.
 
 Full incremental game compile/link PASS;7/7 relevant CPU/no-init/settings/profile/install/index CTest PASS, actual H700 defaults/overrides28keys PASS. Persistence fixture выполняет actual write/read в разных процессах, проверяет show_fps_counter=0 и отсутствие перезаписи old/home sentinels. Пять изменённых platform UI TUs компилируются без AURORA_H700; independent read-only review direct caller/lifecycle/units/input flags/default/load-save blockers не нашёл. Source/CPU checks не заменяют physical visibility/pad check. Evidence — ignored `build/h700-game-gm03/fps01-*`.
 
-Изменённый RC6 получает отдельный immutable package/hash; RC5 не пересобирается и не обновляется на устройстве. Текущий device process/lock по последнему snapshot живы; production UI feature local approval не означает permission на kill/update/run.
+RC6 fresh package готов:127/127CPU +269/269FIFO +39/39shared +34/34game helpers и package gates PASS. Archive77463546bytes, SHA256 `b8e41d84091e8728ca4b2035305549340116cd8a9e69d637e9064e4ef0bf4f1d`; [полные hashes/provenance](H700_GAME_RC.md#rc6-fps-counter--local-package-pass-не-установлен). Это не performance fix/device PASS; RC5 не пересобирается и не обновляется на устройстве. Текущий device process/lock по последнему snapshot живы; production UI feature local approval не означает permission на kill/update/run.

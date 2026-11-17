@@ -169,6 +169,26 @@ python3 -B tools/h700_game/build.py --package --output build/h700-game-rc5-trace
 
 Further acceptance route остановлен: user просит ближайшим приоритетом performance/отзывчивость, а не продолжение B/C в неиграбельном состоянии. Production optimization/изменения safeguards не начаты; первая итерация требует конкретного согласованного плана. Existing evidence/вопрос разделения steady draw и pipeline/cache/driver stalls записаны в [OPT-006](H700_OPTIMIZATION_NOTES.md#opt-006--rc5-неиграбельная-отзывчивость-drawcompile-stalls). Штатный Exit не подтверждён. Затем пользователь отдельно разрешил завершение текущего RC5: PID/cmdline/starttime исходного run сверены, **один SIGTERM** послан с повторной starttime guard непосредственно перед kill. Actual game/copier/launcher exit и отсутствие lock подтверждены; lock снял launcher, вручную он не удалялся. Frontend muOS активен, MemAvailable823936KiB (~805MiB); все5 firmware baseline hashes совпали. Final log486626bytes сохранён после copier exit, matching backend error/fail-stop lines0. SIGKILL/reboot/эскалации/retry не выполнялись. Это аварийное завершение по разрешению, не PASS normal Exit/GPU retirement или CARD integrity. Settings/cards/cache не очищались. Evidence — `build/h700-game-a3-rc5/usability-summary.json`, `authorized-termination.json`, `termination-result.json`, `final-game.log`.
 
+## RC6 FPS counter — LOCAL package PASS, не установлен
+
+Пользователь отдельно одобрил **FPS-01**: небольшой постоянный FPS/ms readout поверх игры с выключателем. Реализация использует main-owned existing Presented sample, корректно показывает и<1FPS, ms=1000/FPS — средний wall interval, не GPU time. Invalid/nonpositive sample — `--`. Top-right ImGui window не принимает input/nav/focus, работает при закрытом PortMenu. **Video→Frame rate→Show FPS counter**, INI `show_fps_counter`; defaultON только H700/OFF других платформ, saved0 сохраняется. Новых GPU queries/timers/threads или изменений caps/simulation/graphics guards нет. Это **не ускорение**.
+
+Source/tests/docs commit `ec50b7c3c4241c0057101a3cab3c11e7f6929850`. Full incremental game link,7/7 relevant settings/profile/install/index/no-init CTest,28H700 defaults/override keys и5changed non-H700 platform UI TUs compile PASS; independent review без blockers. Два отдельных fixture-процесса реально сохраняют/загружают show_fps_counter=0, не меняя соседние sentinels.
+
+Fresh recipe без смены image/14inputs/backend/profile:
+
+```sh
+python3 -B tools/h700_game/build.py --package --output build/h700-game-rc6-fps-counter --jobs 2
+```
+
+- Configure19,326s/full compile-link558,579s;127/127CPU/no-init CTest,269/269FIFO,39/39shared +34/34game helpers и staged ABI/provider/notices/content/hash/archive gates PASS.
+- Source3344files, dirty list пуст; source SHA256 `a1fc0b826c30449d81a9c5b2e4e53de1e0ba62e8ff5148b7f0fee52df4272713`.
+- Archive `build/h700-game-rc6-fps-counter/h700-game-rc.tar.gz`,77463546bytes, SHA256 `b8e41d84091e8728ca4b2035305549340116cd8a9e69d637e9064e4ef0bf4f1d`.
+- Executable SHA256 `5e749cd73d7d87b68a6d1cbf2e6cf31ce48d8697a4787bc175ec2bf3e91f1534`; matched SDL тот же `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b`.
+- Local private RC, не public distribution clearance/device PASS. После gates RC6 не менялся; RC5 и его outputs сохранены.
+
+PERF-01 на RC5 отдельно собрал60samples/180s без critical errors; scene/normal Exit confirmation pending. По последнему device snapshot исходный RC5/game/copier/launcher живы и lock удерживается. **FPS-01 local approval не разрешает kill/deploy/новый run**: RC6 не устанавливался, текущая игра/INI/cache/cards не менялись. Перед будущим update необходимы permission и actual child exit/reap/copier drain; замена только payload с сохранением own data. Physical readability/pad independence/counter toggle — pending одного будущего отдельно согласованного run. Для performance before/after сохранять одинаковое состояние counter.
+
 ## Evidence на локальном диске
 
 Оба completed outputs сохраняют `source.json`, `input-manifest.json`, environment/packages/provider/ELF records, command logs, package audit/notices/manifest/SHA256SUMS и `package-result.json`. Выбранный archive и comparison report — в `build/h700-game-rc3/`. Большие artifacts/raw logs в Git не добавлены. Device evidence A, raw logs и приватные transport/session records — только ignored `build/h700-game-a-rc3/`; `window-a-result.json` фиксирует FAIL и удержанный процесс. Текущий краткий статус — [H700_PROGRESS.md](H700_PROGRESS.md).
