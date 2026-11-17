@@ -20,7 +20,8 @@
 - **GM-09 LOCAL PASS:** explicit CpuQuiescent checkpoint до Maps после actual CPU joins, repeat hold/full resume;8/8game +50/50render/lifecycle +262/262FIFO tests и full non-H700 core/GX compile PASS. Это не GPU release. Commit/push: `5a83894e5`.
 - **GM-10 LOCAL PASS:** root-only typed transport после exact CPU checkpoint, оба owners вне boot+loop try; full game build,9/9CPU/no-init CTest и non-H700 game-main compile PASS. Typed catch пока удерживает owners; actual terminal cleanup/return — GM-11b, deep throw не подключён. Commit/push: `3b806060b`.
 - **Split GM-11 утверждён 2026-11-17:** GM-11a actual read-only guards/query seams, GM-11b milestone cleanup/return wiring. D1…D11/архитектура/дальнейший план не меняются. Остановка снята; GM-10 завершён и отправлен.
-- **GM-11a LOCAL PASS:** actual read-only room/resident guards, inert placeholders разрешены, pending/resources/обе resident registries/mismatch запрещены; full game build,10/10CPU/no-init +269/269FIFO +51/51render/lifecycle tests и full non-H700 core/GX compile PASS. Guards пока не подключены к уничтожению; GPU/device не запускались.
+- **GM-11a LOCAL PASS:** actual read-only room/resident guards, inert placeholders разрешены, pending/resources/обе resident registries/mismatch запрещены; full game build,10/10CPU/no-init +269/269FIFO +51/51render/lifecycle tests и full non-H700 core/GX compile PASS. Guards пока не подключены к уничтожению; GPU/device не запускались. Commit/push: `591f0ff75`.
+- **GM-11b STOP до согласования:** read-only audit выявил pending-DVD lifetime: `CWorld`/`CDummyWorld` освобождают destination раньше request drain; dummy world применяется при memory-card init. FIFO/render/compiler checkpoint этого не покрывает. Actual cleanup не включён; нужен узкий дополнительный шаг request-before-buffer retirement/guard с regression tests. [Подробности и варианты](H700_GAME_PLAN.md#gm-11b--stop-до-изменения-плана-pending-dvd-destination-lifetime).
 
 ## Что подтверждено
 
@@ -38,7 +39,7 @@
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. GM-10 отправлен; GM-11a проверен, после его separate commit/push выполняем утверждённый GM-11b milestone cleanup/return. Deep graphics/skinning throw пока не подключён, GPU/device не запускались. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. GM-10 и GM-11a отправлены. Перед actual GM-11b cleanup обнаружен новый retail pending-DVD lifetime blocker: до согласования его узкого исправления/guard перенос остановлен по workflow. Typed catch по-прежнему удерживает owners, deep graphics/skinning throw не подключён, GPU/device не запускались. Нужен approval изменения объёма GM-11b, не повторное утверждение уже завершённых шагов. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 
