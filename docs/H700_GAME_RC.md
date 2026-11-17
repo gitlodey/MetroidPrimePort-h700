@@ -1,6 +1,6 @@
 # H700 — игровой RC и результат повторной fresh build
 
-**Локальные packages PASS; GM-18 / A и диагностический A2 FAIL по runtime. В RC4 установлена причина: исчерпание65536-event EGL trace; локальный fix проверен, device-повтор ещё не разрешён.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
+**Локальные packages PASS; GM-18 / A и диагностический A2 FAIL по runtime. В RC4 установлена причина: исчерпание65536-event EGL trace; локальный fix и RC5 package проверены, device-повтор ещё не разрешён.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
 
 ## Выбранный неизменяемый payload
 
@@ -133,7 +133,23 @@ Raw evidence и `window-a2-result.json` — ignored `build/h700-game-a2-rc4/`. �
 
 **Реальные EGL-result/display/context checks, таблица всех contexts, текущие bindings, destroy_requested/deferred retirement, trustworthy и release/export/fail-stop guards сохранены без gating.** Они выполняются после возврата из append_event и не используют events для proof. Diagnostic IG history/cap65536/exhaustion failure остаются прежними. Не вводились ring/history framework, увеличение cap, fake completion/release, новый backend/dependency или изменение ownership policy.
 
-Full incremental game compile/link,45/45 scoped presentation/lifecycle/no-init CTest и55/55complete render/lifecycle tests PASS. Новый source regression связывает opt-in только с history и проверяет неизменённый live ledger/retirement proof; это не выполнение EGL на Mali. Independent read-only diff/caller/IG-lifetime review blockers не нашёл. Local evidence — `build/h700-game-gm03/gm18-trace-fix-*`. Новый пакет/hash и отдельно разрешённый device run необходимы; RC4 не изменён на приставке и остаётся в fail-stop.
+Full incremental game compile/link,45/45 scoped presentation/lifecycle/no-init CTest и55/55complete render/lifecycle tests PASS. Новый source regression связывает opt-in только с history и проверяет неизменённый live ledger/retirement proof; это не выполнение EGL на Mali. Independent read-only diff/caller/IG-lifetime review blockers не нашёл. Local evidence — `build/h700-game-gm03/gm18-trace-fix-*`. RC5 package/hash подготовлен ниже; отдельно разрешённый device run необходим. RC4 не изменён на приставке и по последнему snapshot остаётся в fail-stop.
+
+### RC5 trace fix — LOCAL package PASS, device permission pending
+
+После fix commit/push `c6d7467523beb7edb55903cbfda320389ef52682` выполнен тот же existing fresh recipe в новом output, без смены image/14inputs/backend/retail profile:
+
+```sh
+python3 -B tools/h700_game/build.py --package --output build/h700-game-rc5-trace-fix --jobs 2
+```
+
+- Fresh configure18,983s/full compile-link556,183s;127/127scoped CPU/no-init CTest,269/269FIFO,39/39shared +34/34game helpers и staged ABI/provider/notices/content/hash/archive/no-init gates PASS.
+- Source3344files, dirty-source list пуст; source SHA256 `b5e5e128f1860ae047458ff93fa729ff183b6ad50c9fcc529b62c1888164359b`.
+- Archive `build/h700-game-rc5-trace-fix/h700-game-rc.tar.gz`,77464193bytes; SHA256 `fd024470098b5f3556a02f3107a7eebdd249b7b28cf21ee889e378fac05f2240`.
+- Executable SHA256 `680988304655cc0cd59137d0645df96b67bd98817891e00a4e97739037aba9de`; matched SDL неизменен: `8df6e362b508d44cad5a253b4f7533ec4d8a976a8e49f49320d2baa42846a13b`.
+- Это кандидат с исправлением доказанного RC4 trace defect, **не device PASS, не обещание FPS и не public distribution clearance**. RC3/RC4 outputs сохранены, RC5 после package gates не менялся.
+
+Следующий предлагаемый scope A3 требует нового явного permission: до20мин active time; подтвердить identity/state удержанного RC4 и один раз послать **SIGTERM только его game child**, без SIGKILL/эскалации/reboot. Если actual child exit/reap не подтверждён — остановиться без update. После exit/учёта copier drain сохранить failure log, обновить только payload до RC5 с сохранением own user/cache/entry, один no-init loader check. Затем один ручной Ports process: меню → New Game → ранняя Frigate Orpheon/Exterior Docking Hangar → move/aim/fire → PortMenu Game→Exit game→Exit, actual exit/log/RAM/firmware check. Никаких station save/load/reset, новых запусков или automatic kill/reset/retry при новом отказе. Initial SIGTERM — только отдельно разрешённое recovery прежнего RC4, не permission прерывать будущий run. До этого permission RC4/lock не трогать и RC5 не устанавливать.
 
 ## Evidence на локальном диске
 
