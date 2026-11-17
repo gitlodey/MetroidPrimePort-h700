@@ -27,7 +27,10 @@ public:
 #ifdef TARGET_PC
   static void ScheduleHostDeletion(const EWhichFrame thisFrame, void* victim);
 #endif
+  // No graphics commands. H700 owner cleanup must first prove its FIFO/render/callback
+  // tail complete via CGraphics::PortGameOwnerBoundary(), with game producers stopped.
   static void FlushAllAllocations();
+  // Issues GXDrawDone: a FIFO barrier only, not render/callback or GPU completion.
   static void StallAndFlushAllAllocations();
   const CFrameDelayedKiller::Stats& GetStats() {
     return mUnusedStats;

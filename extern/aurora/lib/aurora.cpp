@@ -1021,6 +1021,25 @@ bool h700::initialization_ready() noexcept {
   return snapshot.phase == h700::PresentationPhase::Running && !snapshot.first_error &&
          gfx::render_worker::wait_healthy();
 }
+bool h700::game_work_healthy() noexcept {
+  if (g_lifecycleMain != std::this_thread::get_id() || g_lifecyclePolling ||
+      g_generationLifecycle.stage() != h700::ShutdownStage::Running || g_generationLifecycle.failed() ||
+      !g_gfxStarted || !g_fifoStarted || !g_uiStarted || gx::fifo::failed()) return false;
+  const auto state = h700::presentation_state();
+  if (!state) return false;
+  const auto snapshot = state->snapshot();
+  return snapshot.phase == h700::PresentationPhase::Running && !snapshot.first_error &&
+         gfx::render_worker::root_admission_open();
+}
+bool h700::synchronize_game_work() noexcept {
+  // Never acknowledge an unfinished recorder as a completed game-owner boundary.
+  if (!h700::game_work_healthy() || g_nativeFrame || gx::fifo::frame_active()) return false;
+  if (!gx::fifo::drain() || !h700::game_work_healthy()) return false;
+  // The ordered worker marker follows callback return AND release of the preceding job's
+  // captures. Queue-empty/GXDrawDone alone do not provide this ownership evidence.
+  return gfx::render_worker::synchronize() == gfx::render_worker::Outcome::Completed &&
+         h700::game_work_healthy();
+}
 void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
 h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }
 #endif

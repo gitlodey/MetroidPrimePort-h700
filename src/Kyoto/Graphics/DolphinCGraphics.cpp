@@ -2,6 +2,10 @@
 
 // Port: Aurora brackets a presented frame around the game's scene.
 #include <aurora/aurora.h>
+#ifdef AURORA_H700
+#include "../../../extern/aurora/lib/h700/lifecycle.hpp"
+#include "port_h700_game_boundary.h"
+#endif
 
 #include "port_debug.h"
 #include <algorithm>
@@ -875,6 +879,14 @@ void CGraphics::VideoPostCallback(u32 retraceCount) {
     }
   }
 }
+
+#ifdef AURORA_H700
+bool CGraphics::PortGameOwnerBoundary() {
+  // Do not use EndScene: its GX/UI commands are not part of finishing the open recorder.
+  return PortH700::GameOwnerBoundary(s_auroraFrameOpen, aurora::h700::game_work_healthy,
+                                    AuroraFrameEnd, aurora::h700::synchronize_game_work);
+}
+#endif
 
 void CGraphics::EndScene() {
   if (!s_auroraFrameOpen) {

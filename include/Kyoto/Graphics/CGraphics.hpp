@@ -361,6 +361,12 @@ public:
   static void SetIsBeginSceneClearFb(bool);
   static bool BeginScene();
   static void EndScene();
+#ifdef AURORA_H700
+  // Main safe-point, ticks/draw stopped, no game reentry. Finish an open Aurora frame once,
+  // then drain FIFO/render/callback captures without closing roots or waiting for GPU idle.
+  // False requires retaining owners; repeat after destructor commands before delayed frees.
+  static bool PortGameOwnerBoundary();
+#endif
   static void SwapBuffers();
   static void SetTevOp(ERglTevStage stage, const CTevCombiners::CTevPass& pass);
   static void StreamBegin(ERglPrimitive primitive);

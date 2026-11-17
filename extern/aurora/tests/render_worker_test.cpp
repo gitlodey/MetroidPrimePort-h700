@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -77,6 +78,80 @@ TEST_F(RenderWorkerTest, SyncWaitsForPriorWork) {
   EXPECT_EQ(order[0], 1);
   EXPECT_EQ(order[1], 2);
   EXPECT_TRUE(aurora::gfx::render_worker::is_idle());
+}
+
+TEST_F(RenderWorkerTest, HealthySyncWaitsForAfterSubmitReturnAndCaptureDestruction) {
+  namespace rw = aurora::gfx::render_worker;
+  std::atomic_bool allowCallbackReturn{false}, callbackReturned{false};
+  std::atomic_bool captureDestructionStarted{false}, allowCaptureDestruction{false}, captureDestroyed{false};
+  std::promise<void> callbackEntered;
+  std::atomic_bool nextFrameRan{false};
+  int callbackWaits = 0, captureWaits = 0;
+  struct Capture {
+    std::atomic_bool& started;
+    std::atomic_bool& allowed;
+    std::atomic_bool& destroyed;
+    ~Capture() {
+      started.store(true, std::memory_order_release);
+      while (!allowed.load(std::memory_order_acquire)) std::this_thread::yield();
+      destroyed.store(true, std::memory_order_release);
+    }
+  };
+  auto payload = std::shared_ptr<Capture>{new Capture{captureDestructionStarted, allowCaptureDestruction,
+                                                    captureDestroyed}};
+  std::weak_ptr<Capture> witness = payload;
+  struct Unblock {
+    std::atomic_bool& callback;
+    std::atomic_bool& capture;
+    ~Unblock() {
+      callback.store(true, std::memory_order_release);
+      capture.store(true, std::memory_order_release);
+      // The root-open assertion belongs to the healthy boundary, not shutdown.
+      aurora::gfx::render_worker::set_wait_hooks({});
+      aurora::gfx::render_worker::shutdown();
+    }
+  } unblock{allowCallbackReturn, allowCaptureDestruction};
+  rw::set_wait_hooks({.main = std::this_thread::get_id(), .healthy = [] { return true; }, .progress = [&] {
+    EXPECT_TRUE(rw::root_admission_open());
+    if (!allowCallbackReturn.load(std::memory_order_acquire)) {
+      EXPECT_FALSE(callbackReturned.load(std::memory_order_acquire));
+      EXPECT_FALSE(witness.expired());
+      if (++callbackWaits == 2) allowCallbackReturn.store(true, std::memory_order_release);
+    } else if (captureDestructionStarted.load(std::memory_order_acquire) &&
+               !allowCaptureDestruction.load(std::memory_order_acquire)) {
+      EXPECT_TRUE(callbackReturned.load(std::memory_order_acquire));
+      EXPECT_FALSE(captureDestroyed.load(std::memory_order_acquire));
+      if (++captureWaits == 2) allowCaptureDestruction.store(true, std::memory_order_release);
+    }
+  }});
+  rw::initialize();
+  // Use the actual end-frame worker path. As in Aurora, post-submit callbacks are owned
+  // by its work item; even a returned callback may retain game-facing captures until reset.
+  std::vector<rw::WorkCallback> afterSubmitCallbacks;
+  afterSubmitCallbacks.emplace_back([&, payload] {
+    callbackEntered.set_value();
+    while (!allowCallbackReturn.load(std::memory_order_acquire)) std::this_thread::yield();
+    EXPECT_FALSE(witness.expired());
+    callbackReturned.store(true, std::memory_order_release);
+  });
+  ASSERT_EQ(rw::enqueue_end_frame(1, [callbacks = std::move(afterSubmitCallbacks)] {
+    for (const auto& callback : callbacks) callback();
+  }), rw::Outcome::Completed);
+  ASSERT_EQ(callbackEntered.get_future().wait_for(2s), std::future_status::ready);
+  payload.reset();
+  EXPECT_FALSE(witness.expired());
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Completed);
+  EXPECT_EQ(callbackWaits, 2);
+  EXPECT_EQ(captureWaits, 2);
+  EXPECT_TRUE(callbackReturned.load(std::memory_order_acquire));
+  EXPECT_TRUE(captureDestroyed.load(std::memory_order_acquire));
+  EXPECT_TRUE(witness.expired());
+  EXPECT_TRUE(rw::root_admission_open());
+  // A healthy owner boundary is reusable; it does not drain roots or join the worker.
+  EXPECT_EQ(rw::enqueue_begin_frame(2, [&] { nextFrameRan.store(true, std::memory_order_release); }),
+            rw::Outcome::Completed);
+  EXPECT_EQ(rw::synchronize(), rw::Outcome::Completed);
+  EXPECT_TRUE(nextFrameRan.load(std::memory_order_acquire));
 }
 
 TEST_F(RenderWorkerTest, ShutdownCompletesQueuedWork) {

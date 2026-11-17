@@ -433,4 +433,14 @@ Actual `AuroraInfo` больше не игнорируется в H700 main: Ope
 
 Верификация: incremental полный H700 game/core/GX compile/link и **7/7 CPU/no-init CTest PASS** (добавлен `port_h700_init_tests`). Injected policy cases: actual-info acceptance, partial/no-owner init outcomes, pending→Released/FailedReleased, Unknown, timeout с неизменным Pending, exactly-once request/no second cleanup. Это не исполнение настоящего GPU partial-init failure. В отдельном fresh output `build/h700-game-gm05-nonh700` выполнен **полный compile `aurora_core` + `aurora_gx` с AURORA_H700=OFF**, не выборочные TU. Image/pins не менялись, GPU/device не запускались; independent lifecycle review без blockers.
 
-Actual commands/timeouts сохранены в ignored `build/h700-game-gm03/gm05-*` и отдельном non-H700 output. Следующая GM-06 — healthy game-owner barrier; дополнительное согласование локальных итераций не требуется.
+Actual commands/timeouts сохранены в ignored `build/h700-game-gm03/gm05-*` и отдельном non-H700 output. GM-05 commit/push: `e5fdeac74`; дополнительное согласование локальных итераций не требуется.
+
+### GM-06 — LOCAL PASS: healthy game-owner boundary
+
+Добавлен H700-only `CGraphics::PortGameOwnerBoundary()`: проверка ongoing health → окончание открытого frame ровно один раз через существующий latch/`AuroraFrameEnd` → повторная health → actual status-bearing FIFO drain с unpublished tail → ordered render synchronize Completed → финальная health. Полный `EndScene()` с его GX/UI actions не вызывается. Новые Aurora `game_work_healthy`/`synchronize_game_work` main-only, не используют startup-only `g_initialFrame`; unfinished recording и terminal/rejected outcome не считаются completion.
+
+Root admission не закрывается; compiler joins, shutdown, universal GPU-idle/native-fence retirement не добавлены. `false` требует сохранить owners. Existing no-command `CFrameDelayedKiller::FlushAllAllocations` документирован как flush только после доказанной CPU/destructor-tail boundary; нового дублирующего free API нет. Reset/exit wiring ещё впереди.
+
+Проверки: full H700 game/core/GX build; **8/8 game CPU/no-init CTest,45/45 render/lifecycle/wait tests,262/262 FIFO tests PASS**. Новый actual worker regression удерживает возврат after-submit-подобного callback и отдельно destruction capture; sync должен дождаться обоих, roots остаются открыты и следующая работа принимается. Первый run выявил test-cleanup assertion: healthy hook проверял roots уже в shutdown. Hook снимается только после тестовых задержек в RAII cleanup; проверка открытого admission в boundary не удалена. Initial/recheck logs сохранены в ignored `gm06-*`. Полный non-H700 core+GX compile PASS; GPU/device не запускались. Independent lifecycle review production blockers не нашёл.
+
+Следующая GM-07 — подключение этой границы к reset owners. Локальные шаги продолжаются без нового approval.

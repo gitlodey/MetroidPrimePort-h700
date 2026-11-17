@@ -53,6 +53,16 @@ private:
 // a firmware driver stall inside such a call cannot be preempted by the caller's deadline.
 // Main-only startup query; no event dispatch or GPU calls. Used before game owners exist.
 bool initialization_ready() noexcept;
+
+// Main safe-point only, with game ticks/draw stopped and no game reentry during progress.
+// Ongoing health does not depend on the startup-only initial-frame flag.
+bool game_work_healthy() noexcept;
+// Caller must first finish any open Aurora frame exactly once. Includes unpublished FIFO
+// bytes, render work, after-submit callback return and destruction of their CPU captures.
+// True protects game-owned source buffers, NOT GPU completion/native retirement. Leaves
+// root admission/backend/compiler live. False never authorizes owner destruction or frees.
+bool synchronize_game_work() noexcept;
+
 void request_generation_shutdown() noexcept;
 ShutdownResult poll_generation_shutdown() noexcept;
 #endif
