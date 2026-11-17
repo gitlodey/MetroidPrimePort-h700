@@ -361,7 +361,7 @@ Reset и normal exit выполняются на main safe-point:
 
 Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
 
-**Текущий статус:** GM-01…GM-16 LOCAL PASS; build/reproducibility часть GM-17 PASS, user disc/container choice PENDING. Необходимый остаток [редакции3](H700_GAME_REMAINING_PLAN.md) утверждён; результаты и история записаны там. Две fresh package build прошли, выбран [RC3 с immutable hash](H700_GAME_RC.md). Далее — подтверждение legal GameCube release/ранней сцены и отдельное permission на A. Редакция2 не действует. Device actions не разрешены общим approval.
+**Текущий статус:** GM-01…GM-17 LOCAL PASS; user выбрал GameCube USA1.00/ISO уже на свободной приставке (actual path/metadata ещё не читались). Необходимый остаток [редакции3](H700_GAME_REMAINING_PLAN.md) утверждён; результаты и история записаны там. Две fresh package build прошли, выбран [RC3 с immutable hash](H700_GAME_RC.md). Ранний маршрут A — New Game→Frigate Orpheon/Exterior Docking Hangar→move/aim/fire→normal Exit. Далее — отдельное permission на SSH/deploy/loader check и один manual game run окна A. Редакция2 не действует. Device actions не разрешены общим approval.
 
 ## 11. Проверка черновика до утверждения
 

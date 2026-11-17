@@ -1,6 +1,6 @@
 # H700 — игровой RC и результат повторной fresh build
 
-**Локальный package PASS, device acceptance PENDING.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 завершён; build/reproducibility часть GM-17 пройдена. Пользователь ещё должен выбрать legal GameCube release/container; SSH/deploy/run не разрешены. 30 FPS — следующий отдельный этап.
+**Локальный package PASS, device acceptance PENDING.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь выбрал GameCube USA1.00 в ISO и сообщил, что образ уже на приставке, приставка свободна. Это пользовательские сведения, не fresh device verification; SSH/deploy/run ещё не разрешены. 30 FPS — следующий отдельный этап.
 
 ## Выбранный неизменяемый payload
 
@@ -68,11 +68,11 @@ Manifest/SHA256SUMS/archive hashes закономерно различаются
 
 Пакет — **private local RC, не разрешение public distribution**. `licenses/game-coverage.json` сохраняет шесть unresolved групп primary grant/revision evidence; отсутствующие grants не заменены портовой MIT. Нет игровых ресурсов или личных данных.
 
-Чтобы завершить preparation GM-17 и запросить A, нужны:
+Пользователь подтвердил выбор: **GameCube USA1.00, ISO уже на приставке**, приставка свободна. Локальная подготовка GM-17 завершена; actual image metadata/path ещё не читались. Существующий ISO не переносим/не изменяем, private absolute path уточняем перед запуском в отдельно разрешённом preflight и не пишем в Git.
 
-1. Выбранный пользователем legal GameCube release и container; исходный план рекомендует USA1.00, но не требует менять имеющийся образ. Region/revision/container пока **PENDING**, private path в Git не записывается.
-2. Конкретный предлагаемый ранний маршрут: **New Game → intro → первая управляемая площадка Frigate Orpheon / Exterior Docking Hangar**, движение, прицеливание и стрельба; затем **PortMenu → Game → Exit game → Exit**, actual child exit и возврат в Ports. Он должен быть подтверждён для выбранного образа до run.
-3. Отдельное явное разрешение окна A до20мин: выбранный RC/hash, isolated install, необходимые deploy/loader/log observation, отсутствие чужой активной игры. Никаких SSH/device действий до него.
+Маршрут окна A: **New Game → intro → первая управляемая площадка Frigate Orpheon / Exterior Docking Hangar**, движение, прицеливание и стрельба; затем **PortMenu → Game → Exit game → Exit**, actual child exit и возврат в Ports.
+
+Следующее действие требует отдельного явного разрешения A до20мин active time: SSH preflight/transfer выбранного RC3, отдельная physical установка по existing layout, один no-init `--version` для loader check и один ручной запуск игры из Ports со штатным log copier. Агент наблюдает логи/имеющиеся RAM diagnostics, пользователь подтверждает physical graphics/pad/audio. Не трогаем старый порт/данные/ISO/firmware и не применяем kill/reset/retry при зависании. Никаких SSH/device действий до permission. Сведения о свободной приставке повторно проверяются только как необходимый session-safety preflight, не новый inventory.
 
 A проверяет физические graphics/HUD/fonts/orientation, встроенный pad, слышимые movie/music/SFX, actual disc/nod path и normal Exit; exit0/CPU tests не заменяют пользовательское подтверждение. Station route требуется к B, late Thermal/X-ray scenes — перед C, не перед A. Actual memory sampled96MiB headroom остаётся runtime gate, не измеренной гарантией.
 
