@@ -42,6 +42,9 @@
 #include "port_storage_report.h"
 #include "port_gpu_driver.h"
 #include "port_imgui_fonts.h"
+#ifdef AURORA_H700
+#include "port_h700_profile.h"
+#endif
 
 #include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_events.h>
@@ -772,7 +775,9 @@ const char* DefaultTexturesPath() {
 // Vulkan, D3D11 on Windows; Vulkan, OpenGL ES on Linux) as the fallback, so a driver
 // that can't start it still plays.
 AuroraBackend DesiredGraphicsBackend() {
-#if defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
+#if defined(AURORA_H700)
+    return BACKEND_OPENGLES;
+#elif defined(_WIN32) || (defined(__linux__) && !defined(__ANDROID__))
     // The `graphics_backend` setting (F1 > Video > Compatibility, issue #135), read at
     // window creation, so a change needs a restart. Auto keeps asking for nothing in
     // particular. MP_GRAPHICS_BACKEND=<one of Choices()' names> overrides the setting
@@ -817,6 +822,11 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--settings-selftest") == 0) {
         return PortDebug::SettingsSelfTest();
     }
+#ifdef AURORA_H700
+    if (argc == 2 && std::strcmp(argv[1], "--h700-profile-selftest") == 0) {
+        return PortDebug::H700SettingsSelfTest();
+    }
+#endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
         std::printf("Metroid Prime native port %s (%s)\n", MP_BUILD_VERSION, MP_BUILD_REVISION);
         return 0;
@@ -938,6 +948,15 @@ int main(int argc, char** argv) {
         return PortFlaahgraMusic::RunFromCommandLine(argv[2]);
     }
 #endif
+#ifdef AURORA_H700
+    if (const char* name = PortH700::ConflictingOverride(port::EnvString)) {
+        std::fprintf(stderr, "H700 profile: conflicting runtime override %s; no graphics initialized\n", name);
+        return 2;
+    }
+    // The firmware display path is fixed, not SDL's desktop auto-selection.
+    setenv("SDL_VIDEODRIVER", "sdl2", 0);
+    setenv("SDL3SHIM_SDL2_VIDEODRIVER", "mali", 0);
+#endif
     // The file log starts first so it holds everything after it, build id included.
     {
         const bool logFile = port::EnvFlag("MP_LOG_FILE", PortDebug::LogFile());
@@ -1000,7 +1019,11 @@ int main(int argc, char** argv) {
     // arena's pages are touched as the heap fills, and the frame buffers start small and grow.
     // Android takes its device buffers at the full limit up front (aurora, issue #165), so
     // when no enabled mod has room geometry it holds the limits back until one loads (port_mods).
+#ifdef AURORA_H700
+    const bool reserveRoomGeometry = false;
+#else
     const bool reserveRoomGeometry = true;
+#endif
     uint32_t mem1Size = MEM1_DEFAULT_SIZE;
     {
         const int envMb = port::EnvInt("MP_MEM1_MB", -1);
@@ -1063,6 +1086,10 @@ int main(int argc, char** argv) {
             pipelineLazy = true;
             std::strncat(why, ", Android", sizeof(why) - std::strlen(why) - 1);
         }
+#endif
+#ifdef AURORA_H700
+        pipelineLazy = true;
+        std::snprintf(why, sizeof(why), "H700 retail profile");
 #endif
         const char* reason = why;
         if (const char* env = port::EnvString("MP_PIPELINE_LAZY"); env != nullptr && env[0] != '\0') {
@@ -1257,6 +1284,11 @@ int main(int argc, char** argv) {
                                    "The log file in the user folder has the details.",
     };
 
+#ifdef AURORA_H700
+    PortH700::ApplyConfig(config);
+    PortLog::Write("port: H700 allocation/backend policy: OpenGLES, native 640x480, MEM1 24 MiB, "
+                   "frame/storage 1x unpinned, resident 0, lazy pipelines, no seed (profile defaults)\n");
+#endif
 #if defined(__ANDROID__)
     // SDL3 drops touch-derived mouse events by default, and ImGui's SDL3
     // backend only understands mouse events. The touch overlay in Java claims
@@ -1283,7 +1315,7 @@ int main(int argc, char** argv) {
     // /etc/environment does) would otherwise land there, so under Steam a list
     // that allows x11 is narrowed to x11. A list without x11
     // (SDL_VIDEODRIVER=wayland) is still honoured.
-#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__APPLE__)
+#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__APPLE__) && !defined(AURORA_H700)
     {
         const char* requested = SDL_GetHint(SDL_HINT_VIDEO_DRIVER);
         const char* x11 = std::getenv("DISPLAY");
@@ -1352,6 +1384,11 @@ int main(int argc, char** argv) {
         const std::filesystem::path& marker = gles ? glesMarker : glMarker;
         std::error_code ec;
         if (std::filesystem::exists(marker, ec)) {
+#ifdef AURORA_H700
+            PortLog::Write("port: H700 previous OpenGLES initialization was incomplete; "
+                           "refusing AUTO fallback and leaving the marker for diagnosis\n");
+            return 1;
+#else
             if (gles) {
                 PortLog::Write("port: the last start on OpenGL ES did not finish; turning it off\n");
                 PortDebug::SetOpenGles(false);
@@ -1361,8 +1398,11 @@ int main(int argc, char** argv) {
             }
             config.desiredBackend = BACKEND_AUTO;
             std::filesystem::remove(marker, ec);
+#endif
         } else {
+#ifndef AURORA_H700
             std::ofstream(marker) << "1\n";
+#endif
         }
     }
     // A custom Vulkan driver (Turnip) can crash while it starts, just like GL above; the
@@ -1396,11 +1436,27 @@ int main(int argc, char** argv) {
     static std::string dawnEnableToggles;
     static std::string dawnDisableToggles;
     PortDebug::BeginDriverWorkarounds(userFolder, dawnEnableToggles, dawnDisableToggles);
+#ifdef AURORA_H700
+    // Workarounds can publish shader/environment overrides of their own. Check
+    // again, then protect the final config before Aurora applies NDEBUG defaults.
+    const char* conflict = PortH700::ConflictingOverride(port::EnvString);
+    if (conflict == nullptr) conflict = PortH700::ProtectDawnToggles(dawnEnableToggles, dawnDisableToggles);
+    if (conflict != nullptr) {
+        PortLog::Write("port: H700 conflicting driver workaround %s; no graphics initialized\n", conflict);
+        return 2;
+    }
+    PortLog::Write("port: H700 Dawn validation and robustness ON (enforced profile policy)\n");
+#endif
     config.dawnEnableToggles = dawnEnableToggles.c_str();
     config.dawnDisableToggles = dawnDisableToggles.c_str();
     // Before aurora_initialize loads the pipeline cache: its rows take the running per-pixel
     // lighting, so the seed's lit pipelines build at boot instead of on each room's first draw.
     aurora_set_per_pixel_lighting(PortDebug::PerPixelLighting());
+#ifdef AURORA_H700
+    // A rejected profile is not a failed driver initialization. Create the
+    // marker only after all startup-policy checks have passed.
+    std::ofstream(glesMarker) << "1\n";
+#endif
     aurora_initialize(argc, argv, &config);
     // The settings file, JSON and the logs read and write numbers with the C
     // library, in the "C" format. A toolkit loaded with the window (a GTK

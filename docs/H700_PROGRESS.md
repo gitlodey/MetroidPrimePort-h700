@@ -10,7 +10,8 @@
 - **[План полной игры GM-01…GM-21 утверждён](H700_GAME_PLAN.md)** ([коротко](H700_GAME_SUMMARY.md)): D1…D11, локальные GM-01…GM-17, commit/push каждой завершённой итерации. Три device-окна требуют отдельных разрешений.
 - **GM-01 LOCAL PASS:** fresh root game configure в exact offline ARM64 image,14 verified inputs,642game TU в manifest;5/5game-profile +10/10bootstrap host tests,30/30integration helper tests в Linux. GM-01 commit/push: `f6129b4d4`.
 
-- **GM-02 LOCAL PASS:** fresh full compile/link `metroid_prime_port` за494s, no-init `--version` exit0, ELF64/AArch64 metadata; image/pins/исходники игры не менялись.30/30helper +5/5profile tests в Linux PASS. Это ещё не runtime profile/lifecycle/ABI/device готовность.
+- **GM-02 LOCAL PASS:** fresh full compile/link `metroid_prime_port` за494s, no-init `--version` exit0, ELF64/AArch64 metadata; image/pins/исходники игры не менялись.30/30helper +5/5profile tests в Linux PASS. Это ещё не lifecycle/ABI/device готовность. Commit/push: `95c156a5a`.
+- **GM-03 LOCAL PASS:** H700 new-install defaults + fixed unpinned retail allocation/backend, Dawn validation/robustness protection и override rejection; fresh full build,5/5CPU/no-init CTest (27settings keys/12actual startup rejections), non-H700 compile изменённых game TU PASS. Existing INI не перезаписывается; GPU/device не запускались.
 
 ## Что подтверждено
 
@@ -28,7 +29,7 @@
 
 ## Следующий шаг
 
-Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-03: deterministic H700 retail runtime profile, без device runtime. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
+Новых повторов ради зелёной матрицы не выполнять: один actual bounded manual PASS и видимый Ports path получены, неполные runs/ограничения сохранены. Следующий шаг — утверждённая GM-04: pressure policy192/128MiB и bounded RAM diagnostics, без device runtime. После commit/push продолжаем локальные карточки без нового approval. RAM policy и96MiB headroom gate утверждены как начальные параметры, не измеренные гарантии. Три device-окна требуют отдельных разрешений. `H700 Integration Test.sh` и hidden diagnostic data намеренно оставлены по запросу; raw logs скачаны, активных test processes/lock нет, firmware hashes unchanged.
 
 ## Основания и история
 

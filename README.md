@@ -2,7 +2,7 @@
 
 Адаптация нативного порта **Metroid Prime** для **ANBERNIC RG40XX H под muOS 2601.0 Jacaranda**. Это нативная C/C++-игра на основе декомпиляции, не запуск через эмулятор.
 
-> **Статус: IG-01…IG-13 LOCAL PASS; последний корректный IG-14 manual run PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил видимый запуск. Один run прошёл120+2frames/pixels/threading/teardown; три других manual runs incomplete из-за отсутствия actual overlap — не4/4PASS. Ограничения screenshots/повторяемости сохранены в [device report](docs/H700_INTEGRATION_GATE.md), [плане](docs/H700_INTEGRATION_PLAN.md) и [прогрессе](docs/H700_PROGRESS.md). **Полная игра и FPS не подтверждены. [План полной игры утверждён](docs/H700_GAME_PLAN.md) ([короткая версия](docs/H700_GAME_SUMMARY.md)); GM-01/02 root configure и первая full compile/link LOCAL PASS; runtime profile/lifecycle ещё впереди. Device-окна отдельно согласуются.**
+> **Статус: IG-01…IG-13 LOCAL PASS; последний корректный IG-14 manual run PASS bounded-сценария.** После назначения PortMaster пользователь подтвердил видимый запуск. Один run прошёл120+2frames/pixels/threading/teardown; три других manual runs incomplete из-за отсутствия actual overlap — не4/4PASS. Ограничения screenshots/повторяемости сохранены в [device report](docs/H700_INTEGRATION_GATE.md), [плане](docs/H700_INTEGRATION_PLAN.md) и [прогрессе](docs/H700_PROGRESS.md). **Полная игра и FPS не подтверждены. [План полной игры утверждён](docs/H700_GAME_PLAN.md) ([короткая версия](docs/H700_GAME_SUMMARY.md)); GM-01/02 root configure и первая full compile/link LOCAL PASS; GM-03 retail profile также LOCAL PASS; game lifecycle и device-приёмка ещё впереди. Device-окна отдельно согласуются.**
 
 ## Цель H700
 

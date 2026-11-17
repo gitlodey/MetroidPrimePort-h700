@@ -785,6 +785,16 @@ endif()
 if(MP_BUILD_TESTS)
     enable_testing()
     include(cmake/PortTests.cmake)
+    if(AURORA_H700)
+        mp_port_test(port_h700_profile_tests SOURCES tests/port_h700_profile.cpp
+            INCLUDES platform/include extern/aurora/include)
+        add_test(NAME port_h700_settings_profile COMMAND metroid_prime_port --h700-profile-selftest)
+        set_tests_properties(port_h700_settings_profile PROPERTIES TIMEOUT 15 LABELS port)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)
+        set_tests_properties(port_h700_profile_startup PROPERTIES TIMEOUT 30 LABELS port)
+    endif()
     add_test(NAME port_version COMMAND metroid_prime_port --version)
     set_tests_properties(port_version PROPERTIES TIMEOUT 15 LABELS port
         PASS_REGULAR_EXPRESSION "Metroid Prime native port")

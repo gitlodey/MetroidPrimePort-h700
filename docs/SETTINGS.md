@@ -1,5 +1,32 @@
 # Controls and settings
 
+## H700 retail startup defaults
+
+The opt-in `AURORA_H700` game build applies a one-time baseline **before** reading
+`port_settings.ini`: 4:3, render scale1, MSAA1, anisotropy1, Modern/twin-stick,
+30-FPS output cap with60-Hz simulation, no adaptive timing/interpolation/dynamic
+resolution, no mods/HD replacements or extra sun/sharp-scan effects. Retail
+projected shadows, visor/EFB effects and stock audio remain enabled. Existing
+INI choices still win; this initializer does not mark settings dirty or rewrite
+the file. Other platforms keep their existing defaults.
+
+Separate startup safety policy fixes OpenGLES and the640×480 SDL2/mali output,
+MEM1 24MiB, unpinned frame/storage scale1, resident0, lazy pipelines/no seed,
+and validation/robustness ON. `MP_FRAME_BUFFERS` and `MP_STORAGE_BUFFERS` are
+rejected even at1: supplying them would pin the full staging allocation.
+Conflicting backend/display, Dawn toggles, diagnostic shader/thread/cache
+and staging overrides fail before graphics initialization, rather than silently
+falling back. The exact checks are in `platform/include/port_h700_profile.h`.
+Frontend rotation/scaler/controller variables and audio/path/logging settings
+are not removed. A stale GLES startup marker produces an explicit failure, not
+AUTO fallback. This policy is not proof of device compatibility or30FPS;
+see [the approved game plan](H700_GAME_PLAN.md).
+
+`metroid_prime_port --h700-profile-selftest` checks27 baseline settings and
+existing in-memory INI overrides without reading/writing files or initializing
+SDL/GPU. It is only available in H700 builds. The ordinary
+`--settings-selftest` remains the whole settings-table roundtrip check.
+
 
 - Keyboard defaults: WASD / IJKL for sticks, X/Z/C/V for A/B/X/Y, Return for
   Start, arrows for D-pad, Q/E for L/R, and F for Z. Existing mappings take

@@ -416,6 +416,11 @@ bool IsPhysicalInput(const SDL_Event& event) {
 } // namespace
 
 namespace DebugUi {
+#if defined(AURORA_H700)
+// settings.cpp: shared by startup and the no-file H700 settings self-test.
+void ApplyH700Defaults();
+#endif
+
 void TakePadPortForLastUsed() {
   if (const uint32_t instance = sPadUsed.exchange(0, std::memory_order_acq_rel); instance != 0) {
     PADTakeFirstPort(instance);
@@ -456,6 +461,9 @@ void EnsureInitialized() {
     return;
   }
   sInitialized = true;
+#if defined(AURORA_H700)
+  ApplyH700Defaults();
+#endif
   LoadSettings();
   const std::string fileSettings = SettingsText();
 

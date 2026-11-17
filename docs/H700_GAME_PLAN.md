@@ -345,7 +345,7 @@ Reset и normal exit выполняются на main safe-point:
 
 Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
 
-**Статус после согласования: локальная реализация разрешена, GM-01 configure и GM-02 compile/link LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
+**Статус после согласования: локальная реализация разрешена, GM-01 configure, GM-02 compile/link и GM-03 retail profile LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
 
 ## 11. Проверка черновика до утверждения
 
@@ -391,4 +391,24 @@ Fresh offline configure18.172s, compile/link494.098s, все команды exit
 
 Actual executable и SDL — ELF64/AArch64, loader `ld-linux-aarch64.so.1`; `NEEDED` game: firmware EGL/GLES, SDL3, libc/libm/libstdc++/libgcc и loader. Полные imports/version nodes/hashes/command timings — ignored `build/h700-game-gm02/{elf-metadata.json,commands.json,result.json}`. Это **ELF metadata, не полный firmware ABI gate**, не package/deploy/device PASS.
 
-Проверки:10/10bootstrap +5/5game-profile tests на host;30/30integration helper +5/5game-profile tests в exact Linux image. Independent read-only review без blockers; diff/link/документальные проверки выполнены. Следующий шаг GM-03: deterministic H700 retail runtime profile. Пока бинарник сохраняет существующие game defaults и неполную game lifecycle интеграцию; запускать его на приставке преждевременно.
+Проверки:10/10bootstrap +5/5game-profile tests на host;30/30integration helper +5/5game-profile tests в exact Linux image. Independent read-only review без blockers; diff/link/документальные проверки выполнены. Следующий шаг GM-03: deterministic H700 retail runtime profile. На момент GM-02 бинарник сохранял существующие game defaults и неполную game lifecycle интеграцию; запускать его на приставке преждевременно.
+
+### GM-03 — LOCAL PASS: H700 retail defaults и startup policy
+
+- Новый `platform/include/port_h700_profile.h` — testable CPU policy: actual AuroraConfig получает hardware OpenGLES/native640×480, MEM1=24MiB, frame1/storage0-following **unpinned**, resident0, lazy/no-seed, без старого embedded seed. Наличие `MP_FRAME_BUFFERS`/`MP_STORAGE_BUFFERS` (включая `1` и пустое значение) отвергается, а не превращается в полную pinned allocation. Defaults других платформ не менялись.
+- H700 settings initializer работает **до INI**, один раз и без dirty/save:4:3/render1/MSAA1/anisotropy1; mods/HD/per-pixel extras/interpolation/dynamic resolution/sun shadows/sharp scan OFF; Modern+twin-stick, cap30/sim60/adaptiveOFF, fullscreen, quick-resume/share-card OFF. Existing INI сохраняет приоритет, getters не принуждают эти значения каждый кадр. Retail projected shadows/visors/EFB/audio не отключены. Startup baseline и обычные settings logs различают defaults/file/env.
+- Fixed SDL sdl2→mali выбирается только при отсутствующих переменных; frontend display/controller variables не затрагиваются. Explicit wrong backend/display, diagnostic/shader/thread/cache overrides отклоняются до normal startup. Presence-sensitive staging pins проверяются отдельно. Реальный `MP_GPU_SELFTEST` включён в guard после independent review.
+- После settings workarounds guard проверяется повторно; unsafe toggle config отвергается, `skip_validation`/`disable_robustness` обязательно входят в disabled list, поэтому NDEBUG не выключает validation/robustness. Отключение multi-thread GL toggle запрещено. Environment Dawn toggles не могут переопределить это позже.
+- Старый GLES crash marker не запускает AUTO fallback и остаётся для diagnosis; новый marker создаётся лишь после успешных profile checks. Actual init-result/partial-init gate остаётся GM-05. Pressure thresholds остаются прежними до отдельной GM-04, этот шаг не объявляет RAM device PASS.
+
+Проверки: fresh offline root configure (`build/h700-game-gm03`), полный compile/link actual game + `port_h700_profile_tests`, **5/5 CTest PASS**: allocation/override/toggle policy, H700 settings profile (**27ключей defaults + existing overrides**), actual executable early rejection (**12cases**, byte-identical existing INI/no new files), `port_version`, `port_settings_roundtrip`. Standalone policy test также PASS на host. Компиляция трёх изменённых game TU без `AURORA_H700` PASS; Aurora sources не менялись, это не новый full non-H700 game/runtime PASS.
+
+В staged container выполнены:
+
+```sh
+cmake -S /src -B /out/build -G Ninja -C /src/cmake/h700/GameInitialCache.cmake -C /out/Inputs.cmake -DMP_BUILD_TESTS=ON -DBUILD_TESTING=ON
+cmake --build /out/build --target metroid_prime_port port_h700_profile_tests --parallel 2
+ctest --test-dir /out/build -R '^(port_h700_profile_tests|port_h700_settings_profile|port_h700_profile_startup|port_settings_roundtrip|port_version)$' --output-on-failure --timeout 30
+```
+
+Ни GPU, ни устройство не запускались. Logs/results — ignored build; independent read-only review после исправления guard без blockers. Next GM-04; новое разрешение на локальные карточки не требуется.

@@ -20,6 +20,10 @@ namespace PortDebug {
 // --settings-selftest: checks that every settings key reads back as written,
 // without starting the game. Returns the process exit code. Never saves.
 int SettingsSelfTest();
+#if defined(AURORA_H700)
+// Checks the startup defaults and in-memory INI overrides. No file or graphics initialization.
+int H700SettingsSelfTest();
+#endif
 
 // Live game state for the debug menu (set every simulation tick by
 // CStateManager::Update). Null before gameplay starts.

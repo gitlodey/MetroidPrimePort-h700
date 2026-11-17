@@ -706,6 +706,13 @@ std::map< std::string, std::string > SettingsValues(const std::string& text) {
   return values;
 }
 
+#if defined(AURORA_H700)
+// Captured once by the same initialization path used before LoadSettings.
+std::string sH700DefaultSettings;
+bool sH700DefaultInterpolationOff = false;
+bool sH700DefaultStockAudio = false;
+#endif
+
 } // namespace
 
 namespace DebugUi {
@@ -732,6 +739,51 @@ std::string SettingsText() {
   }
   return file.str();
 }
+
+#if defined(AURORA_H700)
+void ApplyH700Defaults() {
+  if (!sH700DefaultSettings.empty()) {
+    return;
+  }
+  // Initial choices only: the INI and per-run environment still load afterwards.
+  sAspectMode = PortDebug::kAspect_4_3;
+  sRenderScale = 1.f;
+  sDynamicRes = false;
+  sMsaa = 1;
+  sAnisotropy = 1;
+  sModsEnabled = false;
+  PortTextures::SetUserPackEnabled(false);
+  sPerPixelLighting = false;
+  sSmoothFrames = false;
+  sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = false;
+  sRoomGeoResident = false;
+  sSunShadows = false;
+  sSharpScanWindow = false;
+  // Keep retail projected shadows, visor effects and the stock audio balance.
+  PortInput::ApplySetting("pad_preset", "modern");
+  sInput.twinStick = true;
+  sFrameLimitEnabled = false;
+  sFpsCap = 30;
+  sSimRate = 60;
+  sSimAdaptive = false;
+  sQuickResume = false;
+  PortGci::SetShareEmulatorCard(false);
+  sFullscreen = true;
+
+  sH700DefaultSettings = SettingsText();
+  sH700DefaultInterpolationOff =
+      !sFrameInterpolation && !sActorInterpolation && !sPoseInterpolation && !sParticleInterpolation;
+  sH700DefaultStockAudio = sAiAudioEnabled && sMusyxAudioEnabled &&
+                          sMusicBoost == PortDebug::kVolumeBoostDefault &&
+                          sSfxBoost == PortDebug::kVolumeBoostDefault;
+  PortLog::Write("port: H700 settings baseline (defaults before INI/environment): "
+                 "aspect=4:3 render_scale=1 dynamic_resolution=0 msaa=1 anisotropy=1 "
+                 "mods=0 texture_pack=0 per_pixel_lighting=0 smooth_frames=0 room_geo_gpu=0 "
+                 "sun_shadows=0 sharp_scan_window=0 projected_shadows=1 "
+                 "pad_preset=modern twin_stick=1 frame_limit=0 fps_cap=30 sim_rate=60 sim_adaptive=0 "
+                 "quick_resume=0 share_emulator_card=0 fullscreen=1; retail effects/audio unchanged\n");
+}
+#endif
 
 void LoadSettings() {
   const std::string path = SettingsFilePath();
@@ -859,6 +911,125 @@ void SaveSettings() {
 } // namespace DebugUi
 
 namespace PortDebug {
+
+#if defined(AURORA_H700)
+int H700SettingsSelfTest() {
+  // Use the actual one-time startup initializer, not a separate test preset.
+  // Do not call EnsureInitialized: it reads files and registers persistence.
+  ApplyH700Defaults();
+  const struct {
+    const char* key;
+    const char* baseline;
+    const char* overrideValue;
+  } cases[] = {
+      {"aspect", "4:3", "16:9"},
+      {"render_scale", "1", "2"},
+      {"dynamic_resolution", "0", "1"},
+      {"msaa", "1", "4"},
+      {"anisotropy", "1", "16"},
+      {"mods", "0", "1"},
+      {"texture_pack", "0", "1"},
+      {"per_pixel_lighting", "0", "1"},
+      {"smooth_frames", "0", "1"},
+      {"room_geo_gpu", "0", "1"},
+      {"sun_shadows", "0", "1"},
+      {"sharp_scan_window", "0", "1"},
+      {"projected_shadows", "1", "0"},
+      {"hide_visor_effects", "0", "1"},
+      {"scan_speed", "100", "500"},
+      {"original_experience", "0", "1"},
+      {"pad_preset", "modern", "gamecube"},
+      {"twin_stick", "1", "0"},
+      {"frame_limit", "0", "1"},
+      {"fps_cap", "30", "45"},
+      {"sim_rate", "60", "120"},
+      {"sim_adaptive", "0", "1"},
+      {"quick_resume", "0", "1"},
+      {"share_emulator_card", "0", "1"},
+      {"fullscreen", "1", "0"},
+      {"music_boost", "100", "200"},
+      {"sfx_boost", "100", "200"},
+  };
+  int failures = 0;
+  const auto check = [&](bool passed, const char* detail) {
+    if (!passed) {
+      PortLog::Write("H700 settings self-test: %s\n", detail);
+      ++failures;
+    }
+  };
+  const auto checkValues = [&](const std::string& text, bool overrides, const char* phase) {
+    const auto values = SettingsValues(text);
+    for (const auto& entry : cases) {
+      const auto found = values.find(entry.key);
+      const std::string got = found == values.end() ? "(missing)" : found->second;
+      const char* expected = overrides ? entry.overrideValue : entry.baseline;
+      if (got != expected) {
+        PortLog::Write("H700 settings self-test: %s %s: expected %s, got %s\n", phase, entry.key,
+                       expected, got.c_str());
+        ++failures;
+      }
+    }
+  };
+  checkValues(sH700DefaultSettings, false, "startup defaults");
+  check(sH700DefaultInterpolationOff, "startup interpolation is not fully off");
+  check(sH700DefaultStockAudio, "startup stock audio changed");
+
+  // Save/restore only the tested in-memory keys. Reading all of SettingsText
+  // would also run unrelated graphics setters (e.g. remastered_performance).
+  const auto before = SettingsValues(SettingsText());
+  const bool frameInterpolation = sFrameInterpolation;
+  const bool actorInterpolation = sActorInterpolation;
+  const bool poseInterpolation = sPoseInterpolation;
+  const bool particleInterpolation = sParticleInterpolation;
+  const int padPreset = sInput.padPreset; // -1 has no written pad_preset line
+  const int legacyDynamicRes = sLegacyDynamicRes;
+  const bool dynamicResRead = sDynamicResRead;
+  const bool dirty = sSettingsDirty;
+  std::string restoreText;
+  std::string baselineText;
+  std::string overrideText;
+  const auto defaults = SettingsValues(sH700DefaultSettings);
+  for (const auto& entry : cases) {
+    if (const auto found = before.find(entry.key); found != before.end()) {
+      restoreText += std::string(entry.key) + "=" + found->second + "\n";
+    }
+    if (const auto found = defaults.find(entry.key); found != defaults.end()) {
+      baselineText += std::string(entry.key) + "=" + found->second + "\n";
+    }
+    overrideText += std::string(entry.key) + "=" + entry.overrideValue + "\n";
+  }
+  std::istringstream baseline(baselineText);
+  ApplySettingsText(baseline);
+  std::istringstream empty("# No saved choices yet.\n");
+  ApplySettingsText(empty);
+  checkValues(SettingsText(), false, "absent settings");
+  check(!sFrameInterpolation && !sActorInterpolation && !sPoseInterpolation && !sParticleInterpolation,
+        "default smooth_frames does not disable every interpolation component");
+
+  std::istringstream existing(overrideText);
+  ApplySettingsText(existing);
+  // Re-entering the initializer must never reset already loaded choices.
+  ApplyH700Defaults();
+  checkValues(SettingsText(), true, "existing settings override");
+  check(sFrameInterpolation && sActorInterpolation && sPoseInterpolation && sParticleInterpolation,
+        "saved smooth_frames does not restore every interpolation component");
+  check(sSettingsDirty == dirty, "defaults/INI parsing requested a save");
+
+  std::istringstream restore(restoreText);
+  ApplySettingsText(restore);
+  sFrameInterpolation = frameInterpolation;
+  sActorInterpolation = actorInterpolation;
+  sPoseInterpolation = poseInterpolation;
+  sParticleInterpolation = particleInterpolation;
+  sInput.padPreset = padPreset;
+  sLegacyDynamicRes = legacyDynamicRes;
+  sDynamicResRead = dynamicResRead;
+  sSettingsDirty = dirty;
+  PortLog::Write("H700 settings self-test: %zu keys checked (defaults and existing overrides), %d failure(s)\n",
+                 std::size(cases), failures);
+  return failures == 0 ? 0 : 1;
+}
+#endif
 
 int SettingsSelfTest() {
   int failures = 0;
