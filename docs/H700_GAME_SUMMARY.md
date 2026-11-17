@@ -6,13 +6,13 @@
 
 Нужна **Metroid Prime Unbound v0.46.0 на RG40XX H / H700 под muOS 2601.0 Jacaranda**, а не новый framework или идеальная тестовая матрица. Графика/UI, pad, слышимый звук, CARD save/load обязательны.30FPS — потом.
 
-GM-01…GM-11b уже завершены локально; последний production commit — `b9b1545fe`. Настоящий игровой executable собирается, backend и lifecycle механизмы есть. **Новая игра на приставке ещё не проверена.** Железо/ОС/build facts берём из документов, заново не исследуем.
+GM-01…GM-12 уже завершены локально. GM-12 включил root handshake, checked sizing/progress-aware waits и замкнутых consumers: full ARM64 game build,38/38CPU/no-init/DVD CTest и изменённые non-H700 game TUs PASS. Подробности трёх итераций — в полном остатке. Настоящий игровой executable собирается, backend и lifecycle механизмы есть. **Новая игра на приставке ещё не проверена.** Железо/ОС/build facts берём из документов, заново не исследуем.
 
 ## Остаток — от известного дефекта к реальной игре
 
 | Шаг | Необходимое действие | Проверяемый результат |
 | --- | --- | --- |
-| **1. GM-12 — закончить skinning** | Корректные sizes/token waits и передача отказа через реальные model/shadow/boid consumers до root; использовать готовый GM-11b cleanup | Нет неправильных workspace/draw/free. Running jobs держат свои данные, Unknown — fail-stop. Ring32MiB и scheduler не меняются |
+| **1. GM-12 — LOCAL PASS** | Корректные sizes/token waits и передача отказа через реальные model/shadow/boid consumers до root; использовать готовый GM-11b cleanup | Нет неправильных workspace/draw/free. Running jobs держат свои данные, Unknown — fail-stop. Ring32MiB и scheduler не меняются |
 | **2. GM-13 — проверить изменённое** | ARM64 game build, относящиеся CPU tests, non-H700 core/GX и изменённые game TUs | Замкнутый production status/lifetime path, а не только helper tests. Без GPU в container и без новой backend-матрицы |
 | **3. GM-14/15 — отдельная установка и запуск** | Свои executable/user/card/cache, чистые начальные настройки; тонкий Ports launcher с явным disc argument, правильным SDL/audio env и lock/exit handling | Старый порт/данные не используются. Настройки/карта сохраняются. Нет demo watchdog, автоматического kill или ложного exit0 |
 | **4. GM-16/17 — проверенный пакет** | Адаптировать существующие package/audit helpers к игре; local SDL loader path, actual ABI/notices/source/input/hash; повторить fresh build того же source state | Один идентифицированный RC, воспроизводимый рецепт, install/rollback инструкции. Без system-library replacement и нового build framework |
@@ -39,4 +39,4 @@ Skinning выполняется безопасными рабочими commits:
 
 **Если обнаружится реальный runtime-дефект:** минимальный local fix того же решения + regression + новый hash/RC, с теми же image/pins; повторяем failing/зависимые проверки. Для окончательного результата обязательные пункты должны быть подтверждены на принятом RC, старый PASS новому binary самовольно не переносится. Новые device-процессы согласуются отдельно. Архитектурная смена/ослабление safety/критериев — остановка, обычная техническая правка — нет.
 
-**Результат текущего запроса:** правила работы постоянно закреплены в AGENTS/CLAUDE/workflow; подготовлен необходимый остаток, без production-изменений и запусков. План утверждён; выполняем его, не начинаем новый круг общего планирования.
+**Текущее выполнение:** правила работы закреплены в AGENTS/CLAUDE/workflow; утверждённый GM-12 завершён тремя проверенными итерациями. Далее GM-13, затем чистая установка/launcher/package; без нового круга общего планирования. Реальные device-окна ещё не разрешены.

@@ -5,7 +5,7 @@ namespace PortH700 {
 
 // Main-thread owned, including producers. Not a worker notification, shutdown
 // request or proof that owners may unwind. Sites must have static storage.
-enum class GameFailure { None, Backend };
+enum class GameFailure { None, Backend, SkinNotReady, SkinSize, SkinAllocation };
 
 namespace detail {
 inline GameFailure gameFailure = GameFailure::None;

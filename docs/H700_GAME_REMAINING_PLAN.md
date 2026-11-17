@@ -182,4 +182,14 @@ H700-only bool wrappers и sticky-status checks останавливают direc
 
 Full incremental ARM64 game compile/link PASS;25/25 CPU/no-init/DVD CTest PASS, включая33 source-binding cases в трёх status/consumer/dispatch tests. Все13 изменённых game TUs компилируются без AURORA_H700. Первый non-H700 invocation остановился из-за отсутствия git в immutable image; список файлов передан явно без установки tools. Повторный CTest использует точный DVD filter. Commands/logs — ignored `gm12-consumers-*`. Source checks не являются runtime failure injection; GPU/device не запускались.
 
-Новые skin allocation/wait failure producers по-прежнему выключены. Следующая итерация включает их вместе с root handshake и behavioral regressions; весь GM-12 ещё не завершён.
+На момент этой итерации новые skin allocation/wait failure producers ещё выключены. Их включение выполнено следующей итерацией.
+
+### GM-12, итерация 3 — LOCAL PASS: handshake, checked allocation и waits
+
+Первый настоящий FIFO handshake перенесён в RsMain до PostInitialize/renderer; constructors больше не ждут token, учитывают даже inert reference и возвращают статус. Layout проверяет signed counts, widened products, alignment, суммы и downstream narrowing до использования/pointer publication. Ring остаётся32MiB с прежним запасом+32; heap/external не ограничены ring capacity. Ring waits выполняют existing main presenter progress без locks/game reentry, проверяют health после progress/token reads и сохраняют настоящие FIFO markers, ushort wrap и prefix reclaim.
+
+Известный bad_alloc persistent/external/averaged-normal workspace, ring/job metadata и initial skin pool переводится в sticky failure до потребления результата. Неучтённая при metadata failure ring reservation остаётся удержанной до terminal retirement, не освобождается вне FIFO-порядка. Direct PC skinning выполняется вне ненужного legacy gather scope; legacy/verify options сохранены, gather/interrupt restore остаётся обязательным. Running SkinPool Run по-прежнему ждёт все реальные jobs; scheduler/число helpers не менялись. Partial pool startup не уничтожает объект уже detached sleepers. Deep throw/checkpoint не добавлены.
+
+Full ARM64 game+skin test target compile/link PASS;38/38 CPU/no-init/DVD CTest PASS. Новые12 behavioral cases связывают production skin TU и CCircularBuffer с stub external services: pending handshake, health/progress failure, ref balancing, invalid sizing, exact-capacity/prefix reuse,65538 wrap iterations, metadata bad_alloc без выдачи указателя. Source bindings отдельно покрывают constructors/publication/consumers/actual Run wait; они не заявлены runtime исполнением renderer/skin jobs. Четыре изменённых game TUs без AURORA_H700 compile PASS. Focused independent read-only review включённых producers/direct consumers не нашёл defects. Initial compile/accessor и diagnostic post-read guard failures исправлены до успешного прогона. Commands/logs — ignored `gm12-skin-*`.
+
+**GM-12 LOCAL PASS:** три безопасные итерации завершены, producers включены после consumers. Это не game/GPU/device PASS; далее GM-13 — согласованная интеграционная проверка изменённой цепочки.

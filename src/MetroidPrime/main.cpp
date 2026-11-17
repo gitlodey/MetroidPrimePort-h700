@@ -30,6 +30,7 @@
 #include "port_h700_game_boundary.h"
 #include "port_h700_game_failure.h"
 #include "port_h700_terminal.h"
+#include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "port_room_env.h"
 #include "port_room_geo.h"
 #include "port_room_liquid.h"
@@ -1079,6 +1080,8 @@ int CMain::RsMain(int argc, const char* const* argv) {
 #ifdef AURORA_H700
   terminalMilestones.subsystemsInitialized = true;
   PortH700RootSafePoint("boot: subsystems initialized");
+  CSkinnedModel::PortInitializeSkinning();
+  PortH700RootSafePoint("boot: skinning handshake returned");
 #endif
   gameGlobalObjects->PostInitialize(x0_osContext, x6d_memorySys);
 #ifdef AURORA_H700

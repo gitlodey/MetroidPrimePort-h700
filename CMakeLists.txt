@@ -798,6 +798,22 @@ if(MP_BUILD_TESTS)
             INCLUDES platform/include extern/aurora/include)
         mp_port_test(port_h700_game_failure_tests SOURCES tests/port_h700_game_failure.cpp
             INCLUDES platform/include extern/aurora/include)
+        mp_port_test(port_h700_skinning_tests
+            SOURCES tests/port_h700_skinning.cpp src/Kyoto/Animation/DolphinCSkinnedModel.cpp
+                src/Kyoto/Alloc/CCircularBuffer.cpp
+            INCLUDES platform/include include extern/aurora/include
+                $<TARGET_PROPERTY:SDL3::SDL3,INTERFACE_INCLUDE_DIRECTORIES>
+            DEFINITIONS TARGET_PC VERSION=0 AURORA_H700
+            CXX_STANDARD 20 GC_SECTIONS NO_TEST)
+        mp_signed_char(port_h700_skinning_tests)
+        target_compile_options(port_h700_skinning_tests PRIVATE -fno-strict-aliasing -fwrapv
+            -Wno-narrowing -Wno-multichar -Wno-write-strings
+            -include ${CMAKE_CURRENT_SOURCE_DIR}/platform/compat.h)
+        foreach(skin_case layout refs init-pending init-fail-progress init-fail-read not-ready
+                oversized ring wrap metadata wait-fail-progress wait-fail-read)
+            add_test(NAME port_h700_skinning_${skin_case} COMMAND port_h700_skinning_tests ${skin_case})
+            set_tests_properties(port_h700_skinning_${skin_case} PROPERTIES TIMEOUT 15 LABELS port)
+        endforeach()
         mp_port_test(port_h700_delayed_cleanup_tests
             SOURCES tests/port_h700_delayed_cleanup.cpp src/Kyoto/CFrameDelayedKiller.cpp
             INCLUDES include extern/aurora/include platform/include
@@ -822,6 +838,9 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_dispatch_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_dispatch_wiring.py")
         set_tests_properties(port_h700_dispatch_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_skinning_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_skinning_wiring.py")
+        set_tests_properties(port_h700_skinning_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)
         set_tests_properties(port_h700_profile_startup PROPERTIES TIMEOUT 30 LABELS port)

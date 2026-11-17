@@ -15,6 +15,9 @@
 #include <rstl/math.hpp>
 
 #include <vector>
+#ifdef AURORA_H700
+#include <new>
+#endif
 
 // The model's vertex arrays stay big-endian on PC (the skinning loads swap them).
 // Entries past the array's `bytes` read as zero.
@@ -33,7 +36,16 @@ static std::vector< CVector3f > NativeVectors(const float* in, uint bytes, uint 
 typedef rstl::pair< CVector3f, rstl::list< uint > > TPosToVertListPair;
 
 CSkinnedModelWithAvgNormals::CSkinnedModelWithAvgNormals(const CSkinnedModel& skinnedModel)
-: x0_skinnedModel(skinnedModel), x3c_avgNormals(rs_new float[skinnedModel.GetNumPoints() * 12]) {
+: x0_skinnedModel(skinnedModel)
+#ifdef AURORA_H700
+, x3c_avgNormals() {
+  // A failed copied model is inert; do not consume its count or construct metadata.
+  if (PortH700::GameFailurePending()) return;
+  try {
+    x3c_avgNormals = rstl::auto_ptr< float[] >(rs_new float[size_t(skinnedModel.GetNumPoints()) * 12]);
+#else
+, x3c_avgNormals(rs_new float[skinnedModel.GetNumPoints() * 12]) {
+#endif
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   const uint vertexCount = skinnedModel.GetNumPoints();
 #else
@@ -112,4 +124,9 @@ CSkinnedModelWithAvgNormals::CSkinnedModelWithAvgNormals(const CSkinnedModel& sk
       reinterpret_cast< CVector3f* >(avgNormals)[*lit] = normalized;
     }
   }
+#ifdef AURORA_H700
+  } catch (const std::bad_alloc&) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "skin: averaged normal workspace/metadata");
+  }
+#endif
 }

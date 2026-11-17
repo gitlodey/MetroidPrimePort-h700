@@ -6,6 +6,11 @@
 #include "dolphin/os/OSCache.h"
 #include "rstl/math.hpp"
 
+#ifdef AURORA_H700
+#include "port_h700_game_failure.h"
+#include <new>
+#endif
+
 #ifdef TARGET_PC
 #include "Kyoto/Basics/CBasics.hpp"
 #include <atomic>
@@ -244,10 +249,21 @@ private:
   SkinPool() {
     unsigned hw = std::thread::hardware_concurrency();
     const int helpers = hw > 1 ? static_cast< int >(rstl::min_val(hw - 1, 3u)) : 0;
+#ifdef AURORA_H700
+    try {
+      mWorkers.reserve(helpers);
+#endif
     for (int i = 0; i < helpers; ++i) {
       mWorkers.emplace_back([this] { Loop(); });
       mWorkers.back().detach();
     }
+#ifdef AURORA_H700
+    } catch (const std::bad_alloc&) {
+      // Keep the permanent pool alive if detached helpers have already started.
+      PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "SkinPool::SkinPool");
+      return;
+    }
+#endif
   }
 
   void Loop() {
@@ -320,7 +336,19 @@ void CSkinRules::PortBuildPointsAndNormals(const CModel& model, float* points,
   const CVirtualBone* bones = x0_virtualBones.data();
   const int boneCount = x0_virtualBones.size();
 
+#ifdef AURORA_H700
+  int threads;
+  try {
+    threads = x10_vertexCount >= ThreadThreshold() ? SkinPool::Get().Threads() : 1;
+  } catch (const std::bad_alloc&) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation,
+                             "CSkinRules::PortBuildPointsAndNormals metadata");
+    return;
+  }
+  if (PortH700::GameFailurePending()) return;
+#else
   const int threads = x10_vertexCount >= ThreadThreshold() ? SkinPool::Get().Threads() : 1;
+#endif
   if (threads <= 1 || boneCount < 2) {
     BuildBoneRange(bones, 0, boneCount, 0, srcPoints, srcNormals, points, normals, nbt);
     return;
@@ -347,10 +375,22 @@ void CSkinRules::PortBuildPointsAndNormals(const CModel& model, float* points,
   chunkFirst[count] = boneCount;
   chunkOffset[count] = offset;
 
-  const std::function< void(int) > job = [&](int c) {
+  const auto buildJob = [&](int c) {
     BuildBoneRange(bones, chunkFirst[c], chunkFirst[c + 1], chunkOffset[c], srcPoints, srcNormals,
                    points, normals, nbt);
   };
+#ifdef AURORA_H700
+  std::function< void(int) > job;
+  try {
+    job = buildJob;
+  } catch (const std::bad_alloc&) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation,
+                             "CSkinRules::PortBuildPointsAndNormals job");
+    return;
+  }
+#else
+  const std::function< void(int) > job = buildJob;
+#endif
   SkinPool::Get().Run(count, job);
 }
 #endif

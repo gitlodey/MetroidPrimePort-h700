@@ -1,6 +1,13 @@
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "port_env.h"
 
+#ifdef AURORA_H700
+#include "port_h700_skinning.h"
+#include "../../../extern/aurora/lib/h700/lifecycle.hpp"
+#include <SDL3/SDL_timer.h>
+#include <new>
+#endif
+
 #include "Kyoto/Alloc/CCircularBuffer.hpp"
 #include "Kyoto/Alloc/CMemory.hpp"
 #include "Kyoto/Animation/CSkinRules.hpp"
@@ -130,6 +137,7 @@ void Skinning::SetSkinningBuffer(void* buffer, int size) {
 #endif
 
 void Skinning::AddSkinnedRef() {
+#ifndef AURORA_H700
   if (!sSkinningInitialized) {
     GXSetDrawSync(0xFFFF);
     while (GXReadDrawSync() != 0xFFFF) {
@@ -137,6 +145,7 @@ void Skinning::AddSkinnedRef() {
     skCurrentToken = 1;
     sSkinningInitialized = true;
   }
+#endif
 
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   if (sNumSkinnedObjects++ == 0) {
@@ -147,6 +156,11 @@ void Skinning::AddSkinnedRef() {
     sSkinningBuffer = CCircularBuffer(sStaticSkinningData, sizeof(sStaticSkinningData));
   }
   ++sNumSkinnedObjects;
+#endif
+#ifdef AURORA_H700
+  // Count even an inert model so its ordinary destructor remains balanced.
+  if (!sSkinningInitialized)
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinNotReady, "skin: construction before root handshake");
 #endif
 }
 
@@ -200,8 +214,59 @@ static uint NormalStride(const CModel& model) {
 static uint NormalStride(const CModel&) { return 12; }
 #endif
 
+#ifdef AURORA_H700
+static bool PortSkinningMayContinue(const char* site) {
+  return PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(), site);
+}
+
+bool CSkinnedModel::PortInitializeSkinning() {
+  if (!PortSkinningMayContinue("skin: root handshake entry")) return false;
+  if (Skinning::sSkinningInitialized) return true;
+  GXSetDrawSync(0xFFFF);
+  if (!PortSkinningMayContinue("skin: root handshake submitted")) return false;
+  while (GXReadDrawSync() != 0xFFFF) {
+    if (!PortSkinningMayContinue("skin: root handshake wait")) return false;
+    if (!aurora::h700::main_progress_once()) {
+      PortH700::NoteGameFailure(PortH700::GameFailure::Backend, "skin: root handshake progress");
+      return false;
+    }
+    SDL_Delay(1);
+  }
+  if (!PortSkinningMayContinue("skin: root handshake completion")) return false;
+  Skinning::skCurrentToken = 1;
+  Skinning::sSkinningInitialized = true;
+  return true;
+}
+
+static bool PortSkinLayout(const CSkinRules* rules, const CModel& model,
+                           PortH700::SkinLayout& layout) {
+  if (PortH700::GameFailurePending()) return false;
+  if (PortH700::MakeSkinLayout(rules->GetNumPoints(), rules->GetNumNormals(), NormalStride(model), layout))
+    return true;
+  PortH700::NoteGameFailure(PortH700::GameFailure::SkinSize, "skin: unrepresentable workspace layout");
+  return false;
+}
+#endif
+
 void CSkinnedModel::Construct() {
   Skinning::AddSkinnedRef();
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+  PortH700::SkinLayout layout;
+  if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+  if (!x38_owned) {
+    try {
+      float* ptr = rs_new float[layout.total / sizeof(float)];
+      x28_vertWorkspace = rstl::auto_ptr< float[] >(ptr);
+      x30_normalWorkspace = rstl::auto_ptr< float[] >(
+          reinterpret_cast< float* >(reinterpret_cast< uchar* >(ptr) + layout.alignedVertices));
+      x30_normalWorkspace.release();
+    } catch (const std::bad_alloc&) {
+      PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "skin: persistent workspace allocation");
+      return;
+    }
+  }
+#else
   if (!x38_owned) {
     // `Calculate` writes points and then normals into one contiguous buffer, so
     // the normal workspace must alias the tail of the vertex workspace.
@@ -215,6 +280,7 @@ void CSkinnedModel::Construct() {
         reinterpret_cast< float* >(reinterpret_cast< uchar* >(ptr) + vertSize));
     x30_normalWorkspace.release();
   }
+#endif
   if (x10_skinRules->GetNumVirtualBones() == 1) {
     x39_disableWorkspaces = true;
   }
@@ -223,10 +289,14 @@ void CSkinnedModel::Construct() {
 void CSkinnedModel::Draw(const CModelFlags& flags) const {
 #ifdef AURORA_H700
   if (PortH700::GameFailurePending()) return;
-#endif
+  PortH700::SkinLayout layout;
+  if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+  CGraphics::sRenderState.SetSkinnedArraySizes(layout.vertices, layout.normals, NormalStride(**x4_model));
+#else
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
+#endif
   if (x39_disableWorkspaces) {
     CTransform4f saved(CGraphics::GetModelMatrix());
     CGraphics::SetModelMatrix(saved * x10_skinRules->GetVirtualBones()[0].GetTransform());
@@ -243,10 +313,14 @@ void CSkinnedModel::Draw(const CModelFlags& flags) const {
 void CSkinnedModel::Draw(const TDrawFunc func, void* data) {
 #ifdef AURORA_H700
   if (PortH700::GameFailurePending()) return;
-#endif
+  PortH700::SkinLayout layout;
+  if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+  CGraphics::sRenderState.SetSkinnedArraySizes(layout.vertices, layout.normals, NormalStride(**x4_model));
+#else
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
+#endif
   if (x39_disableWorkspaces) {
     CTransform4f saved(CGraphics::GetModelMatrix());
     CGraphics::SetModelMatrix(saved * x10_skinRules->GetVirtualBones()[0].GetTransform());
@@ -256,9 +330,15 @@ void CSkinnedModel::Draw(const TDrawFunc func, void* data) {
     Draw(func, x4_model->GetPositions(), x4_model->GetNormals(), data);
   } else {
     func(x28_vertWorkspace.get(), x30_normalWorkspace.get(), data);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+    const uint vertSize = layout.alignedVertices;
+    const uint normSize = layout.alignedNormals;
+#else
     uint vertSize = (x10_skinRules->GetNumPoints() * 12 + 31) & ~31u;
-    DCFlushRangeNoSync(x28_vertWorkspace.get(), vertSize);
     uint normSize = (x10_skinRules->GetNumNormals() * NormalStride(**x4_model) + 31) & ~31u;
+#endif
+    DCFlushRangeNoSync(x28_vertWorkspace.get(), vertSize);
     DCFlushRangeNoSync(x30_normalWorkspace.get(), normSize);
     PPCSync();
     PostDrawFunc();
@@ -269,10 +349,14 @@ void CSkinnedModel::Draw(const float* positions, const float* normals,
                          const CModelFlags& flags) const {
 #ifdef AURORA_H700
   if (PortH700::GameFailurePending()) return;
-#endif
+  PortH700::SkinLayout layout;
+  if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+  CGraphics::sRenderState.SetSkinnedArraySizes(layout.vertices, layout.normals, NormalStride(**x4_model));
+#else
   CGraphics::sRenderState.SetSkinnedArraySizes(
       x10_skinRules->GetNumPoints() * 12,
       x10_skinRules->GetNumNormals() * NormalStride(**x4_model), NormalStride(**x4_model));
+#endif
   x4_model->Draw(positions, normals, flags);
   PostDrawFunc();
 }
@@ -291,11 +375,22 @@ bool CSkinnedModel::PortTryCalculate(
 void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
                               const rstl::optional_object< CVertexMorphEffect >& morphEffect,
                               const float* averagedNormals, float* workVerts) {
+#ifdef AURORA_H700
+  PortH700::SkinLayout layout;
+  if (!PortSkinningMayContinue("skin: Calculate entry") ||
+      !PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+  const size_t alignedNormSize = layout.alignedNormals;
+  const size_t alignedVertSize = layout.alignedVertices;
+  const size_t totalSize = layout.total;
+  const size_t vertSize = layout.vertices;
+  const size_t normSize = layout.normals;
+#else
   size_t alignedNormSize = 0;
   size_t alignedVertSize = 0;
   size_t totalSize = 0;
   size_t vertSize = x10_skinRules->GetNumPoints() * sizeof(CVector3f);
   size_t normSize = x10_skinRules->GetNumNormals() * NormalStride(**x4_model);
+#endif
   float* verts;
 
   if (workVerts != nullptr) {
@@ -306,13 +401,49 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
       return;
     }
     AllocateStorage();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     verts = x28_vertWorkspace.get();
   }
 
+#ifndef AURORA_H700
   alignedNormSize = ((normSize + 31) & ~31u);
   alignedVertSize = ((vertSize + 31) & ~31u);
   totalSize = alignedVertSize + alignedNormSize;
+#endif
 
+#ifdef AURORA_H700
+  // The direct PC path writes ordinary memory. Prepare metadata before Run can
+  // publish jobs, outside the legacy write-gather/interrupt scope.
+  const PortSkin::Clock::time_point skinStart = PortSkin::Now();
+  const bool legacy = PortSkin::Legacy() && NormalStride(**x4_model) == 12;
+  if (legacy) {
+    DCFlushRange(verts, totalSize);
+    const BOOL interruptState = OSDisableInterrupts();
+    volatile void* pipe = GXRedirectWriteGatherPipe(verts);
+    x10_skinRules->InitLockedCacheState(**x4_model);
+    x10_skinRules->BuildAccumulatedTransforms(pose, **x1c_layoutInfo);
+    PortBuildLegacy(pipe);
+    GXRestoreWriteGatherPipe();
+    OSRestoreInterrupts(interruptState);
+  } else {
+    x10_skinRules->BuildAccumulatedTransforms(pose, **x1c_layoutInfo);
+    float* normals = reinterpret_cast< float* >(reinterpret_cast< uchar* >(verts) + alignedVertSize);
+    x10_skinRules->PortBuildPointsAndNormals(**x4_model, verts, normals);
+    if (PortH700::GameFailurePending()) return;
+    memset(reinterpret_cast< uchar* >(verts) + vertSize, 0, alignedVertSize - vertSize);
+    if (PortSkin::Verify() && NormalStride(**x4_model) == 12) {
+      try {
+        PortVerify(verts, alignedVertSize + normSize);
+      } catch (const std::bad_alloc&) {
+        PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "skin: verification scratch allocation");
+        return;
+      }
+    }
+  }
+  PortSkin::Record(x10_skinRules->GetNumPoints(), skinStart);
+#else
   DCFlushRange(verts, totalSize);
   BOOL interruptState = OSDisableInterrupts();
   volatile void* pipe = GXRedirectWriteGatherPipe(verts);
@@ -353,6 +484,7 @@ void CSkinnedModel::Calculate(const CPoseAsTransforms& pose,
 #endif
   GXRestoreWriteGatherPipe();
   OSRestoreInterrupts(interruptState);
+#endif
 
   if (morphEffect.valid()) {
     (*morphEffect)
@@ -417,7 +549,13 @@ void CSkinnedModel::CalculateDefault() {
 }
 
 void CSkinnedModel::TickAllocations() {
+#ifdef AURORA_H700
+  if (!PortSkinningMayContinue("skin: token reclaim entry")) return;
+#endif
   int syncVal = GXReadDrawSync();
+#ifdef AURORA_H700
+  if (!PortSkinningMayContinue("skin: token reclaim observation")) return;
+#endif
   if (syncVal > static_cast< int >(Skinning::skCurrentToken)) {
     syncVal -= 0x10000;
   }
@@ -435,7 +573,26 @@ void CSkinnedModel::TickAllocations() {
 }
 
 void* CSkinnedModel::EnsureAllocation(int size) {
+#ifdef AURORA_H700
+  if (!PortSkinningMayContinue("skin: ring allocation entry")) return nullptr;
+  if (!Skinning::sSkinningInitialized || !Skinning::sSkinningBuffer.valid()) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinNotReady, "skin: ring before initialization/reference");
+    return nullptr;
+  }
+#if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
+  const size_t capacity = Skinning::sStaticSkinningDataSize > 0 ? Skinning::sStaticSkinningDataSize : 0;
+#else
+  const size_t capacity = sizeof(Skinning::sStaticSkinningData);
+#endif
+  int alignedSize = 0;
+  if (size <= 0 || !PortH700::SkinRingSize(size, capacity, alignedSize)) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinSize, "skin: impossible ring allocation");
+    return nullptr;
+  }
+  size = alignedSize;
+#else
   size = (size + 31) & ~31;
+#endif
   void* ptr = Skinning::sSkinningBuffer->Alloc(size);
   if (ptr == nullptr && !Skinning::sbDumpedSpinLockMessage) {
     Skinning::sSkinningBuffer->GetAllocatedAmount();
@@ -443,33 +600,89 @@ void* CSkinnedModel::EnsureAllocation(int size) {
   }
   s32 startTick = OSGetTick();
   while (ptr == nullptr) {
+#ifdef AURORA_H700
+    if (!PortSkinningMayContinue("skin: ring wait")) return nullptr;
+    if (!aurora::h700::main_progress_once()) {
+      PortH700::NoteGameFailure(PortH700::GameFailure::Backend, "skin: ring wait progress");
+      return nullptr;
+    }
+    if (!PortSkinningMayContinue("skin: ring progress returned")) return nullptr;
+#endif
     TickAllocations();
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return nullptr;
+#endif
     ptr = Skinning::sSkinningBuffer->Alloc(size);
     if (ptr == nullptr) {
       s32 currentTick = OSGetTick();
       if (OSTicksToMilliseconds(static_cast< uint >(currentTick - startTick)) > 60) {
         GXReadDrawSync();
+#ifdef AURORA_H700
+        if (!PortSkinningMayContinue("skin: ring diagnostic token observation")) return nullptr;
+#endif
         for (AUTO(it, Skinning::sAllocations.begin()); it != Skinning::sAllocations.end(); ++it) {
         }
         startTick = currentTick;
         GXSetDrawSync(Skinning::skCurrentToken);
+#ifdef AURORA_H700
+        if (!PortSkinningMayContinue("skin: ring marker submitted")) return nullptr;
+#endif
         ++Skinning::skCurrentToken;
       }
+#ifdef AURORA_H700
+      SDL_Delay(1);
+#endif
     }
   }
-  Skinning::sAllocations.push_back(SSkinnedAllocation(ptr, size, Skinning::skCurrentToken));
+#ifdef AURORA_H700
+  if (!PortSkinningMayContinue("skin: ring reservation returned")) return nullptr;
+  try {
+#endif
+    Skinning::sAllocations.push_back(SSkinnedAllocation(ptr, size, Skinning::skCurrentToken));
+#ifdef AURORA_H700
+  } catch (const std::bad_alloc&) {
+    // Do not free a tail reservation out of FIFO order. No pointer escapes and
+    // the sticky failure stops reuse until root has joined all CPU consumers.
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "skin: ring allocation metadata");
+    return nullptr;
+  }
+#endif
   return ptr;
 }
 
 void CSkinnedModel::AllocateStorage() {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (x38_owned && (x28_vertWorkspace.null() || x30_normalWorkspace.null())) {
+#ifdef AURORA_H700
+    PortH700::SkinLayout layout;
+    if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return;
+    int totalSize = 0;
+#if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
+    const size_t capacity = Skinning::sStaticSkinningDataSize > 0 ? Skinning::sStaticSkinningDataSize : 0;
+#else
+    const size_t capacity = sizeof(Skinning::sStaticSkinningData);
+#endif
+    if (!PortH700::SkinRingSize(size_t(layout.total) + 32, capacity, totalSize)) {
+      PortH700::NoteGameFailure(PortH700::GameFailure::SkinSize, "skin: workspace exceeds ring capacity");
+      return;
+    }
+    const unsigned vertSize = layout.alignedVertices;
+    TickAllocations();
+    if (PortH700::GameFailurePending()) return;
+#else
     int vertexCount = x10_skinRules->GetNumPoints();
     int normalCount = x10_skinRules->GetNumNormals();
     TickAllocations();
     int normSize = (normalCount * NormalStride(**x4_model) + 31) & ~31;
     int vertSize = (vertexCount * 12 + 31) & ~31;
     int totalSize = vertSize + normSize + 32;
+#endif
     void* ptr = EnsureAllocation(totalSize);
+#ifdef AURORA_H700
+    if (PortH700::GameFailurePending()) return;
+#endif
     if (ptr == Skinning::sStaticSkinningData) {
       GXInvalidateVtxCache();
     }
@@ -482,6 +695,9 @@ void CSkinnedModel::AllocateStorage() {
 }
 
 void CSkinnedModel::PostDrawFunc() const {
+#ifdef AURORA_H700
+  if (PortH700::GameFailurePending()) return;
+#endif
   if (x38_owned && !x28_vertWorkspace.null()) {
     x28_vertWorkspace = rstl::auto_ptr< float[] >();
     x30_normalWorkspace = rstl::auto_ptr< float[] >();
@@ -503,6 +719,22 @@ void CSkinnedModel::SetPointGeneratorFunc(void* data, void (*func)(void*, const 
 void CSkinnedModel::ClearPointGeneratorFunc() { sPointGen = nullptr; }
 
 float* CSkinnedModel::AllocateNewWorkspace(float** vertOut) {
+#ifdef AURORA_H700
+  if (vertOut != nullptr) *vertOut = nullptr;
+  if (PortH700::GameFailurePending()) return nullptr;
+  PortH700::SkinLayout layout;
+  if (!PortSkinLayout(*x10_skinRules, **x4_model, layout)) return nullptr;
+  float* ptr;
+  try {
+    ptr = static_cast< float* >(CMemory::Alloc(layout.total, IAllocator::kHI_RoundUpLen));
+  } catch (const std::bad_alloc&) {
+    PortH700::NoteGameFailure(PortH700::GameFailure::SkinAllocation, "skin: external workspace allocation");
+    return nullptr;
+  }
+  if (vertOut != nullptr)
+    *vertOut = reinterpret_cast< float* >(reinterpret_cast< char* >(ptr) + layout.alignedVertices);
+  return ptr;
+#else
   const CSkinRules* skinRules = *x10_skinRules;
   int normalCount = skinRules->GetNumNormals();
   int vertexCount = skinRules->GetNumPoints();
@@ -517,4 +749,5 @@ float* CSkinnedModel::AllocateNewWorkspace(float** vertOut) {
     *vertOut = reinterpret_cast< float* >(reinterpret_cast< char* >(ptr) + alignedVertSize);
   }
   return ptr;
+#endif
 }

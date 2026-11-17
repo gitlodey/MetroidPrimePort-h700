@@ -45,6 +45,7 @@ public:
   void Calculate(const CPoseAsTransforms&, const rstl::optional_object< CVertexMorphEffect >&,
                  const float*, float*);
 #ifdef AURORA_H700
+  static bool PortInitializeSkinning();
   bool PortTryCalculate(const CPoseAsTransforms&,
                         const rstl::optional_object< CVertexMorphEffect >&, const float*, float*);
 #endif

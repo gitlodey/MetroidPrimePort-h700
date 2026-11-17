@@ -1,7 +1,8 @@
 """Second GM12 iteration: narrow bindings to actual skin consumers/workspace branches.
 
 Source-order checks only, not game execution, allocation-failure injection, GPU
-validation or proof of quiescence. Leaf failure producers remain a later step.
+validation or proof of quiescence. Stage3 leaf producers are enabled; they must
+latch and return, never initiate deep root transport/checkpoint work.
 """
 import pathlib
 import re
@@ -232,13 +233,19 @@ class H700SkinConsumersWiring(unittest.TestCase):
             registered = body(target(path), "void " + cls + "::AcceptScriptMsg(")
             self.ordered(registered, init + "(mgr, CModelData::kWM_Normal);", GUARD)
 
-    def test_leaf_allocation_sizing_and_waits_have_no_new_failure_producers(self):
+    def test_enabled_leaf_producers_do_not_throw_or_request_root_checkpoint(self):
+        # Scan helpers as well as methods: moving a forbidden root operation
+        # into PortSkinningMayContinue/PortSkinLayout must not evade this check.
+        forbidden = (r"\bthrow\b|RootTerminalToken|PortH700Root|PrepareRootUnwind|"
+                     r"RootUnwindReady|RootCleanupAllowed|poll_generation_|"
+                     r"request_generation_|synchronize_game_work")
+        for path in (SKIN, "src/Kyoto/Animation/DolphinCSkinRules.cpp"):
+            with self.subTest(path=path):
+                self.assertNotRegex(target(path), forbidden)
         skin = target(SKIN)
-        for signature in ("void CSkinnedModel::Construct()", "void CSkinnedModel::Calculate(",
-                          "void* CSkinnedModel::EnsureAllocation(", "void CSkinnedModel::AllocateStorage()",
-                          "float* CSkinnedModel::AllocateNewWorkspace(", "void Skinning::AddSkinnedRef()",
-                          "void CSkinnedModel::TickAllocations()"):
-            self.assertNotRegex(body(skin, signature), r"PortH700::|PortTry|bad_alloc|catch\s*\(")
+        for failure in ("SkinNotReady", "SkinSize", "SkinAllocation"):
+            self.assertIn("PortH700::GameFailure::" + failure, skin)
+        self.assertIn("PortH700::NoteGameFailure", skin)
 
 
 if __name__ == "__main__":

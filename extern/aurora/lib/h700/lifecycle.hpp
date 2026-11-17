@@ -72,6 +72,9 @@ bool initialization_ready() noexcept;
 // Main safe-point only, with game ticks/draw stopped and no game reentry during progress.
 // Ongoing health does not depend on the startup-only initial-frame flag.
 bool game_work_healthy() noexcept;
+// Existing presenter progress API, also used by game skin-token/ring waits.
+// Main only, nonrecursive, no locks held; never dispatches game callbacks.
+bool main_progress_once();
 // Caller must first finish any open Aurora frame exactly once. Includes unpublished FIFO
 // bytes, render work, after-submit callback return and destruction of their CPU captures.
 // True protects game-owned source buffers, NOT GPU completion/native retirement. Leaves
