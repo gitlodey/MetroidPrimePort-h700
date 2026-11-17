@@ -1,64 +1,42 @@
-# H700 — весь оставшийся путь до принятой игры
+# H700 — план оставшейся работы
 
-**2026-11-17: общий пересмотр GM-12…GM-21 подготовлен, но ещё НЕ утверждён.** Это предложение одной связной редакции, не начало реализации. Полный текст: **[пересмотр остатка, редакция 2](H700_GAME_REMAINING_PLAN.md)**. [Прежний утверждённый план и история](H700_GAME_PLAN.md), [текущий прогресс](H700_PROGRESS.md).
+**Редакция3, 2026-11-17, на утверждение.** [Подробный необходимый остаток](H700_GAME_REMAINING_PLAN.md), [исходный план и результаты](H700_GAME_PLAN.md), [прогресс](H700_PROGRESS.md). Неутверждённый план редакции2 с16подшагами заменён, его дополнительные требования не действуют.
 
-## Что уже готово
+## Главное
 
-GM-01…GM-10, GM-11a и GM-11b завершены локально и отправлены. Есть настоящий ARM64 executable, retail H700 defaults, healthy reset/exit boundaries, terminal CPU checkpoint/cleanup и исправление request-before-buffer lifetime с реальными DVD/DMA waits.
+Нужна **Metroid Prime Unbound v0.46.0 на RG40XX H / H700 под muOS 2601.0 Jacaranda**, а не новый framework или идеальная тестовая матрица. Графика/UI, pad, слышимый звук, CARD save/load обязательны.30FPS — потом.
 
-Последняя production-итерация — `b9b1545fe`: сборка,21/21CPU/no-init/DVD,269/269FIFO,53/53render/lifecycle и H700/non-H700 compile PASS. **Новая полная игра на приставке ещё не запускалась.** Работающая IG-demo — опора, но не доказательство game graphics/input/audio/CARD. Достижение30FPS — следующий отдельный этап.
+GM-01…GM-11b уже завершены локально; последний production commit — `b9b1545fe`. Настоящий игровой executable собирается, backend и lifecycle механизмы есть. **Новая игра на приставке ещё не проверена.** Железо/ОС/build facts берём из документов, заново не исследуем.
 
-## Почему пересмотрели не только GM-12
+## Остаток — от известного дефекта к реальной игре
 
-У прежнего плана были недооценены связи между частями:
-
-- Ошибку skinning мало обнаружить: её должны остановить реальные model/shadow/boid consumers, draw/message обходы и root до обычного завершения кадра.
-- Безопасные defaults не гарантируют безопасный сохранённый INI. Он может снова включить shared card, quick-resume или mods; некоторые настройки применяют эффекты уже при чтении.
-- Игрового package/test mode пока нет. Diagnostic package не охватывает все game sources/notices и не задаёт loader path игровому executable.
-- Demo-launcher имеет watchdog и временные каталоги. Игра должна сохранять user/card/cache, не убивать процесс и не снимать lock, пока не завершились игра **и** log copier.
-- Save/load нужно доказать **до reset**. После исправления требуется новый идентифицированный RC и повторная приёмка, а не перенос старого PASS на другой binary.
-
-Это подтверждено исходниками; renderer, image, pinned dependencies и цели приёмки менять из-за этих findings не требуется.
-
-## Предлагаемый остаток целиком
-
-| Блок | Что делаем | Когда считаем завершённым |
+| Шаг | Необходимое действие | Проверяемый результат |
 | --- | --- | --- |
-| **GM-12a…d** | Единые sizing/status/wait правила → непосредственные consumers → dispatch/boot/frame/root → только затем включение новых failure producers | Ни неверный workspace, ни failed shadow/draw не используются; ошибка достигает существующего безопасного cleanup или честного fail-stop. Без deep throw, fake tokens и SkinPool rewrite |
-| **GM-13a…b** | Независимый сквозной lifetime review, production-linked CPU regressions, ARM64 game и полный non-H700 core/GX compile | Проверен весь включённый status-path, а не только helpers; CPU/source evidence не выдано за игру на Mali |
-| **GM-14a…b** | Физическая изоляция установки; проверка paths/migration; безопасное применение INI и protected UI changes | Старая установка не читается/не меняется. Startup mismatch отвергается до effects/owners; live incompatible toggle не меняет state/INI и не завершает игру. Bindings и разрешённые настройки сохраняются |
-| **GM-15a…c** | Launcher/environment, child/lock/signals, bounded logging | Один буквальный disc argument, сохранены frontend/audio routing; нет kill watchdog. Exit и log finalization различаются; живой/неизвестный child/copier не разрешает следующий запуск |
-| **GM-16a…c** | Настоящий game test/package mode, local loader path, полный provenance/ABI/import report и notices | Полный игровой payload проверен; никакой подмены system libs/неполного slice audit. Неизвестная exact firmware-symbol coverage названа явно |
-| **GM-17a…b** | Source freeze → fresh build A → независимый fresh B → сравнение → один RC; заранее подготовленные маршруты | Один immutable package/hash, все local gates, известный доступ к station и поздним effects. Recipe reproducibility не выдаётся за byte-identical без сравнения |
-| **GM-18 / A** | Первый normal Ports launch, logo/movie, new-game gameplay, HUD/pad/слышимый audio, normal Exit | Не только меню; физический результат подтверждён пользователем. До20мин по отдельному разрешению |
-| **GM-19 / B** | Повторяемый маршрут/RAM → station save → Exit → новый процесс/CARD load → только затем reset/reload | Собственная карта, реальный сохранённый progress, settings/bindings persist и same-generation reset. До30мин, разрешение сразу на два перечисленных процесса |
-| **GM-20 / C** | Materials, skinned actors/weapon/pause doll, water/reflections/bloom, Scan/Thermal/X-ray/EFB, все кнопки/audio | Полный конечный checklist на заранее доступных сценах; missing mandatory scene — pending, не N/A. До30мин по отдельному разрешению |
-| **GM-21** | Отчёт и manual install/update/uninstall именно испытанного пакета | A/B/C одного финального RC, ограничения и пользовательская приёмка. Не пересобирать binary после PASS |
+| **1. GM-12 — закончить skinning** | Корректные sizes/token waits и передача отказа через реальные model/shadow/boid consumers до root; использовать готовый GM-11b cleanup | Нет неправильных workspace/draw/free. Running jobs держат свои данные, Unknown — fail-stop. Ring32MiB и scheduler не меняются |
+| **2. GM-13 — проверить изменённое** | ARM64 game build, относящиеся CPU tests, non-H700 core/GX и изменённые game TUs | Замкнутый production status/lifetime path, а не только helper tests. Без GPU в container и без новой backend-матрицы |
+| **3. GM-14/15 — отдельная установка и запуск** | Свои executable/user/card/cache, чистые начальные настройки; тонкий Ports launcher с явным disc argument, правильным SDL/audio env и lock/exit handling | Старый порт/данные не используются. Настройки/карта сохраняются. Нет demo watchdog, автоматического kill или ложного exit0 |
+| **4. GM-16/17 — проверенный пакет** | Адаптировать существующие package/audit helpers к игре; local SDL loader path, actual ABI/notices/source/input/hash; повторить fresh build того же source state | Один идентифицированный RC, воспроизводимый рецепт, install/rollback инструкции. Без system-library replacement и нового build framework |
+| **5. GM-18/19/20 — реальная приёмка** | A: gameplay/display/pad/audio/Exit. B: rooms/RAM → station save → Exit → новый процесс/CARD load → затем reset. C: оставшиеся materials/visors/EFB/input/audio | Пользователь видит/слышит результат; настоящая своя карта загружается новым процессом. Missing scene не становится PASS |
+| **6. GM-21 — завершить перенос** | Зафиксировать ровно испытанный пакет, checklist/ограничения и инструкции | Принятая игра на указанной приставке/ОС; без непроверенной «финальной» пересборки |
 
-Подготовительные GM-12 commits **не включают новые skin failures**, пока consumers/root ещё не готовы. Каждый подшаг проверяется и получает отдельный commit + push. Известный прямой consumer того же status-контракта входит в согласованный scope, а не становится поводом повторно утверждать каждую правку.
+Skinning выполняется безопасными рабочими commits: сначала готовность root/consumers, затем включение новых отказов. Доказанный прямой caller/header/test — часть исправления, не повод снова спрашивать одобрение. Отдельный policy-framework для этого не нужен.
 
-## Существенные решения для одного согласования
+## Что убрано из обязательной работы
 
-1. **Расширенный сквозной scope GM-12/13**, а не leaf-only исправление; ring32MiB и scheduler сохраняются.
-2. **H700 acceptance-profile validation** до side-effectful чтения/применения protected settings. Не переписываем INI молча; startup rejection — nonzero до owners, live rejection — объяснение без изменения состояния/внезапного выхода. Common parser selftests не ослабляются.
-3. **Game-specific packaging/launcher и ограниченные логи:** собственные постоянные каталоги, один image argument, сохранённый audio route, local `$ORIGIN/lib`, unique per-run bounded sinks и подтверждённое завершение log copier. Потеря evidence не становится PASS.
-4. **Same-image локальные corrections после device findings:** узкий fix существующего решения + regression + новый RC, без нового approval каждой механической правки. Смена архитектуры/pins/image/security/критериев всё равно требует остановки.
-5. **Device permission на конечную последовательность окна**, включая обязательный второй процесс B. Это не разрешение device access сейчас; deploy/SSH/log observation и дополнительные retries согласуются явно.
+- Всеобщая prevalidation INI и блокировка небазовых UI-настроек. Для цели достаточно собственной чистой установки и согласованного retail-профиля; произвольные ручные изменения не входят в эту приёмку. INI не перезаписывается молча.
+- Новый ready/health/final protocol log copier. Оставляем существующее логирование/redaction/RAM diagnostics с узким безопасным byte cap и продолжением drain; потеря лога не означает отсутствие ошибок.
+- Новый inventory железа/firmware, полная symbol/platform matrix, повтор graphics demo и смена pins/backend.
+- Подготовка поздних visors **до первого запуска**. Они нужны перед C и до полной приёмки, но не блокируют A.
+- 16самостоятельных local gates и оценка срока умножением их числа на часы. Нужны законченные рабочие итерации, а не раздувание структуры.
 
-Все D1…D11 технически сохраняются; явно расширяется только временной scope same-image сборок на corrections этой приёмки и уточняется модель согласования запусков. Новые dependencies/backend, generic exception framework, отключение retail effects, изменение RAM thresholds/sizes и автоматический kill не разрешаются.
+## Условия выполнения
 
-## Как действуем при runtime-дефекте
+**Локально:** прежние exact image/14pins/backend/профиль. Каждая завершённая безопасная итерация — проверка → документация → commit/push. Крупный skinning block не выдаётся за одну часовую правку;1–2ч — ориентир рабочей итерации, не причина снова переписывать план из-за каждого caller.
 
-Фиксируем failing RC/scene → минимальная диагностика → узкий local fix/test → commit/push → новый frozen RC/hash. Обновление только stopped test installation и только payload; `user/`/карты/настройки/кэш сохраняются. Обновление на устройстве требует разрешения.
+**На устройстве:** A до20мин, B до30мин, C до30мин — каждое отдельно разрешается, с конечной последовательностью процессов. SSH/deploy/log observation только по явному разрешению. Сейчас ни одного из этих разрешений нет. До A выбираем disc/container/private path и раннюю сцену; station route нужен к B, late-scene access — к C. Прохождение отдельно.
 
-Сначала можно повторить затронутый сценарий для диагностики. Для итогового GM-21 A/B/C повторяются **на одном финальном RC**. Повтор A на сохранённой установке обозначается warm/update, не притворяется новым cold-install test. User/cache ради PASS не очищаются.
+**Safety:** sampled96MiB остаётся начальной policy, не измеренной гарантией. При известной ошибке/недостатке памяти прекращаем нагрузку и выходим безопасно; CARD не прерываем. Зависание/Unknown — FAIL/PARTIAL, не kill/retry permission. Старые данные/firmware/services/clocks/swap не трогаем.
 
-При below96MiB, потере RAM/log evidence или зависании прекращаем дальнейшую нагрузку, normal Exit в безопасной точке, не прерываем CARD. Unknown/fail-stop — не нормальный выход и не разрешение следующего запуска. Force termination — отдельное решение.96MiB — sampled начальная policy, не измеренная гарантия.
+**Если обнаружится реальный runtime-дефект:** минимальный local fix того же решения + regression + новый hash/RC, с теми же image/pins; повторяем failing/зависимые проверки. Для окончательного результата обязательные пункты должны быть подтверждены на принятом RC, старый PASS новому binary самовольно не переносится. Новые device-процессы согласуются отдельно. Архитектурная смена/ослабление safety/критериев — остановка, обычная техническая правка — нет.
 
-## Сколько осталось и что нужно от пользователя
-
-Осталось **16 локальных подшагов: ориентир16–32ч активной работы**, плюс4–8ч подготовки/разбора device/final report — **около20–40ч активной работы**, без cold-build waits, ожидания пользователя, прохождения к нужным сценам и correction loops. Это новая оценка остатка, не обещание срока; прежние30–42ч относились ко всему исходному плану.
-
-**Сейчас нужен один ответ на редакцию2 целиком**, а не согласование очередного подпункта GM-12. Production work не продолжается до этого ответа.
-
-Позже, до готовности device-окон: один legal GameCube release/container, новый stable install path/Ports invocation, конкретный station/room маршрут и доступ к Thermal/X-ray/другим обязательным сценам. Private image/save paths и данные не публикуются. Окна A/B/C, SSH/deploy и private test-copy preparation разрешаются отдельно.
+**Результат текущего запроса:** правила работы постоянно закреплены в AGENTS/CLAUDE/workflow; подготовлен необходимый остаток, без production-изменений и запусков. После утверждения этого плана выполняем его, не начинаем новый круг общего планирования.
