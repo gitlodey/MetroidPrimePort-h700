@@ -222,7 +222,7 @@ Existing full collector сохранён, added actual-source game notice covera
 
 Incremental actual staging build+audit+archive/no-init PASS:125/125scoped CPU CTest,269/269FIFO,39/39shared helper и34/34game helper tests в Linux. Initial local-RUNPATH/no-SDL loader failure исправлен копированием same target SDL, не LD_LIBRARY_PATH. Source/helpers also tested on macOS; timeout-only test skipped там иpassed вLinux. Commands/logs — ignored `gm16-*`; smoke archive не qualifying fresh RC. [Проверенный layout/recipe/ограничения](../packaging/h700/README.md).
 
-**GM-16 ещё не завершён:** нужен первый qualifying fresh package, затем GM-17 повтор тех же bytes. Implementation/staging commit `25c15c05d` отправлен. GPU/device не запускались.
+На этой итерации GM-16 ещё не завершён: нужен qualifying fresh package. Implementation/staging commit `25c15c05d` отправлен. Последующие successful fresh results приведены ниже; GPU/device не запускались.
 
 ### GM-16, fresh attempt — PARTIAL: disk full, Docker unavailable
 
@@ -230,4 +230,16 @@ Incremental actual staging build+audit+archive/no-init PASS:125/125scoped CPU CT
 
 Далее run завершился с `Errno28 No space left on device` (host command-record finalization также не смогла записаться). Package содержит лишь partial copy executable/lib, нет package-result/завершённого audit/notices/archive: **это НЕ qualifying RC и не GM-16 PASS**. Начальные3,1GiB free оказались недостаточны для peak host/Docker footprint; оставалось164MiB. Удалены только smoke staging/archive, созданные этой сессией внутри `build/h700-game-gm03` (не принятый RC); возвращено около300MiB. Smoke manifests/logs сохранены. Прежние build trees, исходные14archives и незавершённый rc1 не удалялись.
 
-После этого `docker ps` дважды не ответил за20/30s; active-container state не установлен. Не перезапускали Docker глобально, не pruning/убивали процессы. Из-за unknown state rc1 удерживается. Logs/manifests — ignored `build/h700-game-rc1`; host-commands.json остался со stale running status, это не доказательство живого процесса. Нужны свободное место и восстановленный Docker до продолжения; план/image/pins не меняются. После этого выбрать два новых fresh outputs одного unchanged source state; partial rc1 не выдаётся за успешный первый build. GM-17 и device-окна не начинались.
+После этого `docker ps` дважды не ответил за20/30s; active-container state не установлен. Не перезапускали Docker глобально, не pruning/убивали процессы. Из-за unknown state rc1 удерживается. Logs/manifests — ignored `build/h700-game-rc1`; host-commands.json остался со stale running status, это не доказательство живого процесса. Нужны свободное место и восстановленный Docker до продолжения; план/image/pins не меняются. После этого выбрать два новых fresh outputs одного unchanged source state; partial rc1 не выдаётся за успешный первый build. На момент остановки GM-17 и device-окна не начинались.
+
+### GM-16 — LOCAL PASS: qualifying fresh game package
+
+Пользователь освободил место и восстановил Docker. Actual daemon/image/native ARM64 подтверждены; старых active containers нет. Без production edits выполнен полный package CLI в новом `build/h700-game-rc2`: fresh1700-action compile/link609,094s;125/125CPU CTest,269/269FIFO,39/39shared и34/34game helper tests PASS. Staged no-init/settings/profile, actual game+SDL local RUNPATH/ABI/provider/notices/content/hash/archive gates PASS. Это первый qualifying fresh package; ENOSPC rc1 не переиспользовался и не засчитан. Public distribution и runtime/device PASS не заявлены.
+
+### GM-17 — build/reproducibility LOCAL PASS; disc choice PENDING
+
+Без изменений checkout повторён тот же CLI в новом `build/h700-game-rc3`: fresh compile/link547,067s, те же125/269/39/34tests и все staged gates PASS. Frozen source revision `e86eac74c`,3344files, source SHA256 `6e613d78a3cf855c7841e88e5076e837fb349eaf41d9888e930abb68bb072b99`, dirty-source list пуст в обоих runs. Source/14input/environment/providers/compile commands/generated build info совпали. CMakeCache отличается только SITE hostname. Из100payload files различается только executable:24bytes — CARD __TIME__ string и GNU build-id; остальные ELF bytes совпали. Exact ranges/readelf evidence и обоих archive/ELF hashes — в [RC report](H700_GAME_RC.md). Bit-identical build не заявлен; код ради timestamp не менялся.
+
+Выбран **ровно rc3**: `build/h700-game-rc3/h700-game-rc.tar.gz`,77462023bytes, SHA256 `2539152dbbece585732db9aa7b9ad5bbc6f8b70c53667aed7d30579b31ccf18a`; после gates не пересобирался. Manual layout/install/update/rollback входят в payload. Build artifacts/logs/comparison report сохранены локально, чужие outputs и original14archives не удалялись.
+
+GM-16 завершён, technical build/repro часть GM-17 готова. **Готовность к A пока не объявлена:** user legal GameCube region/revision/container и соответствующий ранний маршрут должны быть подтверждены. Предлагаем New Game→intro→Frigate Orpheon/Exterior Docking Hangar→move/aim/fire→PortMenu Exit; подробности и ограничения в RC report. Device permissions отдельно; SSH/deploy/GPU/game runs не выполнялись. Late scene access нужен к C, не blocker первого A.
