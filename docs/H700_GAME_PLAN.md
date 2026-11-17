@@ -461,4 +461,14 @@ Platform порядок учитывает SDL ownership: AIPortShutdown (`SDL_A
 
 Проверки: полный incremental game compile/link, **8/8 CPU/no-init CTest PASS**, non-H700 game/platform main compile PASS. Новые ordering/failure cases используют production retire helper и проверяют loader/services lifetime, subsystem/global-generated cleanup, final flush перед ARAM. Independent lifecycle review без blockers; реальный normal exit/GPU/loader execution остаётся device gate, terminal exception transport ещё не реализован. Logs/commands — ignored `gm08-*`.
 
-Следующая GM-09 — terminal CPU-quiescence checkpoint до Maps; локальные шаги продолжаются без нового approval.
+GM-08 commit/push: `6f7f12d32`.
+
+### GM-09 — LOCAL PASS: terminal CPU checkpoint перед Maps
+
+Новый `poll_generation_cpu_quiescence()` проходит существующие actual FIFO/render/compiler exit acknowledgements/joins и удерживается **до тела Maps и до дальнейшего main progress** на checkpoint. Отдельный `CpuQuiescent` добавлен в конец status enum, старые numeric diagnostics сохранены. Это не Released/GPU-complete. Repeated CPU polls не retire maps/abandoned recorder/native/holders/device/exports; только explicit full poll возобновляет тот же cursor. Если Maps body уже начиналось и осталось Pending, новый флаг исключает ложный checkpoint постфактум. Terminal mode помечает generation failed и запрещает clean restart; default full poll API/semantics сохранены.
+
+Проверки: full H700 game/core/GX build; **8/8 game CPU/no-init CTest,50/50 render/lifecycle/wait tests,262/262 FIFO tests PASS**; полный non-H700 core+GX compile PASS. Добавлены cursor/source-contract cases stop/resume, Pending/Unknown, запрета false checkpoint после Maps entry и numeric-status compatibility. Это CPU/model/source evidence, не GPU device failure injection. Independent lifecycle review без blockers; raw logs/commands — ignored `gm09-*`.
+
+Перед GM-10 узко проверен unwind set root safe-points RsMain: два owning single_ptr должны быть вне boot+loop try, throws только после возврата вложенных calls. Root typed catch сначала удерживает owners; explicit terminal cleanup — GM-11. Нельзя подключать deep throw из произвольного graphics/skinning call без проверки guards: `SPortVisorGuard`/`PortInventoryScope` действительно отправляют GX-команды из деструкторов. Применимость к конкретным skinning waits проверяется в GM-12, не speculative scheduler rewrite. Пока это не заявляется отменой существующих deep busy-waits.
+
+Следующая GM-10 — typed root transport с pre-throw CPU checkpoint и живыми outer owners.

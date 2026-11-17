@@ -9,6 +9,7 @@
 
 namespace {
 using aurora::h700::GenerationLifecycle;
+using aurora::h700::ShutdownGoal;
 using aurora::h700::ShutdownStage;
 using aurora::h700::ShutdownStatus;
 constexpr std::array Stages{ShutdownStage::Producers, ShutdownStage::Fifo, ShutdownStage::Render,
@@ -80,6 +81,80 @@ TEST(GenerationLifecycleTest, RepeatedShutdownDoesNotReopenOrRepeatStages) {
   }
 }
 
+TEST(GenerationLifecycleTest, CpuCheckpointRequiresEveryUpstreamStageAndHoldsBeforeMaps) {
+  GenerationLifecycle lifecycle;
+  constexpr auto goal = ShutdownGoal::CpuQuiescence;
+  ASSERT_TRUE(lifecycle.begin());
+  lifecycle.fail(); // production CPU polling is terminal-only
+  lifecycle.request_stop();
+  for (const auto stage : {ShutdownStage::Producers, ShutdownStage::Fifo, ShutdownStage::Render,
+                           ShutdownStage::Compiler}) {
+    ASSERT_EQ(lifecycle.stage(), stage);
+    // An outstanding job/exit acknowledgement leaves its stage Pending, even on failure.
+    for (int i = 0; i < 4; ++i) {
+      EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Pending);
+      EXPECT_FALSE(lifecycle.advance(ShutdownStage::Maps, goal));
+      EXPECT_FALSE(lifecycle.begin_map_retirement(goal));
+      EXPECT_EQ(lifecycle.stage(), stage);
+    }
+    ASSERT_TRUE(lifecycle.advance(stage, goal));
+  }
+  for (int i = 0; i < 4; ++i) {
+    lifecycle.request_stop();
+    EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::CpuQuiescent);
+    EXPECT_EQ(lifecycle.result(goal).stage, ShutdownStage::Maps);
+    EXPECT_EQ(lifecycle.result().status, ShutdownStatus::Pending); // full API never emits CPU status
+    EXPECT_FALSE(lifecycle.begin_map_retirement(goal));
+    for (const auto stage : Stages) EXPECT_FALSE(lifecycle.advance(stage, goal));
+    EXPECT_FALSE(lifecycle.begin());
+  }
+  // Explicit full polling resumes the same Maps cursor, not a new generation.
+  ASSERT_TRUE(lifecycle.begin_map_retirement(ShutdownGoal::Full));
+  EXPECT_EQ(lifecycle.stage(), ShutdownStage::Maps);
+  EXPECT_EQ(lifecycle.result().status, ShutdownStatus::Pending);
+  EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Pending); // Maps may itself remain pending
+  for (const auto stage : {ShutdownStage::Maps, ShutdownStage::Native, ShutdownStage::Holders,
+                           ShutdownStage::Device, ShutdownStage::Exports, ShutdownStage::Window}) {
+    ASSERT_EQ(lifecycle.stage(), stage);
+    EXPECT_EQ(lifecycle.result().status, ShutdownStatus::Pending);
+    ASSERT_TRUE(lifecycle.advance(stage));
+    EXPECT_NE(lifecycle.result(goal).status, ShutdownStatus::CpuQuiescent);
+  }
+  EXPECT_EQ(lifecycle.result().status, ShutdownStatus::FailedReleased);
+  EXPECT_FALSE(lifecycle.begin());
+}
+
+TEST(GenerationLifecycleTest, CpuPollDoesNotMistakeUnknownOrAlreadyRetiringMapsForCheckpoint) {
+  constexpr auto goal = ShutdownGoal::CpuQuiescence;
+  GenerationLifecycle lifecycle;
+  EXPECT_NE(lifecycle.result(goal).status, ShutdownStatus::CpuQuiescent);
+  ASSERT_TRUE(lifecycle.begin());
+  EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Pending);
+  lifecycle.request_stop();
+  for (const auto stage : {ShutdownStage::Producers, ShutdownStage::Fifo, ShutdownStage::Render,
+                           ShutdownStage::Compiler}) ASSERT_TRUE(lifecycle.advance(stage));
+  ASSERT_TRUE(lifecycle.begin_map_retirement(ShutdownGoal::Full));
+  for (int i = 0; i < 4; ++i) {
+    EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Pending);
+    EXPECT_FALSE(lifecycle.begin_map_retirement(goal));
+    EXPECT_FALSE(lifecycle.advance(ShutdownStage::Maps, goal));
+    EXPECT_EQ(lifecycle.stage(), ShutdownStage::Maps);
+  }
+  lifecycle.unknown();
+  EXPECT_EQ(lifecycle.result(goal).status, ShutdownStatus::Unknown);
+  EXPECT_FALSE(lifecycle.advance(ShutdownStage::Compiler, goal));
+  EXPECT_FALSE(lifecycle.begin_map_retirement(goal));
+  EXPECT_FALSE(lifecycle.begin());
+}
+
+TEST(GenerationLifecycleTest, CpuStatusPreservesExistingDiagnosticValues) {
+  EXPECT_EQ(static_cast<int>(ShutdownStatus::Pending), 0);
+  EXPECT_EQ(static_cast<int>(ShutdownStatus::Released), 1);
+  EXPECT_EQ(static_cast<int>(ShutdownStatus::FailedReleased), 2);
+  EXPECT_EQ(static_cast<int>(ShutdownStatus::Unknown), 3);
+  EXPECT_EQ(static_cast<int>(ShutdownStatus::CpuQuiescent), 4);
+}
+
 std::string source(const char* path) {
   std::ifstream file(std::string(MAP_RETIREMENT_SOURCE_DIR) + "/" + path);
   EXPECT_TRUE(file.good()) << path;
@@ -140,6 +215,56 @@ TEST(GenerationLifecycleSource, CursorReturnsToDeadlineRatherThanBlockingOnWorke
   EXPECT_EQ(frame.find("while ("), std::string::npos);
   const auto growth = section(source("gfx/frame.cpp"), "bool grow_frame_buffer(", "bool grow_staging(");
   EXPECT_NE(growth.find("render_worker::capturing_frame_tail() || try_gpu_synchronize()"), std::string::npos);
+}
+
+TEST(GenerationLifecycleSource, CpuPollHoldsBeforeMapsAndOnlyFullPollResumesRetirement) {
+  const auto aurora = source("aurora.cpp");
+  const auto full = section(aurora, "h700::ShutdownResult poll_h700_shutdown()",
+                            "h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept {");
+  EXPECT_NE(full.find("return poll_h700_shutdown(h700::ShutdownGoal::Full)"), std::string::npos);
+  const auto cpu = section(aurora, "h700::ShutdownResult h700::poll_generation_cpu_quiescence()", "#endif");
+  EXPECT_NE(cpu.find("return poll_h700_shutdown(h700::ShutdownGoal::CpuQuiescence)"), std::string::npos);
+  const auto poll = section(aurora, "h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept {",
+                            "void shutdown() noexcept");
+  const auto barrier = section(poll, "if (goal == h700::ShutdownGoal::CpuQuiescence)", "const auto unknown");
+  EXPECT_NE(barrier.find("g_generationLifecycle.fail()"), std::string::npos);
+  EXPECT_NE(barrier.find("h700::forbid_next_generation()"), std::string::npos);
+  EXPECT_NE(barrier.find("stage() >= Stage::Maps) return g_generationLifecycle.result(goal)"), std::string::npos);
+  EXPECT_LT(poll.find("stage() >= Stage::Maps"), poll.find("h700::main_progress_once()"));
+  EXPECT_LT(poll.find("stage() >= Stage::Maps"), poll.find("switch (stage)"));
+  const auto maps = section(poll, "case Stage::Maps:", "case Stage::Native:");
+  EXPECT_NE(maps.find("if (!g_generationLifecycle.begin_map_retirement(goal)) return g_generationLifecycle.result(goal)"),
+            std::string::npos);
+  EXPECT_LT(maps.find("begin_map_retirement(goal)"), maps.find("gfx::retire_frame_resources_after_quiescence()"));
+  EXPECT_LT(poll.find("case Stage::Maps:"), poll.find("gfx::retire_frame_resources_after_quiescence()"));
+  EXPECT_LT(poll.find("gfx::retire_frame_resources_after_quiescence()"), poll.find("webgpu::poll_h700_queue_drain()"));
+  EXPECT_NE(poll.find("g_generationLifecycle.advance(stage, goal)"), std::string::npos);
+  EXPECT_NE(poll.find("return g_generationLifecycle.result(goal)"), std::string::npos);
+  EXPECT_EQ(poll.find("throw "), std::string::npos);
+}
+
+TEST(GenerationLifecycleSource, CpuCheckpointCannotBypassPendingOrFailedWorkerJoins) {
+  const auto poll = section(source("aurora.cpp"),
+                            "h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept {",
+                            "void shutdown() noexcept");
+  const auto fifo = section(poll, "case Stage::Fifo:", "case Stage::Render:");
+  EXPECT_NE(fifo.find("gx::fifo::poll_shutdown()"), std::string::npos);
+  EXPECT_NE(fifo.find("result == gx::fifo::PollStatus::Pending) return g_generationLifecycle.result()"), std::string::npos);
+  EXPECT_NE(fifo.find("result == gx::fifo::PollStatus::Failed) return unknown("), std::string::npos);
+  const auto render = section(poll, "case Stage::Render:", "case Stage::Compiler:");
+  EXPECT_NE(render.find("gfx::render_worker::poll_shutdown()"), std::string::npos);
+  EXPECT_NE(render.find("result == gfx::render_worker::Outcome::Pending) return g_generationLifecycle.result()"),
+            std::string::npos);
+  EXPECT_NE(render.find("result != gfx::render_worker::Outcome::Completed) return unknown("), std::string::npos);
+  const auto compiler = section(poll, "case Stage::Compiler:", "case Stage::Maps:");
+  EXPECT_NE(compiler.find("gfx::poll_pipeline_cache_shutdown()"), std::string::npos);
+  EXPECT_NE(compiler.find("result == gfx::PipelineShutdownStatus::Pending) return g_generationLifecycle.result()"),
+            std::string::npos);
+  EXPECT_NE(compiler.find("result == gfx::PipelineShutdownStatus::Failed) return unknown("), std::string::npos);
+  EXPECT_LT(poll.find("gfx::poll_pipeline_cache_shutdown()"), poll.find("g_generationLifecycle.advance(stage, goal)"));
+  // Actual exit-ack-before-join contracts remain covered by the existing worker source tests.
+  EXPECT_EQ(poll.find("is_quiescent()"), std::string::npos);
+  EXPECT_EQ(poll.find("queue.empty()"), std::string::npos);
 }
 
 TEST(GenerationLifecycleSource, EveryWorkerUnbindsOnItsOwnThreadBeforeExitAcknowledgement) {

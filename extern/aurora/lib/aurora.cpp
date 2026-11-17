@@ -461,7 +461,13 @@ void request_h700_shutdown() noexcept {
   if (g_fifoStarted) gx::fifo::request_drain(g_shutdownFifoDrain);
 }
 
+h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept;
+
 h700::ShutdownResult poll_h700_shutdown() noexcept {
+  return poll_h700_shutdown(h700::ShutdownGoal::Full);
+}
+
+h700::ShutdownResult poll_h700_shutdown(h700::ShutdownGoal goal) noexcept {
   using Stage = h700::ShutdownStage;
   using Status = h700::ShutdownStatus;
   if (g_lifecycleMain != std::thread::id{} && g_lifecycleMain != std::this_thread::get_id())
@@ -472,6 +478,14 @@ h700::ShutdownResult poll_h700_shutdown() noexcept {
   request_h700_shutdown();
   if (g_generationLifecycle.stage() == Stage::Done || g_generationLifecycle.stage() == Stage::Unknown)
     return g_generationLifecycle.result();
+  if (goal == h700::ShutdownGoal::CpuQuiescence) {
+    // This is terminal transport preparation, never a healthy reset/restart boundary.
+    g_generationLifecycle.fail();
+    h700::forbid_next_generation();
+    // Hold before even main progress can retire callbacks. A late request after Maps
+    // entry remains Pending, not CPU proof with already-retired ownership.
+    if (g_generationLifecycle.stage() >= Stage::Maps) return g_generationLifecycle.result(goal);
+  }
   const auto unknown = [](const char* reason) {
     Log.error("H700 teardown unknown: {}. Retaining remaining ownership; no next generation", reason);
     if (auto state = h700::presentation_state()) state->fail(reason);
@@ -542,6 +556,7 @@ h700::ShutdownResult poll_h700_shutdown() noexcept {
     }
     break;
   case Stage::Maps:
+    if (!g_generationLifecycle.begin_map_retirement(goal)) return g_generationLifecycle.result(goal);
     if (g_gfxStarted && !gfx::retire_frame_resources_after_quiescence()) return g_generationLifecycle.result();
     break;
   case Stage::Native: {
@@ -585,8 +600,8 @@ h700::ShutdownResult poll_h700_shutdown() noexcept {
     break;
   case Stage::Done: case Stage::Unknown: return g_generationLifecycle.result();
   }
-  (void)g_generationLifecycle.advance(stage);
-  return g_generationLifecycle.result();
+  (void)g_generationLifecycle.advance(stage, goal);
+  return g_generationLifecycle.result(goal);
 }
 #endif
 
@@ -1042,6 +1057,9 @@ bool h700::synchronize_game_work() noexcept {
 }
 void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
 h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }
+h700::ShutdownResult h700::poll_generation_cpu_quiescence() noexcept {
+  return poll_h700_shutdown(h700::ShutdownGoal::CpuQuiescence);
+}
 #endif
 
 void request_screenshot() noexcept {
