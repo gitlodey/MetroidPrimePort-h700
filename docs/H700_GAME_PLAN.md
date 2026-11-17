@@ -2,7 +2,9 @@
 
 **Редакция 1, 2026-11-16. УТВЕРЖДЁН пользователем: «Прочитал короткую версию плана. Даю добро на все». Решения D1…D11 и локальные GM-01…GM-17 разрешены; commit/push после каждой завершённой итерации подтверждены отдельно. Device-окна по D11 согласуются отдельно.**
 
-**Согласованное уточнение, 2026-11-17:** пользователь разрешил только разбивку GM-11 на GM-11a/GM-11b без изменения D1…D11 и дальнейшего плана. Сначала завершить/проверить/commit+push GM-10, затем последовательно GM-11a и GM-11b; остановка на согласование split снята.
+**Согласованные уточнения, 2026-11-17:** GM-11 разделён на GM-11a/GM-11b; затем пользователь разрешил узкое DVD-lifetime расширение GM-11b. Оба подшага завершены/отправлены, результаты ниже.
+
+**Актуальное предложение по всему остатку:** [редакция 2, GM-12…GM-21](H700_GAME_REMAINING_PLAN.md) — результат запрошенного пользователем общего пересмотра после GM-11b. Она ещё **НЕ утверждена**; production work остановлена. После одобрения заменяет оставшиеся карточки/процедуры редакции1, не историю завершённых шагов. Изолированное прежнее предложение split GM-12 на два шага не является текущим планом.
 
 Цель: воспроизводимо собрать **Metroid Prime Unbound v0.46.0** и получить корректно работающую игру на **ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda**: графика, интерфейс, встроенный контроллер, звук, штатные сохранение/загрузка. **Достижение 30 FPS — следующий отдельный этап**, не критерий завершения этого плана.
 
@@ -355,11 +357,11 @@ Reset и normal exit выполняются на main safe-point:
 
 ## 10. Оценка и порядок утверждения
 
-**21 исходная карточка, GM-11 разбита на два согласованных подшага**, ориентир **около 30–42 часов активной работы** при отсутствии новых фундаментальных блокеров: local integration GM-01…17, три отдельных device-окна GM-18…20, итог GM-21. Это не гарантия срока: cold full builds/очередь пользователя/прохождение к late scenes/новые согласуемые исправления отдельно. GM-02 и GM-11 особенно чувствительны к ещё не измеренному объёму; их completion не гарантирован одной карточкой.
+**Историческая оценка редакции1:**21 исходная карточка, GM-11 разбита на два согласованных подшага; ориентир **около 30–42 часов активной работы всего первоначального плана**, не оставшегося после GM-11b объёма при отсутствии новых фундаментальных блокеров: local integration GM-01…17, три отдельных device-окна GM-18…20, итог GM-21. Это не гарантия срока: cold full builds/очередь пользователя/прохождение к late scenes/новые согласуемые исправления отдельно. GM-02 и GM-11 особенно чувствительны к ещё не измеренному объёму; их completion не гарантирован одной карточкой.
 
 Утверждённый порядок: D1…D11 и **локальные GM-01…GM-17** выполняем последовательно с commit/push после завершённых проверок. Перед устройством показать RC evidence, конкретные scenes и запросить окно A; затем отдельно B и C. GM-21 закрывается только после реальной приёмки. Пользователь выбрал полный план, не ограничение первым блоком GM-01/02.
 
-**Статус после согласования: локальная реализация разрешена, GM-01 configure, GM-02 compile/link и GM-03 retail profile LOCAL PASS. Выполнение отдельных GM-итераций фиксируется ниже только по фактическим проверкам; device actions не разрешены общим approval.**
+**Текущий статус:** GM-01…GM-11b LOCAL PASS по результатам ниже; GM-12 не реализован. Общий пересмотр остатка в [редакции2](H700_GAME_REMAINING_PLAN.md) ждёт единого согласования. Device actions не разрешены общим approval.
 
 ## 11. Проверка черновика до утверждения
 
@@ -558,4 +560,12 @@ Commands/logs: ignored `gm11b-*`. GPU/device, реальный device-loss и и
 - известные `SPortVisorGuard`/`PortInventoryScope` не доказаны как enclosing scopes именно ring wait (у doll skinning раньше visor scope), но это не разрешение бросать из общего GX/deep helper. Status должен вернуться к root до seal/throw;
 - `SkinPool::Run` ждёт `mPending==0` после выполнения jobs, которые захватывают caller stack/input/output. Нельзя делать early-cancel return или считать FIFO/render/compiler checkpoint его join. Scheduler/ring32MiB не меняем.
 
-**Предлагаемое уточнение, ещё НЕ утверждено:** расширить GM-12 на перечисленные непосредственные consumer/dispatch seams и разделить на GM-12a (checked-sizing/wait/token policy + CPU regressions без включения незамкнутого нового failure path) и GM-12b (единое production wiring: root init handshake, leaf allocation/status, root-visible failure и short-circuit consumers, root handling до normal frame tail, проверки). Подшаги — отдельные commit/push; GM-12 считается завершённым только после обоих. Не вводить deep exceptions, generic ignore-GX, fake tokens, unskinned fallback при ошибке или SkinPool rewrite. Альтернатива — явно согласовать тот же расширенный scope одной более крупной карточкой, но не оставлять его скрытым под прежним списком файлов. До решения пользователя перенос остановлен по workflow; это source-level scope finding, не device failure.
+**Историческое изолированное предложение, НЕ утверждено и заменено общим пересмотром редакции2:** расширить GM-12 на перечисленные непосредственные consumer/dispatch seams и разделить на GM-12a (checked-sizing/wait/token policy + CPU regressions без включения незамкнутого нового failure path) и GM-12b (единое production wiring: root init handshake, leaf allocation/status, root-visible failure и short-circuit consumers, root handling до normal frame tail, проверки). Подшаги — отдельные commit/push; GM-12 считается завершённым только после обоих. Не вводить deep exceptions, generic ignore-GX, fake tokens, unskinned fallback при ошибке или SkinPool rewrite. Альтернатива — явно согласовать тот же расширенный scope одной более крупной карточкой, но не оставлять его скрытым под прежним списком файлов. До решения пользователя перенос остановлен по workflow; это source-level scope finding, не device failure.
+
+## 13. Общий пересмотр остатка после GM-11b — предложение редакции2
+
+По запросу пользователя проверены **все GM-12…GM-21**: три независимых read-only audit по status/lifetime, isolation/build/package и device/correction procedure; findings сопоставлены с actual source. [Полный предлагаемый остаток](H700_GAME_REMAINING_PLAN.md), [короткая версия](H700_GAME_SUMMARY.md).
+
+Прежний split GM-12a/b был недостаточен. Новое предложение заранее включает skin consumers/dispatch/boot/frame/root, отдельную сквозную проверку, physical path/profile validation до side effects и live UI rejection, child+log copier lifetime, game-specific package/test/source closure/RUNPATH/full notices, два fresh builds одного freeze и цельный A/B/C correction loop. Synchronous shim breakpoint pulse проверен: hypothetical новый wait mechanism не требуется. Existing same-image/Dawn/nod/SDL/backend/RAM/effects решения не переоткрываются.
+
+Редакция2 предлагает16local substeps и20–40ч оставшейся активной работы с оговорками; R1…R6 перечисляют весь scope для **одного** approval, включая limited local corrections и same-image builds после device findings. Техническая реализация не разрешена этим пересмотром; device-процессы/SSH/deploy всё равно требуют отдельных разрешений. Новых build/GPU/device runs и production edits при подготовке не выполнялось.
