@@ -1,6 +1,6 @@
 # H700 game installation contract
 
-Target: Metroid Prime Unbound v0.46.0, ANBERNIC RG40XX H / muOS 2601.0 Jacaranda. This layout is separate from every old port and from `.h700-integration-test`. No device installation/run is authorized by this document. Game packaging and launcher are the next steps; no unimplemented CLI is advertised here.
+Target: Metroid Prime Unbound v0.46.0, ANBERNIC RG40XX H / muOS 2601.0 Jacaranda. This layout is separate from every old port and from `.h700-integration-test`. No device installation/run is authorized by this document. The launcher is locally validated; game packaging is the next step. No unimplemented package CLI is advertised here.
 
 ## Physical layout
 
@@ -11,6 +11,7 @@ ROMS/Ports/
   Metroid Prime Unbound.sh
   .metroid-prime-unbound-h700/
     metroid_prime_port
+    run-game.sh
     lib/libSDL3.so.0
     user/
       port_settings.ini
@@ -37,3 +38,15 @@ ARM64 game/probe/card/IO targets build;48/48 scoped CPU/no-init/DVD/CARD/GCI/ato
 Docker Desktop bind mounts initially produced `copy_file: Permission denied` in CARD/raw backup fixtures. The same unchanged card code/tests pass with temporary container-native storage. For that combined test run use the approved image with `--tmpfs /tmp:rw,exec,nosuid,size=96m`, `TMPDIR=/tmp`, and `--tmpfs /out/build/card-test-data:rw,noexec,nosuid,size=16m`. `/tmp` needs execution permission only for the physically copied path-probe binary. No capabilities, dependencies or firmware were changed. Logs/commands remain under ignored `gm14-*` outputs.
 
 These results do not prove physical save-station/load behavior: that is window B, using the real game in a new process.
+
+## Launcher and logs (GM-15)
+
+`run-game.sh` lives inside the fixed payload and accepts exactly one readable regular absolute disc path. The adjacent `Metroid Prime Unbound.sh.in` Ports-entry template starts with `DISC=''` and deliberately refuses launch until that line contains the user's safely quoted literal path. Do not execute the disc value with `eval`, derive it from old settings or pass it unquoted. The package/configuration step will supply the entry; no private disc path is committed.
+
+The launcher keeps the two required SDL video variables, the five known muOS frontend SDL values and explicitly supplied audio-routing values. PipeWire `/run` is a default only when `PIPEWIRE_RUNTIME_DIR` is unset and `/run/pipewire-0` is an actual socket. No audio gain/backend is forced. Conflicting renderer/presence pins are rejected before sanitation; arbitrary MP/AURORA/debug/path and loader-injection overrides are not inherited. Libraries use the package RUNPATH, never an injected `LD_LIBRARY_PATH`.
+
+`user/`, `cache/` and `user/tmp/` are persistent own directories. `run.lock` allows only one actual game child. A shell HUP/INT/TERM defers until the foreground child has really exited/reaped, then preserves its exit code and removes the lock. SIGKILL or unknown state can leave a lock: do not remove it without independently establishing that the game has exited. There is no timeout, kill, automatic retry or frontend restart. The game lock is not retained just for an already orphaned log copier.
+
+The game uses its existing logger/redaction and RAM diagnostics. Its initial terminal output goes to `/dev/null`, avoiding a second unlimited frontend file; the existing copier writes `user/metroid_prime_port.log` and retains the previous run as `.old.log`. H700 caps each file at **8 MiB including header and an explicit truncation marker**, while continuing to drain every pipe byte to EOF. Missing/truncated logs cannot prove absence of errors. There is no new ready/health/final messaging protocol. Before copying, inspecting a final log, or cleaning it, account for a copier which may still be draining after game exit; never kill it or delete active logs to manufacture a clean run.
+
+Validated: shell syntax;13/13 bounded mock-child launcher cases on macOS and approved ARM64 Linux (literal metacharacters, invalid inputs, profile/env/audio, actual socket fixture, live-child signals/lock/exit7, repeat launches, copier-descendant independence). Actual production copier flood/split-redaction/unterminated-tail tests pass, including writer completion with default SIGPIPE and actual copier exit/reap. Full game+copier target build,50/50 scoped CTest, non-H700 log TU compile pass. No real game/GPU/device launch.

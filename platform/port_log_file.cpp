@@ -157,6 +157,11 @@ void WriteAll(int fd, const char* data, ssize_t size) {
       }
       return;
     }
+#if defined(AURORA_H700)
+    if (n == 0) {
+      return; // no progress must not pin the copier and block the game's pipe
+    }
+#endif
     data += n;
     size -= n;
   }
@@ -237,8 +242,38 @@ int OpenTerminal(bool& socket) {
 PortLogRedact::Rules sRules; // made before the fork
 RedactedLines sFileLines;
 
+#if defined(AURORA_H700)
+// Per log, 8 MiB total: Start's header + redacted output + this reserved marker.
+// Only file bytes stop at the cap; Copy must keep draining and serving terminal
+// output until EOF, without closing the pipe or holding any game-side lock.
+constexpr size_t kFileByteCap = 8 * 1024 * 1024;
+constexpr char kFileTruncated[] = "\nport: log truncated at 8 MiB; further file output discarded\n";
+constexpr size_t kFilePayloadEnd = kFileByteCap - (sizeof(kFileTruncated) - 1);
+struct FileSink {
+  int fd;
+  size_t remaining;
+  bool stopped;
+};
+#endif
+
 void ToFile(void* context, const char* data, size_t size) {
+#if defined(AURORA_H700)
+  auto& file = *static_cast< FileSink* >(context);
+  if (file.stopped) {
+    return;
+  }
+  const size_t keep = size < file.remaining ? size : file.remaining;
+  WriteAll(file.fd, data, static_cast< ssize_t >(keep));
+  // Charge attempted bytes even on a short/failed write: never exceed the cap
+  // and never retry old output indefinitely on a failing storage device.
+  file.remaining -= keep;
+  if (keep < size) {
+    WriteAll(file.fd, kFileTruncated, sizeof(kFileTruncated) - 1);
+    file.stopped = true;
+  }
+#else
   WriteAll(*static_cast< const int* >(context), data, static_cast< ssize_t >(size));
+#endif
 }
 
 [[noreturn]] void Copy(int in, int terminal, bool terminalSocket, int file, int maxFd) {
@@ -263,7 +298,16 @@ void ToFile(void* context, const char* data, size_t size) {
   signal(SIGPIPE, SIG_IGN);
   sFileLines.rules = &sRules;
   sFileLines.sink = ToFile;
+#if defined(AURORA_H700)
+  // Start wrote the header before fork. The inherited regular-file offset is
+  // its actual size, including a possible short write, without any allocation.
+  const off_t offset = lseek(file, 0, SEEK_CUR);
+  const bool budgetKnown = offset >= 0 && offset <= static_cast< off_t >(kFilePayloadEnd);
+  FileSink sink{file, budgetKnown ? kFilePayloadEnd - static_cast< size_t >(offset) : 0, !budgetKnown};
+  sFileLines.context = &sink; // unknown offset: drop file output, still drain
+#else
   sFileLines.context = &file;
+#endif
   char buffer[8192];
   for (;;) {
     const ssize_t n = read(in, buffer, sizeof(buffer));
@@ -274,7 +318,7 @@ void ToFile(void* context, const char* data, size_t size) {
       break;
     }
     WriteTerminal(terminal, buffer, n, terminalSocket);
-    sFileLines.Feed(buffer, static_cast< size_t >(n)); // the file keeps everything
+    sFileLines.Feed(buffer, static_cast< size_t >(n)); // redaction precedes the file sink
   }
   sFileLines.Flush(); // a last line without its newline, as before an abort
   _exit(0);
