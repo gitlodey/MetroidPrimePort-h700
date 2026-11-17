@@ -5,6 +5,7 @@
 #ifdef AURORA_H700
 #include "../../../extern/aurora/lib/h700/lifecycle.hpp"
 #include "port_h700_game_boundary.h"
+#include "port_h700_game_failure.h"
 #endif
 
 #include "port_debug.h"
@@ -35,7 +36,9 @@ void AuroraFrameEnd() {
   if (s_auroraFrameOpen) {
     aurora_end_frame();
     s_auroraFrameOpen = false;
+#ifndef AURORA_H700
     s_framePresented.store(true, std::memory_order_relaxed);
+#endif
   }
 }
 } // namespace
@@ -889,6 +892,10 @@ bool CGraphics::PortGameOwnerBoundary() {
 #endif
 
 void CGraphics::EndScene() {
+#ifdef AURORA_H700
+  if (!PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(),
+                                    "CGraphics::EndScene entry")) return;
+#endif
   if (!s_auroraFrameOpen) {
     return;
   }
@@ -925,6 +932,13 @@ void CGraphics::EndScene() {
   void* writePtr;
   GXGetFifoPtrs(fifo, &readPtr, &writePtr);
   GXEnableBreakPt(writePtr);
+#ifdef AURORA_H700
+  // The shim pulse above is synchronous and restores breakpoint/retrace state.
+  // A failed submission must return to root without normal retirement/accounting.
+  if (!PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(),
+                                    "CGraphics::EndScene frame returned")) return;
+  s_framePresented.store(true, std::memory_order_relaxed);
+#endif
   mLastFrameUsedAbove = mInterruptLastFrameUsedAbove;
   ++mFrameCounter;
   CFrameDelayedKiller::FlushAllocationsForFrame();

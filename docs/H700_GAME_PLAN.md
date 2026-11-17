@@ -4,7 +4,7 @@
 
 **Согласованные уточнения, 2026-11-17:** GM-11 разделён на GM-11a/GM-11b; затем пользователь разрешил узкое DVD-lifetime расширение GM-11b. Оба подшага завершены/отправлены, результаты ниже.
 
-**Актуальное предложение по всему остатку:** [необходимый остаток, редакция3](H700_GAME_REMAINING_PLAN.md), [коротко](H700_GAME_SUMMARY.md). По текущему требованию пользователя цель/здравый смысл закреплены в project rules, неутверждённая редакция2 с16local gates заменена: UI/settings sandbox, новый log protocol и late-scene prerequisites до A исключены. Actual skinning/lifetime, isolated install, game package/build и полная device-приёмка сохранены. Production work пока не начата; требуется утверждение необходимого остатка, не повторное одобрение завершённых шагов.
+**Актуальное предложение по всему остатку:** [необходимый остаток, редакция3](H700_GAME_REMAINING_PLAN.md), [коротко](H700_GAME_SUMMARY.md). По текущему требованию пользователя цель/здравый смысл закреплены в project rules, неутверждённая редакция2 с16local gates заменена: UI/settings sandbox, новый log protocol и late-scene prerequisites до A исключены. Actual skinning/lifetime, isolated install, game package/build и полная device-приёмка сохранены. Редакция3 утверждена пользователем2026-11-17; локальное выполнение GM-12…17 разрешено, device-окна отдельно. Повторное одобрение завершённых шагов/прямых callers не требуется.
 
 Цель: воспроизводимо собрать **Metroid Prime Unbound v0.46.0** и получить корректно работающую игру на **ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda**: графика, интерфейс, встроенный контроллер, звук, штатные сохранение/загрузка. **Достижение 30 FPS — следующий отдельный этап**, не критерий завершения этого плана.
 
@@ -548,7 +548,7 @@ Independent source review дополнительно установил retail p
 
 Commands/logs: ignored `gm11b-*`. GPU/device, реальный device-loss и игра не запускались. Синхронные DVD/DMA waits не получили auto-timeout/free: неизвестное завершение сохраняет данные, не объявляется success. Deep skinning throw пока не подключён. Commit/push GM-11b: `b9b1545fe`.
 
-### GM-12 — STOP до согласования фактического propagation scope
+### История GM-12 — scope согласован в редакции3, выполнение начато
 
 После завершения GM-11b выполнена минимальная read-only проверка применимости waits. Production GM-12 не менялся. В `DolphinCSkinnedModel.cpp`:
 

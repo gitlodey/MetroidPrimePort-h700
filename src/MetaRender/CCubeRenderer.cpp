@@ -56,6 +56,10 @@
 #ifdef TARGET_PC
 #include "port_room_geo.h"
 #endif
+#ifdef AURORA_H700
+#include "../../extern/aurora/lib/h700/lifecycle.hpp"
+#include "port_h700_game_failure.h"
+#endif
 
 CCubeRenderer* CCubeRenderer::sRenderer = nullptr;
 static CModelFlags skNormalFlag = CModelFlags::Normal();
@@ -625,8 +629,16 @@ bool CCubeRenderer::BeginScene() {
 }
 
 void CCubeRenderer::EndScene() {
+#ifdef AURORA_H700
+  if (!PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(),
+                                    "CCubeRenderer::EndScene entry")) return;
+#endif
   x318_31_persistRGBA6 = !CGraphics::IsBeginSceneClearFb();
   CGraphics::EndScene();
+#ifdef AURORA_H700
+  if (!PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(),
+                                    "CCubeRenderer::EndScene frame returned")) return;
+#endif
   if (x2dc_reflectionAge >= 2) {
     x14c_reflectionTex = nullptr;
   } else {

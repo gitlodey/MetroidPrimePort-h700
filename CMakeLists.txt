@@ -796,6 +796,8 @@ if(MP_BUILD_TESTS)
             INCLUDES platform/include)
         mp_port_test(port_h700_terminal_tests SOURCES tests/port_h700_terminal.cpp
             INCLUDES platform/include extern/aurora/include)
+        mp_port_test(port_h700_game_failure_tests SOURCES tests/port_h700_game_failure.cpp
+            INCLUDES platform/include extern/aurora/include)
         mp_port_test(port_h700_delayed_cleanup_tests
             SOURCES tests/port_h700_delayed_cleanup.cpp src/Kyoto/CFrameDelayedKiller.cpp
             INCLUDES include extern/aurora/include platform/include
@@ -811,6 +813,9 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_terminal_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_terminal_wiring.py")
         set_tests_properties(port_h700_terminal_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_game_failure_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_game_failure_wiring.py")
+        set_tests_properties(port_h700_game_failure_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_profile_startup COMMAND Python3::Interpreter
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_profile_startup.py" $<TARGET_FILE:metroid_prime_port>)
         set_tests_properties(port_h700_profile_startup PROPERTIES TIMEOUT 30 LABELS port)

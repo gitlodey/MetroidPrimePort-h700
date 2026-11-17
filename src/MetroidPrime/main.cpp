@@ -28,6 +28,7 @@
 #include "port_watchdog.h"
 #ifdef AURORA_H700
 #include "port_h700_game_boundary.h"
+#include "port_h700_game_failure.h"
 #include "port_h700_terminal.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
@@ -319,6 +320,10 @@ static void PortH700ClearGlobalAliases() {
 }
 
 [[noreturn]] static void PortH700PrepareRootUnwind(const char* safePoint) {
+  if (PortH700::GameFailurePending()) {
+    PortLog::Write("port: H700 game failure=%d at %s; root checkpoint requested at %s\n",
+                   static_cast<int>(PortH700::GetGameFailure()), PortH700::GameFailureSite(), safePoint);
+  }
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
   const auto checkpoint = PortH700::PrepareRootUnwind(
       [] { return SDL_IsMainThread(); },
@@ -338,6 +343,10 @@ static void PortH700ClearGlobalAliases() {
   throw PortH700::RootTerminalToken{safePoint, checkpoint};
 }
 
+static bool PortH700GameWorkMayContinue(const char* staticSite) noexcept {
+  return PortH700::GameWorkMayContinue(aurora::h700::game_work_healthy(), staticSite);
+}
+
 static void PortH700RootSafePoint(const char* safePoint) {
   // Check SDL affinity before even querying the main-owned GM09 lifecycle. Its
   // actual poll also checks generation-thread identity and rejects recursive polls.
@@ -346,7 +355,7 @@ static void PortH700RootSafePoint(const char* safePoint) {
                         {aurora::h700::ShutdownStatus::Unknown, aurora::h700::ShutdownStage::Unknown},
                         "root transport requires the SDL main thread");
   }
-  if (!aurora::h700::game_work_healthy()) PortH700PrepareRootUnwind(safePoint);
+  if (!PortH700GameWorkMayContinue(safePoint)) PortH700PrepareRootUnwind(safePoint);
 }
 #endif
 
@@ -538,11 +547,23 @@ void CGameGlobalObjects::PostInitialize(COsContext& osContext, CMemorySys& memor
 #else
   AddPaksAndFactories();
 #endif
+#ifdef AURORA_H700
+  if (!PortH700GameWorkMayContinue("boot: AddPaksAndFactories returned")) return;
+#endif
   LoadStringTable();
+#ifdef AURORA_H700
+  if (!PortH700GameWorkMayContinue("boot: string table loaded")) return;
+#endif
   printf("Initializing renderer...\n");
   x14c_renderer = Renderer::AllocateRenderer(xcc_simplePool, osContext, memorySys, x4_resFactory);
   gpRender = reinterpret_cast< CCubeRenderer* >(x14c_renderer.get());
+#ifdef AURORA_H700
+  if (!PortH700GameWorkMayContinue("boot: renderer constructed")) return;
+#endif
   CEnvFxManager::Initialize();
+#ifdef AURORA_H700
+  if (!PortH700GameWorkMayContinue("boot: environment effects initialized")) return;
+#endif
   CScriptMazeNode::LoadMazeSeeds();
 }
 
@@ -814,6 +835,9 @@ void CGameGlobalObjects::AddPaksAndFactories() {
   // Quick resume: SDL only calls watchers for the background events.
   PortSaveState::ResumeInstallEventWatch();
   while (!factory.GetResLoader().AreAllPaksLoaded()) {
+#ifdef AURORA_H700
+    if (!PortH700GameWorkMayContinue("boot: before PAK event pump")) break;
+#endif
     const AuroraEvent* event = aurora_update();
     for (; event != nullptr && event->type != AURORA_NONE; ++event) {
       if (event->type == AURORA_EXIT) {
@@ -822,15 +846,30 @@ void CGameGlobalObjects::AddPaksAndFactories() {
         gpMain->SetFinished();
       }
     }
+#ifdef AURORA_H700
+    if (!PortH700GameWorkMayContinue("boot: PAK event pump returned")) break;
+#endif
     ARQPoll();
     gpResourceFactory->GetResLoader().AsyncIdlePakLoading();
     errorWindow.Update();
+#ifdef AURORA_H700
+    if (!PortH700GameWorkMayContinue("boot: PAK loading update returned")) break;
+#endif
     if (CGraphics::BeginScene()) {
+#ifdef AURORA_H700
+      if (!PortH700GameWorkMayContinue("boot: PAK BeginScene returned")) break;
+#endif
       errorWindow.ShowMessage();
+#ifdef AURORA_H700
+      if (!PortH700GameWorkMayContinue("boot: PAK splash draw returned")) break;
+#endif
       CGraphics::EndScene();
     } else {
       SDL_Delay(5);
     }
+#ifdef AURORA_H700
+    if (!PortH700GameWorkMayContinue("boot: PAK frame returned")) break;
+#endif
 #if VERSION != 0
     controller->Poll();
     gpMain->CheckReset();
@@ -838,6 +877,10 @@ void CGameGlobalObjects::AddPaksAndFactories() {
   }
 #if VERSION != 0
   gpController = nullptr;
+#endif
+#ifdef AURORA_H700
+  // Return normally through local owners; only RsMain may request a checkpoint.
+  if (!PortH700GameWorkMayContinue("boot: PAK loading returned")) return;
 #endif
 
   factory.GetResLoader().AddPakFileAsync(rstl::string_l("aram:SamusGun"), true, false);
@@ -1339,6 +1382,10 @@ int CMain::RsMain(int argc, const char* const* argv) {
         CCameraManager::SetPresentationInterpolation(-1.f);
         CGraphics::SetSimTimePresentLag(0.f);
         CGraphics::SetRenderTimePresentLag(0.f);
+#ifdef AURORA_H700
+        // Presentation overrides are restored before the root checkpoint/unwind.
+        PortH700RootSafePoint("loop: game draw returned, presentation restored");
+#endif
         PortSpeedrunTimer::Draw();
         DrawDebugMetrics(t1, archSupport->GetStopwatch2());
 
@@ -1357,6 +1404,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
         else
           idleMicros = 0;
         AsyncIdle(idleMicros);
+#ifdef AURORA_H700
+        PortH700RootSafePoint("loop: AsyncIdle returned, before EndScene");
+#endif
 
         gpRender->EndScene();
 #ifdef AURORA_H700

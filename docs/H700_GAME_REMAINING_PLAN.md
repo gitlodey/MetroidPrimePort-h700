@@ -1,6 +1,6 @@
 # H700 — необходимый остаток до запуска и приёмки игры
 
-**Редакция 3, 2026-11-17. Предложение реализации по текущему запросу пользователя; ещё не утверждено.** Заменяет неутверждённую редакцию2 с16local substeps. Завершённые GM-01…GM-11b и исходные архитектурные решения не переоткрываются. [Коротко](H700_GAME_SUMMARY.md), [история и D1…D11](H700_GAME_PLAN.md), [прогресс](H700_PROGRESS.md), [обязательные правила](H700_WORKFLOW.md).
+**Редакция3, 2026-11-17. УТВЕРЖДЕНА пользователем: «Все, новый план утвержден. Можешь работать». Локальная реализация GM-12…GM-17 и commit/push завершённых итераций разрешены; device-окна отдельно.** Заменяет неутверждённую редакцию2 с16local substeps. Завершённые GM-01…GM-11b и исходные архитектурные решения не переоткрываются. [Коротко](H700_GAME_SUMMARY.md), [история и D1…D11](H700_GAME_PLAN.md), [прогресс](H700_PROGRESS.md), [обязательные правила](H700_WORKFLOW.md).
 
 ## 1. Цель, исходная точка и рабочее правило
 
@@ -162,6 +162,16 @@ Checked products/alignment/narrowing выполняются до pointer use; ri
 - Отдельные файлы/неожиданная длительность/поправка test target не означают смену плана. При частичном результате честно продолжаем то же исправление; не называем его PASS. Не берём unrelated improvements, чтобы «усилить» приёмку.
 - Останавливаемся при реальной необходимости изменить backend/image/pins/deps, ownership/scheduler/ABI/safety/критерии, budget/effects, card identity/migration либо при новом device доступе. Не делаем unsafe workaround ради продвижения.
 - Срок не вычисляется из числа заголовков. Основной известный объём — GM-12 с конкретными callers; остальные шаги — адаптация уже имеющихся механизмов. Оценки1–2ч относятся к проверяемой итерации, не являются обещанием завершить большой skinning block за1час. Runtime corrections/доступ к поздним сценам нельзя честно оценить до запуска; они не превращаются заранее в обязательную разработку.
-- Сейчас от пользователя требуется утверждение этого необходимого остатка. До A — выбранный disc/container/private path и отдельное permission на установку/запуск. Station route требуется к B, late scenes — к C, не всё сразу до первого запуска.
+- Необходимый остаток утверждён; выполняем согласованный scope без повторных approval прямых callers/tests. До A — выбранный disc/container/private path и отдельное permission на установку/запуск. Station route требуется к B, late scenes — к C, не всё сразу до первого запуска.
 
 **Что выполнено при подготовке:** закреплены постоянные project rules; использованы уже собранные platform facts и source findings, без нового hardware research/production edits/build/GPU/device tests. Избыточные требования редакции2 исключены, а не ослаблены actual lifetime/CARD/effect checks.
+
+## 6. Выполнение утверждённого остатка
+
+### GM-12, итерация 1 — LOCAL PASS: boot/frame/root status
+
+Добавлен allocation-free sticky main-owned game status. Existing backend failure прекращает PAK-loop/последующие PostInitialize consumers и возвращается обычным call return к root; root учитывает latch или backend health, затем прежний actual checkpoint/guards GM-11b. Safe-points после game draw+presentation restore и после AsyncIdle стоят до normal frame tail. Нижний EndScene сохраняет synchronous shim bookkeeping, но на failed frame не выполняет presented/counter/delayed flush; верхний renderer не выполняет reflection retirement/age update. Deep throw/seal не добавлены.
+
+Full incremental ARM64 game compile/link,23/23CPU/no-init/DVD CTest (включая новый latch test и7source-binding cases), non-H700 compile3changed game TUs PASS. Independent read-only review не нашёл blockers этой итерации. Tests различают CPU policy/source binding и actual game/GPU execution; последнее не выполнялось. Commands/logs — ignored `gm12-root-*`.
+
+Это завершённая первая итерация, **не весь GM-12**: новые skin failure producers ещё не включены. Далее direct consumer/workspace/dispatch wiring, затем их единое включение с allocation/wait regressions.
