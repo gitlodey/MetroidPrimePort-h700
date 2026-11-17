@@ -2,7 +2,7 @@
 
 Цель будущего этапа — стабильные **30 FPS при 640×480, 4:3** на RG40XX H / muOS 2601.0 Jacaranda. Сначала выполняется перенос с правильной картинкой, интерфейсом, управлением, звуком и сохранениями. Этот документ — список оснований для будущих экспериментов, **не план уже разрешённых изменений**.
 
-Источники исходных наблюдений — [технический обзор](H700_PORT_REVIEW.md) и описанный в нём исторический bring-up. Ниже нет новых бенчмарков; новая база на приставке пока не измерялась. Наблюдения старого renderer нельзя автоматически переносить на новый вариант интеграции.
+Источники исходных наблюдений OPT-001…005 — [технический обзор](H700_PORT_REVIEW.md) и исторический bring-up. Fresh game evidence RC5 вынесено отдельно в OPT-006; его нельзя смешивать с наблюдениями старого renderer. После RC5 пользователь запросил приоритет производительности из-за неиграбельности; конкретный optimization plan/production changes ещё не утверждены.
 
 ## Правила записей
 
@@ -52,3 +52,13 @@
 - **Будущая проверка:** включать по одному в одинаковых сценах, сравнивать frametimes и память. Штатные визоры, прозрачность и другие оригинальные эффекты не считать необязательными улучшениями.
 - **Риск:** дешёвая функция может менять gameplay; низкая теоретическая стоимость не доказывает отсутствие нагрузки на конкретном драйвере.
 - **Статус:** отложено до корректной базовой версии и измерений.
+
+## OPT-006 — RC5: неиграбельная отзывчивость, draw/compile stalls
+
+- **Fresh evidence, 2026-11-17:** RC5 archive SHA256 `fd024470098b5f3556a02f3107a7eebdd249b7b28cf21ee889e378fac05f2240`, собственная warm/update installation. За5мин bounded observation процесса, запущенного с меню, прежний trace-exhaustion не повторился; later stall log дошёл до frame4465 без observed backend errors/fail-stop. Пользователь сообщил, что UI настолько медленный, что нельзя отличить input defect от задержки; сам начал New Game и оценил графику начального ролика как очень хорошую. Момент перехода к New Game в observation не помечен; это не раздельный benchmark меню/ролика и не gameplay/input/save/load acceptance.
+- **Измеренное:** интервал1500frames дал9,1FPS (не steady-state конкретной сцены); в последних samples frame837–1077ms, из них draw803–1042ms, tick33–37ms, events/input округлены до0ms. Есть pipeline compile warnings1019/1034ms. Эти overlapping wall intervals нельзя складывать и объявлять одной установленной причиной всей медленной работы.
+- **Что означает draw:** main-loop timer охватывает путь после tick до workEnd, включая ожидания/подготовку/EndScene; это не GPU execution time. В sources `find_pipeline_impl` может ждать Blocking compile, а `require_pipeline_impl` вызывается для VFX/water; direct dependency требует проверки применимости именно к этому run. `get_pipeline` diagnostic RenderWait включён только при IG Control и не описывает retail wait автоматически.
+- **Память:** current MemAvailable198272KiB (~194MiB), logged sampled minimum196596KiB (~192MiB), latest process742MiB при Dawn~322MiB. Менялись сцены (menu→New Game/intro), поэтому рост не объявлен leak. Новую нагрузку/маршрут не продолжать; actual normal exit пока не подтверждён.
+- **Первый вопрос следующего этапа:** отдельно установить причины low-FPS уже используемого menu/render path и длинных stalls при появлении новых pipelines — CPU recording, pipeline/cache/driver compilation или waits. Не выводить GPU-bound из одного draw timer и не обещать прирост от prewarm/cache без проверки hit/miss/rebuild path.
+- **Границы:** original graphics/effects и существующие lifetime/validation/robustness guards сохраняются; firmware/clocks/swap не меняются. Сначала узкая причина/план correction с воспроизводимым сравнением, не новый profiler framework и не новый круг hardware/backend research.
+- **Статус:** usability FAIL по пользователю; переход к performance-first запрошен. Production optimization не начата; RC5/его data не изменялись. Raw evidence — ignored `build/h700-game-a3-rc5/usability-summary.json` и связанные logs.

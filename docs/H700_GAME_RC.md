@@ -1,6 +1,6 @@
 # H700 — игровой RC и результат повторной fresh build
 
-**Локальные packages PASS; GM-18 / A и диагностический A2 FAIL по runtime. В RC4 установлена причина: исчерпание65536-event EGL trace; локальный fix/RC5 package проверены; после пользовательской перезагрузки RC5 установлен, один no-init PASS. Manual RC5 run ещё не выполнялся.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
+**Локальные packages PASS; GM-18 / A и диагностический A2 FAIL по runtime. В RC4 установлена причина: исчерпание65536-event EGL trace; локальный fix/RC5 package проверены; после пользовательской перезагрузки RC5 установлен, один no-init PASS. Manual RC5 run: прежний trace отказ не наблюдался, но usability FAIL по пользователю; normal exit пока не подтверждён.** Target: Metroid Prime Unbound v0.46.0 на ANBERNIC RG40XX H / H700, muOS 2601.0 Jacaranda. GM-16 и локальная подготовка GM-17 завершены. Пользователь отдельно разрешил A; RC3 установлен, loader check PASS, выполнен один ручной запуск Ports. Запуск и слышимый звук подтверждены пользователем, затем сообщены тормоза и зависание. B/C не выполнялись. 30 FPS — следующий отдельный этап.
 
 ## Выбранный неизменяемый payload
 
@@ -159,7 +159,15 @@ python3 -B tools/h700_game/build.py --package --output build/h700-game-rc5-trace
 - Один no-init `--version` exit0/0.46.0. После его actual completion ещё раз подтверждено отсутствие game/copier/launcher; только затем снят доказанно stale собственный lock. Transport/staging удалены, active log/user/cache не очищались.
 - Все5 firmware baseline hashes совпали после update/no-init; ready MemAvailable887368KiB (~867MiB). Agent full game starts0, manual RC5 processes observed0.
 
-Статус **READY for user-controlled Ports launch, не runtime PASS**. Следующее ручное действие — один запуск новой записи и сначала подтверждение меню; дальнейший маршрут/наблюдение не приписываются deployment check. Evidence — ignored `build/h700-game-a3-rc5/preflight-summary.json` и private logs. Никаких automatic retries/recovery, B/C pending.
+Это был статус **READY for user-controlled Ports launch, не runtime PASS**; последующий manual run описан ниже и не приписывается одному deployment check. Evidence — ignored `build/h700-game-a3-rc5/preflight-summary.json` и private logs. Никаких automatic retries/recovery, B/C pending.
+
+### A3 manual RC5 — PARTIAL; usability FAIL, performance-first запрошен
+
+Пользователь вручную запустил один RC5 process. За5мин bounded observation процесса, запущенного с меню, прежний trace-exhaustion/backend failure не наблюдались, log позже дошёл до frame4465 без errors/fail-stop. User сообщил, что навигация настолько медленная, что нельзя отличить input defect от задержек; сам начал New Game и оценил графику начального ролика как очень хорошую. Это полезное physical observation, не подтверждение всех graphics/input/gameplay критериев. Момент перехода к New Game не помечен: данные не являются раздельным benchmark меню/ролика.
+
+Один интервал1500frames:9,1FPS/worst353,2ms. Последние samples frame837–1077ms, draw803–1042ms/tick33–37ms/events-input округлены до0ms; отдельно compile warnings1019/1034ms. Draw — wall-time участка game loop, не измерение GPU execution; overlapping durations не складываются и не доказывают единственную причину медленной работы. Current MemAvailable198272KiB (~194MiB), logged sampled min196596KiB (~192MiB), process742MiB/Dawn~322MiB; menu→intro смена сцены не объявлена leak.
+
+Further acceptance route остановлен: user просит ближайшим приоритетом performance/отзывчивость, а не продолжение B/C в неиграбельном состоянии. Production optimization/изменения safeguards не начаты; первая итерация требует конкретного согласованного плана. Existing evidence/вопрос разделения steady draw и pipeline/cache/driver stalls записаны в [OPT-006](H700_OPTIMIZATION_NOTES.md#opt-006--rc5-неиграбельная-отзывчивость-drawcompile-stalls). Normal Exit/actual child exit пока не подтверждены, процесс/lock не удалялись, signals/kill/reset/retry агент не выполнял. Raw evidence — `build/h700-game-a3-rc5/usability-summary.json`.
 
 ## Evidence на локальном диске
 
