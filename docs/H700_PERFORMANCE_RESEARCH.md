@@ -1,6 +1,6 @@
 # H700 — исследование производительности и настроек графики
 
-Исследование по запросу пользователя, 2026-11-17. Цель — сделать Metroid Prime Unbound v0.46.0 играбельной на RG40XX H / H700 / muOS 2601.0, а не выбрать оптимизацию по одному подозрительному участку. **Ни настройки, ни production code, ни установка не менялись; сборок, новых запусков и SSH в ходе исследования не было.**
+Исследование по запросу пользователя, 2026-11-17; продолжение PERF-03 — 2026-11-18. Цель — сделать Metroid Prime Unbound v0.46.0 играбельной на RG40XX H / H700 / muOS 2601.0, а не выбрать оптимизацию по одному подозрительному участку. **Разделы1–7 описывают исходное read-only исследование. Актуальная реализация/проверки/блокер PERF-03 — в разделе8; первоначальные ограничения approval заменены разрешением автономной работы.**
 
 **Жёсткое уточнение пользователя:** разрешение не менять ни при каких условиях, включая диагностику. Сохранять 1×/640×480, dynamic resolution Off. Предложение scale A/B отменено. Пользователь сообщил о 60 FPS меню в старом порте; следующий research — сравнение целого активного OLD/NEW пути того же меню, не урезание картинки.
 
@@ -95,11 +95,11 @@ Exact BufferGL source SHA256: `585de731ab58208ddfacfd88d21645a60e720f491382e5c5a
 
 ## 5. Следующий шаг — активный старый путь как контроль
 
-**Предложение scale A/B отменено прямым запретом пользователя. Новых device actions или production correction не разрешено.**
+**Предложение scale A/B отменено прямым запретом пользователя.** На момент исходного исследования новые device actions/production correction ещё не были разрешены; затем пользователь дал [PERF-03 autonomy approval](H700_PERFORMANCE_PLAN.md#perf-03--автономное-устранение-неиграбельности-утверждено).
 
 Сравнить OLD и NEW полный путь кадра того же меню: THP decode/repeat, GX texture identity/cache/retirement, реальные CPU/GPU uploads, shader, момент исполнения draws и waits. В OLD читать активные `gfx/common.cpp`, `gfx/texture.cpp`, `gx/gx.cpp` и `gl/*`, не оставшиеся вне target Dawn files. Сообщённые пользователем старые 60 FPS — контрольный ориентир; нового matched device benchmark пока нет.
 
-При необходимости дальнейшего замера в binary уже есть `MP_PASS_LOG=N` и `AURORA_FRAME_PEAKS=1`: число/размеры passes и четыре high-water значения (vertex/uniform/index/storage), не полный счётчик texture/copy bytes. Launcher с `env -i` их не пропускает; любой diagnostic launch отдельно согласуется. Разрешение при этом остаётся неизменным.
+При необходимости дальнейшего замера в binary уже есть `MP_PASS_LOG=N` и `AURORA_FRAME_PEAKS=1`: число/размеры passes и четыре high-water значения (vertex/uniform/index/storage), не полный счётчик texture/copy bytes. Исходный launcher с `env -i` их не пропускал; в PERF-03 добавлен явный passthrough diagnostics и bench-only flags, не generic renderer overrides. Разрешение при этом остаётся неизменным.
 
 Выбирать адресный перенос полезного принципа OLD с сохранением NEW correctness/эффектов. Не копировать donor draw dropping/cache invalidation defect и не начинать full backend rewrite по одному предположению.
 
@@ -140,6 +140,44 @@ NEW: CPU writes mapped staging → encoder staging copies + fetch-mirror copies
 
 Адресный сравнительный кандидат внутри существующего Dawn: CPU-owned bounded recording data → точные `Queue.WriteBuffer` в `CopyDst | CopySrc` source buffers → прежние per-operation GPU copies. Pinned `QueueGL.cpp:93–106` реализует WriteBuffer через точный BufferSubData. Это может убрать MapWrite/Unmap путь, но **не** убирает автоматически shared destinations, fetch mirrors или EOF replay и не обещает возврат 60 FPS.
 
-Это не однострочная подмена: source-slot ownership/reuse должны подтверждаться реальным completion, а не фиктивным map success. Root admission/retirement, cancellation/fail-stop, memory bounds, initialization, native forward/reverse и validation/robustness сохраняются. Даже такой ограниченный production patch требует утверждённого scope и сравнения при неизменных 1×/640×480; сейчас он не реализован и не разрешён.
+Это не однострочная подмена: source-slot ownership/reuse должны подтверждаться реальным completion, а не фиктивным map success. Root admission/retirement, cancellation/fail-stop, memory bounds, initialization, native forward/reverse и validation/robustness сохраняются. Даже такой ограниченный production patch требует конкретного scope и сравнения при неизменных 1×/640×480. В PERF-03 пользователь разрешил автономный выбор исправлений; source-owner rewrite пока не реализован: сначала выбран меньший transport-кандидат из раздела8.
 
-Подтверждения OLD: `gfx/common.cpp:367–381,1496–1501,1641–1662,1720–1740`, `gl/buffers.cpp:25–59`, `gl/pass.cpp:296–343`, `gx/gx.cpp:164–197`, `gx/shader.cpp:866–955`; NEW: `gfx/frame.cpp:381–394,1296–1310,1361–1386`, `gfx/encoding.cpp:468–539`, `gx/texture.cpp:811–875`, `gx/shader.cpp:426–479,4684–4715`. Пути здесь от `extern/aurora/lib/` соответствующего checkout. Полные source references и цепочки movie/upload изучены локально; code/build/tests/device changes не выполнялись.
+Подтверждения OLD: `gfx/common.cpp:367–381,1496–1501,1641–1662,1720–1740`, `gl/buffers.cpp:25–59`, `gl/pass.cpp:296–343`, `gx/gx.cpp:164–197`, `gx/shader.cpp:866–955`; NEW: `gfx/frame.cpp:381–394,1296–1310,1361–1386`, `gfx/encoding.cpp:468–539`, `gx/texture.cpp:811–875`, `gx/shader.cpp:426–479,4684–4715`. Пути здесь от `extern/aurora/lib/` соответствующего checkout. Полные source references и цепочки movie/upload изучены локально; в исходном read-only исследовании code/build/tests/device changes не выполнялись.
+
+## 8. PERF-03 — draw-константы через UBO: LOCAL PASS, runtime BLOCKED
+
+### Почему этот кандидат следует из сравнения OLD/NEW
+
+В NEW `gx::render` передаёт `DrawImmediateData` через `SetImmediates` для каждого GX draw. Это **64bytes/16u32**, не16bytes. Точный pinned Dawn понижает используемые диапазоны в `glUniform1uiv` default-uniform array: `CommandBufferGL.cpp:787–805`; `ImmediatesTracker.h:81–96` повторно помечает данные dirty при смене pipeline, а изменение user data помечает user block. OLD direct-GL transport этого GX immediate block не имел. Это конкретное отличие, но **не доказательство**, что именно оно объясняет69ms Submit или вызывает внутреннюю Mali shader specialization.
+
+Меньший opt-in candidate вместо переписывания source ownership:
+
+- Только H700 и exact `MP_H700_DRAW_UBO=1` вместе с `MP_H700_BENCH=1|menu`; default OFF. В обычном launcher запуске без bench флаг UBO не передаётся.
+- Обычный noncaster/non-PBR/LDR GX draw сохраняет полный immutable snapshot через existing bounded `push_uniform()` **после окончательного `fogRangeBase`**. Material uniform не перезаписывается; merge сохраняет snapshot первого draw.
+- Group1 binding0 material + binding1 draw constants, два dynamic offsets в тот же uniform buffer; WGSL меняет только declaration `imm` с `var<immediate>` на `var<uniform>`. Для этого draw не вызывается GX `SetImmediates`; внутренние Dawn immediates могут остаться.
+- Специальные shaders/passes/caster copies оставляют прежний transport. Spare bit config различает pipeline/cache identity без изменения старых default keys. Bind-group aliases следуют существующим growth/held-reservation/retirement boundaries; overflow/failure paths и owner guards сохранены.
+- Для inline draw payload≤128bytes поля переупорядочены; instance count хранится какu16, поскольку actual producer получает GX u16 vertex count, при release-active bounds assertion. Vertex/index counts merged draws остаютсяu32.
+
+Код: `extern/aurora/lib/gx/{gx.hpp,gx.cpp,command_processor.cpp,pipeline.hpp,pipeline.cpp,shader.cpp}` и `gfx/{resources.hpp,frame.cpp,shadow.cpp,actor_shadow.cpp}`. Это ограниченный эксперимент внутри прежнего renderer, не перенос donor draw dropping и не отключение retail effects/validation/robustness.
+
+### Как будет различаться реальная цена transport/upload
+
+Opt-in `MP_H700_GL_TIMING=1` измеряет wall реальных GL driver calls: map/unmap, buffer allocation/upload/copy, texture upload/storage, draw variants, blit/flush/GetError, Uniform1uiv/UseProgram/BindBufferRange и actual `eglMakeCurrent`. Fixed atomic aggregates без history/GPU queries/новых threads; отчёт рядом с existing2s frame-wall. Default OFF возвращает raw GL pointers, без per-call instrumentation. Перекрывающиеся thread wall суммы **не GPU time**; границы concurrent windows приблизительны, cumulative calls/bytes/time не теряются.
+
+`MP_H700_BENCH=menu MP_FAST_BOOT=1` использует existing FastBoot до FileSelect, но не начинает New Game; phase/screen/movie readiness логируются только в bench. Для matched capture нужен actual FileSelect (`phase4/screen3/next3/movie_ready1`), проверка картинки, warm-up и одинаковые прочие profiling flags. Off/on должен выполняться на **одном binary**, из отдельных копий одинаковых user/cache, с неизменными1×/640×480/dynamic Off/cap30. Не включать candidate по умолчанию до измеренного выигрыша и проверки изображения/раннего gameplay.
+
+### Что действительно выполнено
+
+- Independent static review обоих scopes без выявленных blockers; это не Mali execution proof.
+- Existing compatible incremental ARM64 tree `build/h700-game-gm03/build`: game + presentation/shader/mixed/FIFO/profile targets собраны. Первая попытка остановилась на missing Abseil header нового test include; добавлены уже существующие `absl::flat_hash_map`/`absl::btree` dependencies test target, ни один test/assert не удалён.
+- **57/57 scoped CTest,269/269 FIFO и16/16 host launcher tests PASS.** Проверены env gate, payload/cache identity, transport-equivalent WGSL, special fallback, dynamic range bounds, alias lifecycle, snapshot/merge/caster source contracts, profiler totals/max/reset/concurrent sampling. Это CPU/no-init tests, не GPU/Null execution.
+- Отдельный incremental benchmark stage `build/h700-perf03-ubo/package`, текущий launcher включён.17source/ELF/ABI/provider/notices/content/hash/no-init/syntax gates PASS; SDL/dependencies переиспользованы без пересборки. Fresh build/RC-архив не создавались; реальные user/cache/cards не менялись.
+- Executable229350184bytes, SHA256 `026d1241dcbb3a578c91f1f225ede3207ab3b696ca2e97c8fd833d9f8a6847eb`; source3345files, SHA256 `661acf5e68eab74a70a0aba1bdde720192595339147849d3eca028c3c4fa3bb7`. Before/after source snapshots совпали; manifest честно содержит dirty source inputs родительской ревизии. Private commands/results — `build/h700-perf03-ubo/`.
+
+### Физический blocker и условие продолжения
+
+SSH после пользовательского reboot остаётся timeout. Bounded LAN discovery не нашёл узел с pinned SSH key приставки; USB network отсутствует. Host identity не ослаблялась, к соседним устройствам не выполнялась аутентификация. Изменять router/firmware/services/clocks либо бесконечно сканировать сеть не требуется.
+
+Подготовлен штатный muOS content handoff в отдельный performance clone, но installed marker/dispatch semantics и сам clone **ещё не подтверждены**.32offline protocol checks не заменяют live attestation. Entry явно задаёт одинаковые menu/profile flags и UBO0/1; guard делает максимум один TERM только identity-bound own game и сохраняет launcher drain/lock contract. Bare SDL поверх frontend, frontend stop/restart и KILL запрещены.
+
+**PERF-03 не завершён:** новый candidate не установлен/не запускался, прирост FPS и визуальная корректность UBO на Mali не измерены. Нужна физически доступная приставка с Wi-Fi/SSH, не новое approval. После восстановления связи: installed-route/isolation check → baseline/UBO-on одного меню → решение по actual FPS/API/errors/RAM. Если UBO не помогает, не делать его default; выбрать следующий upload/draw path по измерению, а не по числу локальных зелёных tests.

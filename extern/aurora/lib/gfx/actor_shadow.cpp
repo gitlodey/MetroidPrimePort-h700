@@ -103,6 +103,7 @@ void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const vo
       if (!get_pipeline(draw.pipeline, pipeline)) {
         continue;
       }
+      AURORA_ASSERT(!draw.drawUniform && draw.drawUniformRange == Range{}, "Actor caster requires legacy immediates");
       auto immediates = draw.immediateData;
       immediates.serial = 0; // the draw's own uniform carries the actor's matrix in caster[0]
       pass.SetPipeline(pipeline);
@@ -137,7 +138,9 @@ bool ensure_task() {
 
 void add_caster(uint32_t layer, const gx::DrawData& draw) {
   if (layer < MaxLayers) {
-    g_casters[layer].push_back(draw);
+    auto caster = draw;
+    gx::clear_draw_uniform(caster);
+    g_casters[layer].push_back(caster);
   }
 }
 

@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 
 namespace aurora::h700 {
 
@@ -40,6 +42,64 @@ struct FrameWallSummary {
     if (frames != 0) for (auto& value : result) value /= frames;
     return result;
   }
+};
+
+inline bool gl_api_timing_enabled(const char* value) {
+  return value && value[0] == '1' && value[1] == '\0';
+}
+
+inline uint64_t requested_gl_buffer_bytes(std::ptrdiff_t size) {
+  return size > 0 ? static_cast<uint64_t>(size) : 0;
+}
+
+struct GLApiWallSummary {
+  enum Field : size_t {
+    MapBufferRange, UnmapBuffer, BufferData, BufferSubData, CopyBufferSubData,
+    TexSubImage2D, TexImage2D, TexStorage2D, DrawArrays, DrawElements,
+    DrawArraysInstanced, DrawElementsInstanced, DrawElementsInstancedBaseVertex,
+    BlitFramebuffer, Flush, GetError, Uniform1uiv, UseProgram, BindBufferRange, MakeCurrent, Count
+  };
+  static constexpr std::array<const char*, Count> Names{
+      "glMapBufferRange", "glUnmapBuffer", "glBufferData", "glBufferSubData", "glCopyBufferSubData",
+      "glTexSubImage2D", "glTexImage2D", "glTexStorage2D", "glDrawArrays", "glDrawElements",
+      "glDrawArraysInstanced", "glDrawElementsInstanced", "glDrawElementsInstancedBaseVertex",
+      "glBlitFramebuffer", "glFlush", "glGetError", "glUniform1uiv", "glUseProgram", "glBindBufferRange",
+      "eglMakeCurrent"};
+  struct Sample {
+    uint64_t calls = 0, total_ns = 0, max_ns = 0, bytes = 0;
+    bool empty() const { return calls == 0 && total_ns == 0 && max_ns == 0 && bytes == 0; }
+  };
+  using Samples = std::array<Sample, Count>;
+
+  void record(Field api, uint64_t wall_ns, uint64_t bytes = 0) {
+    auto& counter = counters[api];
+    counter.calls.fetch_add(1, std::memory_order_relaxed);
+    counter.total_ns.fetch_add(wall_ns, std::memory_order_relaxed);
+    if (bytes != 0) counter.bytes.fetch_add(bytes, std::memory_order_relaxed);
+    auto maximum = counter.max_ns.load(std::memory_order_relaxed);
+    while (maximum < wall_ns &&
+           !counter.max_ns.compare_exchange_weak(maximum, wall_ns, std::memory_order_relaxed)) {}
+  }
+
+  Samples sample_and_reset() {
+    Samples result{};
+    // Independent atomic exchanges keep driver threads lock-free. Concurrent records may
+    // straddle adjacent report windows; cumulative calls/bytes/time are never discarded.
+    for (size_t i = 0; i < Count; ++i) {
+      auto& counter = counters[i];
+      result[i] = {counter.calls.exchange(0, std::memory_order_relaxed),
+                   counter.total_ns.exchange(0, std::memory_order_relaxed),
+                   counter.max_ns.exchange(0, std::memory_order_relaxed),
+                   counter.bytes.exchange(0, std::memory_order_relaxed)};
+    }
+    return result;
+  }
+
+private:
+  struct Counters {
+    std::atomic<uint64_t> calls{0}, total_ns{0}, max_ns{0}, bytes{0};
+  };
+  std::array<Counters, Count> counters{};
 };
 
 } // namespace aurora::h700

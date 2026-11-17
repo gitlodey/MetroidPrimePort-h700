@@ -5682,7 +5682,7 @@ struct Immediate {{
     array_start1: vec4u,
     array_start2: vec4u,
 }};
-var<immediate> imm: Immediate;
+{12}
 
 struct Uniform {{
     render_viewport_size: vec2f,
@@ -5719,7 +5719,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
                                               "@group(0) @binding(1)\nvar abuf: texture_2d<u32>;\n"
                                               "@group(0) @binding(2)\nvar<storage, read> fs_abuf: array<u32>;"
                                             : "@group(0) @binding(0)\nvar<storage, read> vbuf: array<u32>;\n"
-                                              "@group(0) @binding(1)\nvar<storage, read> abuf: array<u32>;");
+                                              "@group(0) @binding(1)\nvar<storage, read> abuf: array<u32>;",
+                                        uses_draw_uniform(config)
+                                            ? "@group(1) @binding(1)\nvar<uniform> imm: Immediate;"
+                                            : "var<immediate> imm: Immediate;");
   if (!gfx::g_mixedFetch && clamp_storage_loads() && !gfx::g_vertexFetchTexture) {
     constexpr std::string_view guard =
         "  if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;\n";

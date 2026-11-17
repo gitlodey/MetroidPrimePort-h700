@@ -240,6 +240,47 @@ class LauncherTests(unittest.TestCase):
             'MP_LOG_FILE': '1', **EXPECTED,
         })
 
+    def test_only_explicit_render_diagnostics_are_forwarded(self):
+        diagnostics = {'MP_H700_GL_TIMING': '1', 'MP_H700_BENCH': '1',
+                       'MP_PASS_LOG': '60', 'AURORA_FRAME_PEAKS': '1'}
+        baseline = self.run_game()['env']
+        for name in diagnostics:
+            self.assertNotIn(name, baseline)
+        observed = self.run_game({**self.env, **diagnostics,
+                                  'MP_UNLISTED_DIAGNOSTIC': 'drop'})['env']
+        for name, value in diagnostics.items():
+            self.assertEqual(observed[name], value)
+        self.assertNotIn('MP_UNLISTED_DIAGNOSTIC', observed)
+
+    def test_fast_boot_is_forwarded_only_for_explicit_bench_route(self):
+        for mode in (None, '', '0', 'invalid'):
+            env = {**self.env, 'MP_FAST_BOOT': '1'}
+            if mode is not None:
+                env['MP_H700_BENCH'] = mode
+            with self.subTest(mode=mode):
+                self.assertNotIn('MP_FAST_BOOT', self.run_game(env)['env'])
+        for mode in ('1', 'menu'):
+            observed = self.run_game({**self.env, 'MP_H700_BENCH': mode,
+                                      'MP_FAST_BOOT': '1'})['env']
+            self.assertEqual(observed['MP_FAST_BOOT'], '1')
+
+    def test_draw_ubo_is_forwarded_only_for_explicit_bench_route(self):
+        for mode in (None, '', '0', 'invalid'):
+            env = {**self.env, 'MP_H700_DRAW_UBO': '1'}
+            if mode is not None:
+                env['MP_H700_BENCH'] = mode
+            with self.subTest(mode=mode):
+                self.assertNotIn('MP_H700_DRAW_UBO', self.run_game(env)['env'])
+        for mode in ('1', 'menu'):
+            self.assertNotIn('MP_H700_DRAW_UBO',
+                             self.run_game({**self.env, 'MP_H700_BENCH': mode})['env'])
+            for value in ('1', '0', '', "1 ; $(touch INJECTED) '"):
+                with self.subTest(mode=mode, value=value):
+                    observed = self.run_game({**self.env, 'MP_H700_BENCH': mode,
+                                              'MP_H700_DRAW_UBO': value})['env']
+                    self.assertEqual(observed['MP_H700_DRAW_UBO'], value)
+                    self.assertFalse((self.old / 'INJECTED').exists())
+
     def test_frontend_and_audio_keep_values_including_explicit_empty(self):
         for value in ('', "route with spaces ; $(touch INJECTED) ' = 2"):
             with self.subTest(value=value):

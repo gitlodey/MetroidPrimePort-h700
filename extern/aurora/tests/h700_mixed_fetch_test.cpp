@@ -1,4 +1,5 @@
 #include "gfx/resources.hpp"
+#include "gx/pipeline.hpp"
 
 #include <gtest/gtest.h>
 
@@ -31,6 +32,52 @@ TEST(H700MixedFetch, ActualGroupZeroDescriptors) {
     EXPECT_EQ(sampled_texture_count(entries, wgpu::ShaderStage::Vertex), 2);
     EXPECT_EQ(sampled_texture_count(entries, wgpu::ShaderStage::Fragment), 0);
   }
+}
+
+TEST(H700MixedFetch, DrawUniformUsesTwoDynamicWindowsWithoutChangingLegacyLayout) {
+  const auto legacy = uniform_bind_group_layout_entries();
+  const auto candidate = uniform_bind_group_layout_entries<true>(sizeof(gx::DrawImmediateData));
+  ASSERT_EQ(legacy.size(), 1);
+  ASSERT_EQ(candidate.size(), 2);
+  EXPECT_EQ(legacy[0].binding, 0);
+  EXPECT_EQ(legacy[0].buffer.minBindingSize, 0);
+  for (const auto& entries : {std::span<const wgpu::BindGroupLayoutEntry>{legacy},
+                             std::span<const wgpu::BindGroupLayoutEntry>{candidate}}) {
+    for (size_t i = 0; i < entries.size(); ++i) {
+      EXPECT_EQ(entries[i].binding, i);
+      EXPECT_EQ(entries[i].visibility, wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment);
+      EXPECT_EQ(entries[i].buffer.type, wgpu::BufferBindingType::Uniform);
+      EXPECT_TRUE(entries[i].buffer.hasDynamicOffset);
+      EXPECT_EQ(entries[i].texture.sampleType, wgpu::TextureSampleType::BindingNotUsed);
+      EXPECT_EQ(entries[i].sampler.type, wgpu::SamplerBindingType::BindingNotUsed);
+    }
+  }
+  EXPECT_EQ(candidate[0].buffer.minBindingSize, legacy[0].buffer.minBindingSize);
+  EXPECT_EQ(candidate[1].buffer.minBindingSize, 64);
+}
+
+TEST(H700MixedFetch, DrawUniformRejectsMissingMisalignedOrOutOfBoundsSnapshots) {
+  gx::DrawData draw{};
+  EXPECT_TRUE(gx::draw_uniform_range_valid(draw, 1024, 256));
+  draw.drawUniform = true;
+  EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 1024, 256));
+  draw.drawUniformRange = {256, 64};
+  EXPECT_TRUE(gx::draw_uniform_range_valid(draw, 320, 256));
+  EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 319, 256));
+  EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 1024, 0));
+  draw.shadowGroup = true;
+  EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 1024, 256));
+  draw.shadowGroup = false;
+  for (const gfx::Range bad : {gfx::Range{257, 64}, gfx::Range{256, 63}, gfx::Range{256, 65},
+                              gfx::Range{UINT32_MAX, 0}, gfx::Range{UINT32_MAX, 64}}) {
+    draw.drawUniformRange = bad;
+    EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 1024, 256));
+  }
+  draw.drawUniformRange = {256, 64};
+  draw.drawUniform = false;
+  EXPECT_FALSE(gx::draw_uniform_range_valid(draw, 1024, 256));
+  gx::clear_draw_uniform(draw);
+  EXPECT_TRUE(gx::draw_uniform_range_valid(draw, 1024, 256));
 }
 
 TEST(H700MixedFetch, TextureBudgetCountsDescriptorsNotSamplersOrStorage) {
@@ -141,6 +188,81 @@ TEST(H700MixedFetch, SourceCurrentBufferAndMirrorLifecycle) {
   contains(encoding, "storageWritten.add(item.dstOffset, item.size)");
   contains(encoding, "upload_fetch_texture_rows(cmd, StagingKind::Storage, storageWritten.lo, storageWritten.hi)");
   contains(encoding, "upload_fetch_texture_rows(cmd, StagingKind::Vertex, vertexWritten.lo, vertexWritten.hi)");
+}
+
+TEST(H700MixedFetch, SourceDrawUniformAliasesFollowExistingBufferLifetime) {
+  const auto frame = source("/gfx/frame.cpp");
+  const auto binding = section(frame, "void create_uniform_bind_group()", "struct RuntimeDrawType");
+  contains(binding, ".size = gx::MaxUniformSize");
+  contains(binding, "entries[0]");
+  contains(binding, ".binding = 1");
+  contains(binding, ".buffer = g_resources.uniformBuffer");
+  contains(binding, ".size = sizeof(gx::DrawImmediateData)");
+  contains(binding, ".layout = g_resources.drawUniformBindGroupLayout");
+  contains(binding, "g_resources.drawUniformBindGroup = g_device.CreateBindGroup(&drawDescriptor)");
+  contains(frame, "uniform_bind_group_layout_entries<true>(sizeof(gx::DrawImmediateData))");
+  for (const auto& block : {section(frame, "bool grow_frame_buffer(", "bool grow_staging("),
+                           section(frame, "bool reserve_held_frame_buffers()", "bool begin_frame()")}) {
+    contains(block, "create_uniform_bind_group()");
+  }
+  const auto retirement = section(frame, "bool release_frame_holders_after_quiescence() {", "bool wait_for_staging_buffer(");
+  contains(retirement, "!gx::fifo::is_quiescent()");
+  contains(retirement, "pending_internal_maps() != 0");
+  contains(retirement, "g_resources.drawUniformBindGroup = {}");
+  contains(retirement, "g_resources.drawUniformBindGroupLayout = {}");
+  const auto gx = source("/gx/gx.cpp");
+  contains(gx, "gfx::detail::resources().drawUniformBindGroupLayout");
+  const auto layout = section(gx, ".label = \"GX Draw Uniform Pipeline Layout\"", "sDrawUniformPipelineLayout =");
+  contains(layout, ".immediateSize = 0");
+  contains(gx, "sDrawUniformPipelineLayout = {}");
+  contains(gx, "uses_draw_uniform(config.shaderConfig)\n                    ? sDrawUniformPipelineLayout");
+  const auto gate = section(gx, "bool draw_uniform_enabled() noexcept {", "#endif");
+  contains(gate, "draw_uniform_requested(std::getenv(\"MP_H700_DRAW_UBO\"), std::getenv(\"MP_H700_BENCH\"))");
+}
+
+TEST(H700MixedFetch, SourceDrawUniformSnapshotsAreFinalPerDrawNotCachedMaterialData) {
+  const auto processor = source("/gx/command_processor.cpp");
+  const auto producer = section(processor, "static void push_gx_draw(", "static void handle_draw_unmerged(");
+  const auto snapshot = producer.find("drawUniformRange = gfx::push_uniform(immediates)");
+  ASSERT_NE(snapshot, std::string::npos);
+  EXPECT_LT(producer.find("const bool uniformValid ="), snapshot);
+  EXPECT_LT(producer.find("immediates.fogRangeBase = cache.fogRange.offset / sizeof(u32)"), snapshot);
+  EXPECT_LT(producer.find("if (cache.prepassSkip)"), snapshot);
+  EXPECT_LT(snapshot, producer.find("const DrawData draw"));
+  EXPECT_LT(snapshot, producer.find("gfx::push_draw_command(draw)"));
+  contains(producer, "drop_overflowed_draw(drawUniformRange, \"draw uniform\")");
+  contains(producer, "AURORA_ASSERT(drawUniformRange.size == sizeof(immediates)");
+  contains(producer, ".drawUniformRange = drawUniformRange");
+  contains(producer, "cache.config.shaderConfig.drawUniform == draw_uniform_for_state(cache.config.shaderConfig)");
+  contains(producer, "config.shaderConfig.drawUniform = 0");
+  contains(producer, "actorConfig.shaderConfig.drawUniform = 0");
+  contains(producer, "clear_draw_uniform(caster)");
+  const auto merge = section(processor, "const bool canMerge =", "handle_draw_unmerged(prim, fmt, vtxCount, vertRange);");
+  contains(merge, "lastDraw->drawUniform == uses_draw_uniform(sDrawCache.config.shaderConfig)");
+  contains(merge, "lastDraw->drawUniform == draw_uniform_for_state(sDrawCache.config.shaderConfig)");
+  EXPECT_EQ(merge.find("push_uniform"), std::string::npos);
+  EXPECT_EQ(merge.find("drawUniformRange ="), std::string::npos);
+}
+
+TEST(H700MixedFetch, SourceDrawUniformEncodingAndDerivedCastersKeepSeparateAbis) {
+  const auto pipeline = source("/gx/pipeline.cpp");
+  contains(pipeline, "AURORA_ASSERT(draw_uniform_range_valid(data");
+  const auto candidate = section(pipeline, "if (data.drawUniform) {", "} else {");
+  contains(candidate, "const std::array offsets{data.uniformRange.offset, data.drawUniformRange.offset}");
+  contains(candidate, "pass.SetBindGroup(1, resources.drawUniformBindGroup");
+  EXPECT_EQ(candidate.find("SetImmediates"), std::string::npos);
+  EXPECT_EQ(pipeline.find("push_uniform"), std::string::npos);
+  const auto legacy = section(pipeline, "} else {", "// A shadow receiver");
+  contains(legacy, "pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData))");
+  contains(legacy, "pass.SetBindGroup(1, resources.uniformBindGroup");
+  for (const char* path : {"/gfx/shadow.cpp", "/gfx/actor_shadow.cpp"}) {
+    const auto caster = source(path);
+    contains(caster, "gx::clear_draw_uniform(caster)");
+    contains(caster, "AURORA_ASSERT(!draw.drawUniform && draw.drawUniformRange == Range{}");
+    contains(caster, "pass.SetImmediates(0, &immediates, sizeof(immediates))");
+    contains(caster, "pass.SetBindGroup(1, resources.uniformBindGroup, 1, &draw.uniformRange.offset)");
+    EXPECT_EQ(caster.find("push_uniform"), std::string::npos);
+  }
 }
 
 TEST(H700MixedFetch, SourceActualLayoutsAndFinalDeviceGate) {

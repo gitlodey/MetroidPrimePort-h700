@@ -159,6 +159,26 @@ Range resident_region(ResidentBuffer kind) noexcept;
 bool queue_resident_upload(ResidentBuffer kind, uint32_t offset, const uint8_t* data, size_t size);
 
 namespace detail {
+// Group 1's legacy material window stays unchanged. The H700 candidate adds a second
+// dynamic window into the same buffer, sized to the draw's complete immediate snapshot.
+template <bool DrawUniform = false>
+inline auto uniform_bind_group_layout_entries(uint64_t drawSize = 0) {
+  std::array<wgpu::BindGroupLayoutEntry, DrawUniform ? 2 : 1> entries{};
+  entries[0] = {
+      .binding = 0,
+      .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
+      .buffer = {.type = wgpu::BufferBindingType::Uniform, .hasDynamicOffset = true},
+  };
+  if constexpr (DrawUniform) {
+    entries[1] = {
+        .binding = 1,
+        .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
+        .buffer = {.type = wgpu::BufferBindingType::Uniform, .hasDynamicOffset = true, .minBindingSize = drawSize},
+    };
+  }
+  return entries;
+}
+
 // Shared by the real layout creation and CPU contract tests. Both mirrors remain vertex-visible;
 // the fragment stage reads the original array buffer, never a third mirrored allocation.
 inline auto static_bind_group_layout_entries(bool textureFetch) {
@@ -240,6 +260,8 @@ struct Resources {
   wgpu::BindGroup staticBindGroup;
   wgpu::BindGroupLayout uniformBindGroupLayout;
   wgpu::BindGroup uniformBindGroup;
+  wgpu::BindGroupLayout drawUniformBindGroupLayout;
+  wgpu::BindGroup drawUniformBindGroup;
   wgpu::Limits limits;
   AuroraStats stats{};
 };

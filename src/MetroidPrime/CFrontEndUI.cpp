@@ -37,12 +37,15 @@
 
 #include "port_apclient.h"
 #include "port_debug.h"
+#include "port_log.h"
 #include "port_pointer.h"
 #include "port_pointer_menu.h"
 #include "port_savestate.h"
 #include "port_text.h"
 
 #include <cwchar>
+#include <cstdlib>
+#include <cstring>
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -68,6 +71,17 @@
 #include "rstl/math.hpp"
 
 namespace {
+#ifdef AURORA_H700
+int H700BenchMode() {
+  static const int mode = [] {
+    const char* value = std::getenv("MP_H700_BENCH");
+    if (value == nullptr) return 0;
+    if (std::strcmp(value, "1") == 0) return 1;
+    return std::strcmp(value, "menu") == 0 ? 2 : 0;
+  }();
+  return mode;
+}
+#endif
 // Port unlocks (F1 > Game > Unlocks) stand in for the save's flags here without
 // touching them, so switching an unlock off locks the extra again. The Fusion
 // Suit also needs normal mode beaten, so its unlock implies that too.
@@ -2255,6 +2269,9 @@ CIOWin::EMessageReturn CFrontEndUI::Update(float dt, CArchitectureQueue& queue) 
         StartStateTransition(kS_FileSelect);
         break;
       case kS_FileSelect: {
+#ifdef AURORA_H700
+        if (H700BenchMode() == 2) break;
+#endif
         // Do not leave file select while the card is mid-write. On an empty
         // card the save UI creates the file and then writes it in a second
         // async step; leaving between the two strands a zero-filled file with
@@ -2794,6 +2811,22 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
 }
 
 void CFrontEndUI::Draw() const {
+#ifdef AURORA_H700
+  if (H700BenchMode() != 0) {
+    static int lastPhase = -1, lastScreen = -1, lastNext = -1, lastMovieReady = -1;
+    const int phase = static_cast<int>(x14_phase);
+    const int screen = static_cast<int>(x50_curScreen);
+    const int next = static_cast<int>(x54_nextScreen);
+    const int movieReady = xcc_curMoviePtr != nullptr && xcc_curMoviePtr->CanDrawVideo();
+    if (phase != lastPhase || screen != lastScreen || next != lastNext || movieReady != lastMovieReady) {
+      PortLog::Write("h700 bench scene: phase=%d screen=%d next=%d movie_ready=%d\n", phase, screen, next, movieReady);
+      lastPhase = phase;
+      lastScreen = screen;
+      lastNext = next;
+      lastMovieReady = movieReady;
+    }
+  }
+#endif
   if (x14_phase < kP_DisplayFrontEnd)
     return;
 #ifdef TARGET_PC

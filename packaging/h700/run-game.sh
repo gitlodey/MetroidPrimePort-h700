@@ -78,6 +78,17 @@ set -- env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C \
   "XDG_CONFIG_HOME=$DATA/user" "XDG_CACHE_HOME=$DATA/cache" \
   "MP_USER_PATH=$DATA/user" "MP_CACHE_PATH=$DATA/cache" MP_LOG_FILE=1 \
   SDL_VIDEODRIVER=sdl2 SDL3SHIM_SDL2_VIDEODRIVER=mali MP_OPENGLES=1
+# Explicit diagnostics only; renderer/profile overrides remain rejected above.
+[ "${MP_H700_GL_TIMING+x}" != x ] || set -- "$@" "MP_H700_GL_TIMING=$MP_H700_GL_TIMING"
+[ "${MP_H700_BENCH+x}" != x ] || set -- "$@" "MP_H700_BENCH=$MP_H700_BENCH"
+case "${MP_H700_BENCH-}" in
+  1|menu)
+    [ "${MP_FAST_BOOT+x}" != x ] || set -- "$@" "MP_FAST_BOOT=$MP_FAST_BOOT"
+    [ "${MP_H700_DRAW_UBO+x}" != x ] || set -- "$@" "MP_H700_DRAW_UBO=$MP_H700_DRAW_UBO"
+    ;;
+esac
+[ "${MP_PASS_LOG+x}" != x ] || set -- "$@" "MP_PASS_LOG=$MP_PASS_LOG"
+[ "${AURORA_FRAME_PEAKS+x}" != x ] || set -- "$@" "AURORA_FRAME_PEAKS=$AURORA_FRAME_PEAKS"
 [ "${SDL_ROTATION+x}" != x ] || set -- "$@" "SDL_ROTATION=$SDL_ROTATION"
 [ "${SDL_HQ_SCALER+x}" != x ] || set -- "$@" "SDL_HQ_SCALER=$SDL_HQ_SCALER"
 [ "${SDL_BLITTER_DISABLED+x}" != x ] || set -- "$@" "SDL_BLITTER_DISABLED=$SDL_BLITTER_DISABLED"

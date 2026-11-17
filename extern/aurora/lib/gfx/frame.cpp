@@ -217,6 +217,23 @@ void create_uniform_bind_group() {
       .entries = entries.data(),
   };
   g_resources.uniformBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+  if constexpr (g_mixedFetch) {
+    const std::array drawEntries{
+        entries[0],
+        wgpu::BindGroupEntry{
+            .binding = 1,
+            .buffer = g_resources.uniformBuffer,
+            .size = sizeof(gx::DrawImmediateData),
+        },
+    };
+    const wgpu::BindGroupDescriptor drawDescriptor{
+        .label = "Draw uniform bind group",
+        .layout = g_resources.drawUniformBindGroupLayout,
+        .entryCount = drawEntries.size(),
+        .entries = drawEntries.data(),
+    };
+    g_resources.drawUniformBindGroup = g_device.CreateBindGroup(&drawDescriptor);
+  }
 }
 
 struct RuntimeDrawType {
@@ -912,24 +929,22 @@ void initialize() {
   }
 
   {
-    constexpr std::array layoutEntries{
-        // Uniform buffer (dynamic offset)
-        wgpu::BindGroupLayoutEntry{
-            .binding = 0,
-            .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
-            .buffer =
-                wgpu::BufferBindingLayout{
-                    .type = wgpu::BufferBindingType::Uniform,
-                    .hasDynamicOffset = true,
-                },
-        },
-    };
+    const auto layoutEntries = uniform_bind_group_layout_entries();
     const wgpu::BindGroupLayoutDescriptor layoutDesc{
         .label = "Uniform bind group layout",
         .entryCount = layoutEntries.size(),
         .entries = layoutEntries.data(),
     };
     g_resources.uniformBindGroupLayout = g_device.CreateBindGroupLayout(&layoutDesc);
+    if constexpr (g_mixedFetch) {
+      const auto drawEntries = uniform_bind_group_layout_entries<true>(sizeof(gx::DrawImmediateData));
+      const wgpu::BindGroupLayoutDescriptor drawDesc{
+          .label = "Draw uniform bind group layout",
+          .entryCount = drawEntries.size(),
+          .entries = drawEntries.data(),
+      };
+      g_resources.drawUniformBindGroupLayout = g_device.CreateBindGroupLayout(&drawDesc);
+    }
     create_uniform_bind_group();
   }
 
@@ -1026,6 +1041,8 @@ bool release_frame_holders_after_quiescence() {
   g_resources.staticBindGroupLayout = {};
   g_resources.uniformBindGroup = {};
   g_resources.uniformBindGroupLayout = {};
+  g_resources.drawUniformBindGroup = {};
+  g_resources.drawUniformBindGroupLayout = {};
   g_frameIndex = UINT32_MAX;
   g_frameSlots.reset();
   g_stagingSlots.reset();

@@ -4,9 +4,13 @@
 #include "gfx/pipeline_cache.hpp"
 #include "gfx/resources.hpp"
 #include "gx/gx.hpp"
+#include "gx/pipeline.hpp"
 #include "webgpu/gpu.hpp"
 
 #include <array>
+#include <bit>
+#include <cstddef>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -75,6 +79,156 @@ protected:
   bool oldTextureFetch;
   bool oldLightmap;
 };
+
+TEST_F(H700ShaderGenerator, DrawUniformRequiresExactBenchOptIn) {
+  for (const char* value : std::array<const char*, 7>{nullptr, "", "0", "true", "01", "1 ", "menu"}) {
+    EXPECT_FALSE(draw_uniform_requested(value, "1"));
+    EXPECT_FALSE(draw_uniform_requested(value, "menu"));
+  }
+  for (const char* bench : std::array<const char*, 7>{nullptr, "", "0", "true", "01", "MENU", "menu "}) {
+    EXPECT_FALSE(draw_uniform_requested("1", bench));
+  }
+  EXPECT_TRUE(draw_uniform_requested("1", "1"));
+  EXPECT_TRUE(draw_uniform_requested("1", "menu"));
+#ifndef AURORA_H700
+  EXPECT_FALSE(draw_uniform_enabled());
+#endif
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformPreservesImmediateAndInlinePayloadLayouts) {
+  static_assert(sizeof(DrawImmediateData) == 64);
+  static_assert(offsetof(DrawImmediateData, vtxStart) == 0);
+  static_assert(offsetof(DrawImmediateData, currentPnMtx) == 4);
+  static_assert(offsetof(DrawImmediateData, fogRangeBase) == 8);
+  static_assert(offsetof(DrawImmediateData, serial) == 12);
+  static_assert(offsetof(DrawImmediateData, arrayStart) == 16);
+  static_assert(sizeof(DrawData) <= gfx::InlineDrawPayloadSize);
+  static_assert(std::is_trivially_copyable_v<DrawData> && std::is_aggregate_v<DrawData>);
+  DrawImmediateData snapshot{.vtxStart = 1, .currentPnMtx = 2, .fogRangeBase = 3, .serial = 4};
+  for (u32 i = 0; i < MaxIndexAttr; ++i) snapshot.arrayStart[i] = i + 5;
+  const auto words = std::bit_cast<std::array<u32, 16>>(snapshot);
+  for (u32 i = 0; i < words.size(); ++i) EXPECT_EQ(words[i], i + 1);
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformIsOneSpareBitInShaderAndPipelineCacheKeys) {
+  static_assert(offsetof(ShaderConfig, attrs) == 12);
+  static_assert(std::has_unique_object_representations_v<ShaderConfig>);
+  const auto legacy = normal_config();
+  auto candidate = legacy;
+  candidate.drawUniform = 1;
+  const auto before = std::bit_cast<std::array<u8, sizeof(ShaderConfig)>>(legacy);
+  const auto after = std::bit_cast<std::array<u8, sizeof(ShaderConfig)>>(candidate);
+  for (size_t i = 0; i < before.size(); ++i) {
+    EXPECT_EQ(before[i] ^ after[i], i == 11 ? 4 : 0) << i;
+  }
+  EXPECT_NE(xxh3_hash(legacy), xxh3_hash(candidate));
+  PipelineConfig legacyPipeline{};
+  legacyPipeline.shaderConfig = legacy;
+  auto candidatePipeline = legacyPipeline;
+  candidatePipeline.shaderConfig = candidate;
+  EXPECT_EQ(candidatePipeline.version, legacyPipeline.version);
+  EXPECT_NE(xxh3_hash(legacyPipeline), xxh3_hash(candidatePipeline));
+  candidate.drawUniform = 0;
+  EXPECT_EQ(candidate, legacy);
+  EXPECT_EQ(xxh3_hash(candidate), xxh3_hash(legacy));
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformExcludesEverySpecialConfigAndRecordingRole) {
+  auto normal = normal_config();
+  normal.drawUniform = 1;
+  EXPECT_TRUE(draw_uniform_eligible(normal));
+  EXPECT_EQ(uses_draw_uniform(normal), gfx::g_mixedFetch);
+  for (auto change : {+[](ShaderConfig& sc) { sc.lineMode = 1; },
+                      +[](ShaderConfig& sc) { sc.shadow = true; },
+                      +[](ShaderConfig& sc) { sc.pbr = 1; },
+                      +[](ShaderConfig& sc) { sc.sceneHdr = true; },
+                      +[](ShaderConfig& sc) { sc.depthOnly = 1; },
+                      +[](ShaderConfig& sc) { sc.drawId = true; },
+                      +[](ShaderConfig& sc) { sc.sdf = 1; },
+                      +[](ShaderConfig& sc) { sc.hudSample = 1; },
+                      +[](ShaderConfig& sc) { sc.volFog = VolFogBlended; },
+                      +[](ShaderConfig& sc) { sc.perPixelLight = 1; },
+                      +[](ShaderConfig& sc) { sc.clipPlane = 1; },
+                      +[](ShaderConfig& sc) { sc.shell = 1; },
+                      +[](ShaderConfig& sc) { sc.actorDecal = 1; },
+                      +[](ShaderConfig& sc) { sc.colorMatrix = 1; },
+                      +[](ShaderConfig& sc) { sc.pbrBindPos = true; },
+                      +[](ShaderConfig& sc) { sc.pbrLightmapAttr = GX_VA_TEX0; }}) {
+    auto config = normal;
+    change(config);
+    EXPECT_FALSE(draw_uniform_eligible(config));
+    EXPECT_FALSE(uses_draw_uniform(config));
+  }
+  GXState ordinary{};
+  ordinary.actorLayer = -1;
+  EXPECT_TRUE(draw_uniform_state_eligible(ordinary));
+  for (auto change : {+[](GXState& state) { state.shadowCaster = true; },
+                      +[](GXState& state) { state.shadowCasterOnly = true; },
+                      +[](GXState& state) { state.actorLayer = 0; },
+                      +[](GXState& state) { state.actorDecal = true; },
+                      +[](GXState& state) { state.depthPrepass = 1; },
+                      +[](GXState& state) { state.depthPrepass = 2; },
+                      +[](GXState& state) { state.depthPrepass = 3; },
+                      +[](GXState& state) { state.shell = 1; }}) {
+    auto state = ordinary;
+    change(state);
+    EXPECT_FALSE(draw_uniform_state_eligible(state));
+  }
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformChangesOnlyTheOrdinaryAndFogRangeDeclaration) {
+  constexpr std::string_view legacyDecl = "var<immediate> imm: Immediate;";
+  constexpr std::string_view uniformDecl = "@group(1) @binding(1)\nvar<uniform> imm: Immediate;";
+  for (auto config : {normal_config(), fog_config()}) {
+    const auto legacy = build_shader_source(config);
+    config.drawUniform = 1;
+    auto candidate = build_shader_source(config);
+    if constexpr (gfx::g_mixedFetch) {
+      EXPECT_EQ(candidate.find(legacyDecl), std::string::npos);
+      const auto declaration = candidate.find(uniformDecl);
+      ASSERT_NE(declaration, std::string::npos);
+      candidate.replace(declaration, uniformDecl.size(), legacyDecl);
+    }
+    EXPECT_EQ(candidate, legacy);
+  }
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformSpecialShadersKeepLegacyTransport) {
+  auto pbr = shadow_config();
+  pbr.shadow = false;
+  auto caster = normal_config();
+  caster.shadow = true;
+  auto hdr = normal_config();
+  hdr.sceneHdr = true;
+  auto depth = normal_config();
+  depth.depthOnly = 1;
+  auto line = normal_config();
+  line.lineMode = 1;
+  for (auto config : {shadow_config(), pbr, caster, hdr, depth, line}) {
+    const auto legacy = build_shader_source(config);
+    config.drawUniform = 1; // stale/copied candidate bit must not change a special shader's ABI
+    EXPECT_FALSE(uses_draw_uniform(config));
+    const auto fallback = build_shader_source(config);
+    EXPECT_EQ(fallback, legacy);
+    EXPECT_NE(fallback.find("var<immediate> imm: Immediate;"), std::string::npos);
+    EXPECT_EQ(fallback.find("@group(1) @binding(1)"), std::string::npos);
+  }
+}
+
+TEST_F(H700ShaderGenerator, DrawUniformCasterCopyRetainsAllLegacyConstants) {
+  DrawData draw{};
+  draw.uniformRange = {256, 80};
+  draw.drawUniformRange = {512, sizeof(DrawImmediateData)};
+  draw.drawUniform = true;
+  draw.immediateData = {.vtxStart = 12, .currentPnMtx = 3, .fogRangeBase = 91, .serial = 42};
+  for (u32 i = 0; i < MaxIndexAttr; ++i) draw.immediateData.arrayStart[i] = i * 256;
+  auto caster = draw;
+  clear_draw_uniform(caster);
+  EXPECT_FALSE(caster.drawUniform);
+  EXPECT_EQ(caster.drawUniformRange, gfx::Range{});
+  EXPECT_EQ(caster.uniformRange, draw.uniformRange);
+  EXPECT_EQ(std::memcmp(&caster.immediateData, &draw.immediateData, sizeof(DrawImmediateData)), 0);
+}
 
 TEST_F(H700ShaderGenerator, ProductionCacheNamespace) {
   EXPECT_EQ(gfx::detail::pipeline_cache_path("/cache"),

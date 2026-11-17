@@ -60,6 +60,7 @@ absl::flat_hash_map<u32, std::pair<wgpu::BindGroupLayout, wgpu::BindGroupLayout>
 wgpu::BindGroupLayout sTextureBindGroupLayout;
 wgpu::BindGroupLayout sSamplerBindGroupLayout;
 wgpu::PipelineLayout sPipelineLayout;
+wgpu::PipelineLayout sDrawUniformPipelineLayout;
 // A shadow receiver's group 2 (the shadow map in the froxel's slots) and its pipeline layout, and the
 // shadow map pass's layout, which has no group 2.
 wgpu::BindGroupLayout sShadowTextureBindGroupLayout;
@@ -258,6 +259,13 @@ bool per_pixel_lighting() noexcept { return sPerPixelLighting.load(std::memory_o
 void set_blocking_pipelines(bool enabled) noexcept { sBlockingPipelines.store(enabled, std::memory_order_relaxed); }
 bool blocking_pipelines() noexcept { return sBlockingPipelines.load(std::memory_order_relaxed); }
 
+#ifdef AURORA_H700
+bool draw_uniform_enabled() noexcept {
+  static const bool enabled = draw_uniform_requested(std::getenv("MP_H700_DRAW_UBO"), std::getenv("MP_H700_BENCH"));
+  return enabled;
+}
+#endif
+
 void set_viewport_policy(AuroraViewportPolicy policy) noexcept {
   sPendingViewportPolicy.store(policy, std::memory_order_release);
 }
@@ -454,7 +462,9 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
   };
   const wgpu::RenderPipelineDescriptor descriptor{
       .label = label,
-      .layout = shadow_receives(config.shaderConfig) ? sShadowRecvPipelineLayout : sPipelineLayout,
+      .layout = uses_draw_uniform(config.shaderConfig)
+                    ? sDrawUniformPipelineLayout
+                    : shadow_receives(config.shaderConfig) ? sShadowRecvPipelineLayout : sPipelineLayout,
       .vertex =
           {
               .module = shader,
@@ -494,6 +504,7 @@ static void strip_to_flat_shading(ShaderConfig& sc) noexcept {
   sc.pbrLightmapAttr = GX_VA_NULL;
   sc.sdf = 0;
   sc.hudSample = 0;
+  sc.drawUniform = 0;
   sc.perPixelLight = 0;
   sc.fogType = GX_FOG_NONE;
   sc.fogRangeEnabled = false;
@@ -704,6 +715,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.perPixelLight = config_per_pixel_light(config.shaderConfig) ? 1 : 0;
   config.shaderConfig.colorMatrix = g_gxState.colorMatrixOn && !drawId && config.shaderConfig.depthOnly == 0 &&
                                     shell == 0 && config.shaderConfig.actorDecal == 0;
+  config.shaderConfig.drawUniform = draw_uniform_for_state(config.shaderConfig);
   // Field by field: an aggregate assignment would copy the 2.7 KB shader config twice more on
   // every pipeline switch. Every field outside shaderConfig is written here.
   config.version = GXPipelineConfigVersion;
@@ -1080,6 +1092,25 @@ void initialize() noexcept {
     };
     sPipelineLayout = g_device.CreatePipelineLayout(&desc);
   }
+  if constexpr (gfx::g_mixedFetch) {
+    // Cached candidate pipelines can be loaded on a later legacy run too. Keep their layout
+    // available independently of the opt-in; only recording selects the candidate transport.
+    const std::array layouts{
+        gfx::detail::resources().staticBindGroupLayout,
+        gfx::detail::resources().drawUniformBindGroupLayout,
+        sTextureBindGroupLayout,
+    };
+    const wgpu::PipelineLayoutDescriptor desc{
+        .label = "GX Draw Uniform Pipeline Layout",
+        .bindGroupLayoutCount = layouts.size(),
+        .bindGroupLayouts = layouts.data(),
+        .immediateSize = 0,
+    };
+    sDrawUniformPipelineLayout = g_device.CreatePipelineLayout(&desc);
+    if (draw_uniform_enabled()) {
+      Log.info("H700 draw constants UBO candidate enabled (bench only)");
+    }
+  }
   {
     const std::array layouts{
         gfx::detail::resources().staticBindGroupLayout,
@@ -1120,6 +1151,7 @@ void shutdown() noexcept {
   sEmptyTexture = {};
   sEmptySampler = {};
   sPipelineLayout = {};
+  sDrawUniformPipelineLayout = {};
   sSamplerBindGroupLayout = {};
   sTextureBindGroupLayout = {};
   sShadowTextureBindGroupLayout = {};

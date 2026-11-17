@@ -170,6 +170,7 @@ void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const vo
       if (!get_pipeline(draw.pipeline, pipeline)) {
         continue;
       }
+      AURORA_ASSERT(!draw.drawUniform && draw.drawUniformRange == Range{}, "Shadow caster requires legacy immediates");
       auto immediates = draw.immediateData;
       immediates.serial = c;
       pass.SetPipeline(pipeline);
@@ -291,7 +292,9 @@ bool box_casts(const float worldToView[3][4], const cascade::Frustum& frustum, c
 
 void add_caster(const gx::DrawData& draw) {
   if (g_state.pendingActive) {
-    g_casters.push_back(draw);
+    auto caster = draw;
+    gx::clear_draw_uniform(caster);
+    g_casters.push_back(caster);
   }
 }
 

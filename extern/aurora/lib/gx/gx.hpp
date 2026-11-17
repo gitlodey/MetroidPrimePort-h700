@@ -8,7 +8,9 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <type_traits>
+#include <cstddef>
 #include <cstring>
+#include <string_view>
 #include <bitset>
 #include <memory>
 #include <array>
@@ -101,6 +103,17 @@ struct DrawImmediateData {
 };
 static_assert(std::has_unique_object_representations_v<DrawImmediateData>);
 static_assert(sizeof(DrawImmediateData) == 64);
+static_assert(offsetof(DrawImmediateData, arrayStart) == 16);
+
+constexpr bool draw_uniform_requested(const char* value, const char* bench) noexcept {
+  return value != nullptr && bench != nullptr && std::string_view{value} == "1" &&
+         (std::string_view{bench} == "1" || std::string_view{bench} == "menu");
+}
+#ifdef AURORA_H700
+bool draw_uniform_enabled() noexcept;
+#else
+inline constexpr bool draw_uniform_enabled() noexcept { return false; }
+#endif
 
 extern wgpu::BindGroup g_emptyTextureBindGroup;
 
@@ -676,7 +689,8 @@ struct ShaderConfig {
   // GX_AURORA_SET_COLOR_MATRIX on a draw that writes colour: the color_matrix uniform on the shaded
   // colour. A bit of the actorDecal byte, so a config with it off keeps its bytes and cache keys.
   u8 colorMatrix : 1 = 0;
-  u8 actorDecalSpare : 6 = 0; // named, so the byte has no padding bits (unique object representations)
+  u8 drawUniform : 1 = 0; // H700 bench: group 1 binding 1 instead of user immediates; part of the cache key
+  u8 actorDecalSpare : 5 = 0; // named, so the byte has no padding bits (unique object representations)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -690,6 +704,31 @@ struct ShaderConfig {
   bool operator==(const ShaderConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
 };
 static_assert(std::has_unique_object_representations_v<ShaderConfig>);
+static_assert(offsetof(ShaderConfig, attrs) == 12); // drawUniform uses an existing spare bit, not a new schema
+
+// The candidate changes transport only for ordinary LDR GX draws. Special passes keep their
+// original layouts and immediates, even if a copied/cached config still carries the bit.
+constexpr bool draw_uniform_eligible(const ShaderConfig& sc) noexcept {
+  return sc.lineMode == 0 && !sc.shadow && !sc.sceneHdr && sc.pbr == 0 && sc.depthOnly == 0 && !sc.drawId &&
+         sc.sdf == 0 && sc.hudSample == 0 && sc.volFog == VolFogNone && !sc.perPixelLight && !sc.clipPlane &&
+         sc.shell == 0 && !sc.actorDecal && !sc.colorMatrix && !sc.pbrBindPos && !sc.pbrBindLe &&
+         sc.pbrLightmapAttr == GX_VA_NULL && sc.pbrKind == 0 && !sc.pbrCut && !sc.pbrThermal &&
+         !sc.pbrPlain && !sc.pbrNoDebug;
+}
+constexpr bool uses_draw_uniform([[maybe_unused]] const ShaderConfig& sc) noexcept {
+#ifdef AURORA_H700
+  return sc.drawUniform && draw_uniform_eligible(sc);
+#else
+  return false;
+#endif
+}
+constexpr bool draw_uniform_state_eligible(const GXState& state) noexcept {
+  return !state.shadowCaster && !state.shadowCasterOnly && state.actorLayer < 0 && !state.actorDecal &&
+         state.depthPrepass == 0 && state.shell == 0;
+}
+inline bool draw_uniform_for_state(const ShaderConfig& sc) noexcept {
+  return draw_uniform_enabled() && draw_uniform_state_eligible(g_gxState) && draw_uniform_eligible(sc);
+}
 // The fog as the pipeline sees it: GX_FOG_NONE only for the drawid view, the actor decal and the
 // silhouette shell, which never fog; every other draw takes the fogged pipeline and the Fog
 // uniform's kind (0 = none) turns it off, so a draw fogged in one room and not in another is one

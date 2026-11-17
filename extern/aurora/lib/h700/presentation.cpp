@@ -17,7 +17,9 @@
 #include <cstring>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <mutex>
 #include <string_view>
+#include <type_traits>
 
 namespace aurora::h700 {
 namespace {
@@ -44,6 +46,10 @@ struct NativeFlight {
   bool reverse_wait_failed = false;
   FrameWallTimings wall; // worker timestamps use the published release/acquire; observation/presentation are main-only
 };
+struct GLProcCache {
+  std::once_flag once;
+  void* original = nullptr; // written by the resolver once, before exposing its wrapper
+};
 struct Backend {
   explicit Backend(uint64_t id) : generation(id), state(std::make_shared<PresentationState>(id)) {}
   uint64_t generation;
@@ -68,6 +74,10 @@ struct Backend {
   uint64_t next_frame = 0;
   FrameWallSummary frame_wall;
   FrameWallTimings::Clock::time_point last_wall_report = FrameWallTimings::Clock::now();
+  const bool gl_timing_enabled = gl_api_timing_enabled(std::getenv("MP_H700_GL_TIMING"));
+  GLApiWallSummary gl_wall;
+  std::array<GLProcCache, GLApiWallSummary::MakeCurrent> gl_procs;
+  PFNEGLMAKECURRENTPROC make_current = nullptr;
   bool progressing = false;
   bool presenter_ready = false;
   bool dawn_attempted = false;
@@ -116,6 +126,133 @@ void* raw_proc(const char* name) {
   if (!proc) proc = reinterpret_cast<void*>(eglGetProcAddress(name));
   return proc;
 }
+using GLWall = GLApiWallSummary;
+
+template <GLWall::Field Api, typename Proc, typename... Args>
+auto timed_driver_call(Proc proc, uint64_t bytes, Args... args) -> std::invoke_result_t<Proc, Args...> {
+  const auto begin = FrameWallTimings::Clock::now();
+  if constexpr (std::is_void_v<std::invoke_result_t<Proc, Args...>>) {
+    proc(args...);
+    const auto returned = FrameWallTimings::Clock::now();
+    backend->gl_wall.record(Api, static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(returned - begin).count()), bytes);
+  } else {
+    const auto result = proc(args...);
+    const auto returned = FrameWallTimings::Clock::now();
+    backend->gl_wall.record(Api, static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(returned - begin).count()), bytes);
+    return result;
+  }
+}
+
+template <GLWall::Field Api, typename Proc, typename... Args>
+auto timed_gl_call(uint64_t bytes, Args... args) -> std::invoke_result_t<Proc, Args...> {
+  // Only expose these wrappers after resolving a non-null real entry point. No lookups,
+  // error queries, logging or allocations belong inside the measured driver interval.
+  return timed_driver_call<Api>(reinterpret_cast<Proc>(backend->gl_procs[Api].original), bytes, args...);
+}
+
+void* GL_APIENTRY timed_map_buffer_range(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access) {
+  return timed_gl_call<GLWall::MapBufferRange, PFNGLMAPBUFFERRANGEPROC>(
+      requested_gl_buffer_bytes(length), target, offset, length, access);
+}
+GLboolean GL_APIENTRY timed_unmap_buffer(GLenum target) {
+  return timed_gl_call<GLWall::UnmapBuffer, PFNGLUNMAPBUFFERPROC>(0, target);
+}
+void GL_APIENTRY timed_buffer_data(GLenum target, GLsizeiptr size, const void* data, GLenum usage) {
+  timed_gl_call<GLWall::BufferData, PFNGLBUFFERDATAPROC>(requested_gl_buffer_bytes(size), target, size, data, usage);
+}
+void GL_APIENTRY timed_buffer_sub_data(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
+  timed_gl_call<GLWall::BufferSubData, PFNGLBUFFERSUBDATAPROC>(requested_gl_buffer_bytes(size), target, offset, size, data);
+}
+void GL_APIENTRY timed_copy_buffer_sub_data(GLenum read, GLenum write, GLintptr read_offset,
+                                           GLintptr write_offset, GLsizeiptr size) {
+  timed_gl_call<GLWall::CopyBufferSubData, PFNGLCOPYBUFFERSUBDATAPROC>(
+      requested_gl_buffer_bytes(size), read, write, read_offset, write_offset, size);
+}
+void GL_APIENTRY timed_tex_sub_image_2d(GLenum target, GLint level, GLint x, GLint y, GLsizei width,
+                                       GLsizei height, GLenum format, GLenum type, const void* pixels) {
+  timed_gl_call<GLWall::TexSubImage2D, PFNGLTEXSUBIMAGE2DPROC>(
+      0, target, level, x, y, width, height, format, type, pixels);
+}
+void GL_APIENTRY timed_tex_image_2d(GLenum target, GLint level, GLint internal_format, GLsizei width,
+                                   GLsizei height, GLint border, GLenum format, GLenum type, const void* pixels) {
+  timed_gl_call<GLWall::TexImage2D, PFNGLTEXIMAGE2DPROC>(
+      0, target, level, internal_format, width, height, border, format, type, pixels);
+}
+void GL_APIENTRY timed_tex_storage_2d(GLenum target, GLsizei levels, GLenum internal_format,
+                                     GLsizei width, GLsizei height) {
+  timed_gl_call<GLWall::TexStorage2D, PFNGLTEXSTORAGE2DPROC>(0, target, levels, internal_format, width, height);
+}
+void GL_APIENTRY timed_draw_arrays(GLenum mode, GLint first, GLsizei count) {
+  timed_gl_call<GLWall::DrawArrays, PFNGLDRAWARRAYSPROC>(0, mode, first, count);
+}
+void GL_APIENTRY timed_draw_elements(GLenum mode, GLsizei count, GLenum type, const void* indices) {
+  timed_gl_call<GLWall::DrawElements, PFNGLDRAWELEMENTSPROC>(0, mode, count, type, indices);
+}
+void GL_APIENTRY timed_draw_arrays_instanced(GLenum mode, GLint first, GLsizei count, GLsizei instances) {
+  timed_gl_call<GLWall::DrawArraysInstanced, PFNGLDRAWARRAYSINSTANCEDPROC>(0, mode, first, count, instances);
+}
+void GL_APIENTRY timed_draw_elements_instanced(GLenum mode, GLsizei count, GLenum type,
+                                              const void* indices, GLsizei instances) {
+  timed_gl_call<GLWall::DrawElementsInstanced, PFNGLDRAWELEMENTSINSTANCEDPROC>(0, mode, count, type, indices, instances);
+}
+// GLES3 headers stop at 3.0; Dawn may load this 3.2/desktop entry point by its core name.
+using DrawElementsInstancedBaseVertexProc = void (GL_APIENTRY *)(GLenum, GLsizei, GLenum, const void*, GLsizei, GLint);
+void GL_APIENTRY timed_draw_elements_instanced_base_vertex(GLenum mode, GLsizei count, GLenum type,
+                                                          const void* indices, GLsizei instances, GLint base_vertex) {
+  timed_gl_call<GLWall::DrawElementsInstancedBaseVertex, DrawElementsInstancedBaseVertexProc>(
+      0, mode, count, type, indices, instances, base_vertex);
+}
+void GL_APIENTRY timed_blit_framebuffer(GLint src_x0, GLint src_y0, GLint src_x1, GLint src_y1,
+                                       GLint dst_x0, GLint dst_y0, GLint dst_x1, GLint dst_y1,
+                                       GLbitfield mask, GLenum filter) {
+  timed_gl_call<GLWall::BlitFramebuffer, PFNGLBLITFRAMEBUFFERPROC>(
+      0, src_x0, src_y0, src_x1, src_y1, dst_x0, dst_y0, dst_x1, dst_y1, mask, filter);
+}
+void GL_APIENTRY timed_flush() {
+  timed_gl_call<GLWall::Flush, PFNGLFLUSHPROC>(0);
+}
+GLenum GL_APIENTRY timed_get_error() {
+  return timed_gl_call<GLWall::GetError, PFNGLGETERRORPROC>(0);
+}
+void GL_APIENTRY timed_uniform_1uiv(GLint location, GLsizei count, const GLuint* value) {
+  timed_gl_call<GLWall::Uniform1uiv, PFNGLUNIFORM1UIVPROC>(0, location, count, value);
+}
+void GL_APIENTRY timed_use_program(GLuint program) {
+  timed_gl_call<GLWall::UseProgram, PFNGLUSEPROGRAMPROC>(0, program);
+}
+void GL_APIENTRY timed_bind_buffer_range(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size) {
+  timed_gl_call<GLWall::BindBufferRange, PFNGLBINDBUFFERRANGEPROC>(
+      requested_gl_buffer_bytes(size), target, index, buffer, offset, size);
+}
+
+template <typename GLProc>
+dawn::native::opengl::EGLFunctionPointerType checked_gl_wrapper(GLProc wrapper) {
+  return reinterpret_cast<dawn::native::opengl::EGLFunctionPointerType>(wrapper);
+}
+// Explicit parameter types also check every wrapper's GL calling ABI at compile time.
+const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::MakeCurrent> TimedGLWrappers{
+    checked_gl_wrapper<PFNGLMAPBUFFERRANGEPROC>(timed_map_buffer_range),
+    checked_gl_wrapper<PFNGLUNMAPBUFFERPROC>(timed_unmap_buffer),
+    checked_gl_wrapper<PFNGLBUFFERDATAPROC>(timed_buffer_data),
+    checked_gl_wrapper<PFNGLBUFFERSUBDATAPROC>(timed_buffer_sub_data),
+    checked_gl_wrapper<PFNGLCOPYBUFFERSUBDATAPROC>(timed_copy_buffer_sub_data),
+    checked_gl_wrapper<PFNGLTEXSUBIMAGE2DPROC>(timed_tex_sub_image_2d),
+    checked_gl_wrapper<PFNGLTEXIMAGE2DPROC>(timed_tex_image_2d),
+    checked_gl_wrapper<PFNGLTEXSTORAGE2DPROC>(timed_tex_storage_2d),
+    checked_gl_wrapper<PFNGLDRAWARRAYSPROC>(timed_draw_arrays),
+    checked_gl_wrapper<PFNGLDRAWELEMENTSPROC>(timed_draw_elements),
+    checked_gl_wrapper<PFNGLDRAWARRAYSINSTANCEDPROC>(timed_draw_arrays_instanced),
+    checked_gl_wrapper<PFNGLDRAWELEMENTSINSTANCEDPROC>(timed_draw_elements_instanced),
+    checked_gl_wrapper<DrawElementsInstancedBaseVertexProc>(timed_draw_elements_instanced_base_vertex),
+    checked_gl_wrapper<PFNGLBLITFRAMEBUFFERPROC>(timed_blit_framebuffer),
+    checked_gl_wrapper<PFNGLFLUSHPROC>(timed_flush),
+    checked_gl_wrapper<PFNGLGETERRORPROC>(timed_get_error),
+    checked_gl_wrapper<PFNGLUNIFORM1UIVPROC>(timed_uniform_1uiv),
+    checked_gl_wrapper<PFNGLUSEPROGRAMPROC>(timed_use_program),
+    checked_gl_wrapper<PFNGLBINDBUFFERRANGEPROC>(timed_bind_buffer_range)};
+
 void observation_failure(const char* reason) {
   if (backend->trustworthy) {
     Log.error("{}; context events={}/{}, contexts={}, bindings={}; teardown cannot be certified",
@@ -174,8 +311,10 @@ EGLContext EGLAPIENTRY observed_create(EGLDisplay display, EGLConfig config, EGL
 EGLBoolean EGLAPIENTRY observed_make_current(EGLDisplay display, EGLSurface draw, EGLSurface read, EGLContext context) {
   // Do not hold our lock during driver calls. Each thread serializes its own current binding;
   // successful destroy of another thread's current context only marks it pending below.
-  const auto proc = reinterpret_cast<PFNEGLMAKECURRENTPROC>(raw_proc("eglMakeCurrent"));
-  const auto result = proc ? proc(display, draw, read, context) : EGL_FALSE;
+  const auto proc = backend->make_current;
+  const auto result = !proc ? EGL_FALSE : backend->gl_timing_enabled
+      ? timed_driver_call<GLWall::MakeCurrent>(proc, 0, display, draw, read, context)
+      : proc(display, draw, read, context);
   std::lock_guard lock(backend->observer_mutex);
   append_event({ContextEvent::Operation::MakeCurrent, std::this_thread::get_id(), display, context, EGL_NO_CONTEXT,
                 draw, read, result});
@@ -249,6 +388,7 @@ bool initialize_presenter(SDL_Window* window) {
   backend->egl_library = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
   backend->gles_library = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_LOCAL);
   if (!backend->egl_library || !backend->gles_library) return fail("Cannot retain firmware EGL/GLES libraries");
+  backend->make_current = reinterpret_cast<PFNEGLMAKECURRENTPROC>(raw_proc("eglMakeCurrent"));
   backend->sdl_context = SDL_GL_CreateContext(window);
   if (!backend->sdl_context) return fail(std::string("Cannot create mali presenter: ") + SDL_GetError());
   backend->display = eglGetCurrentDisplay();
@@ -310,6 +450,12 @@ bool initialize_presenter(SDL_Window* window) {
   if (!SDL_GL_SetSwapInterval(1)) return fail("Cannot set H700 presenter swap interval");
   backend->presenter_ready = true;
   Log.info("H700 generation {}: {} / {}, two permanent 640x480 RGBA8 exports", backend->generation, renderer, version);
+  if (backend->gl_timing_enabled) {
+    Log.info("H700 GL API wall enabled gen={} (MP_H700_GL_TIMING=1): Dawn-resolved GL + observed eglMakeCurrent; "
+             "requested_buffer_bytes counts buffer range/allocation arguments only "
+             "(BindBufferRange is not upload traffic), zero for other APIs; "
+             "CPU wall, not GPU time", backend->generation);
+  }
   return true;
 }
 
@@ -330,6 +476,15 @@ dawn::native::opengl::EGLFunctionPointerType resolve(const char* name) {
   if (std::strcmp(name, "eglDestroyContext") == 0) return reinterpret_cast<Proc>(observed_destroy);
   if (std::strcmp(name, "eglReleaseThread") == 0) return reinterpret_cast<Proc>(observed_release_thread);
   if (std::strcmp(name, "eglGetProcAddress") == 0) return reinterpret_cast<Proc>(observed_get_proc);
+  if (backend->gl_timing_enabled) {
+    for (size_t i = 0; i < TimedGLWrappers.size(); ++i) {
+      if (std::strcmp(name, GLWall::Names[i]) != 0) continue;
+      auto& cached = backend->gl_procs[i];
+      std::call_once(cached.once, [&] { cached.original = raw_proc(name); });
+      // A missing real function stays missing; never advertise a synthetic GL capability.
+      return cached.original ? TimedGLWrappers[i] : nullptr;
+    }
+  }
   return reinterpret_cast<Proc>(raw_proc(name));
 }
 
@@ -524,6 +679,7 @@ void report_frame_wall(const NativeFlight& flight, FrameWallTimings::Clock::time
   const auto now = FrameWallTimings::Clock::now();
   backend->frame_wall.record(flight.wall.sample(present_begin, swap_begin, swap_returned, now));
   if (now - backend->last_wall_report < std::chrono::seconds(2)) return;
+  const auto api_samples = backend->gl_timing_enabled ? backend->gl_wall.sample_and_reset() : GLWall::Samples{};
   const auto mean = backend->frame_wall.mean();
   const auto& maximum = backend->frame_wall.maximum;
   using T = FrameWallTimings;
@@ -536,6 +692,18 @@ void report_frame_wall(const NativeFlight& flight, FrameWallTimings::Clock::time
            mean[T::Prepare], maximum[T::Prepare], mean[T::Submit], maximum[T::Submit],
            mean[T::Queue], maximum[T::Queue], mean[T::CompletionObserved], maximum[T::CompletionObserved],
            mean[T::Present], maximum[T::Present], mean[T::Swap], maximum[T::Swap]);
+  if (backend->gl_timing_enabled) {
+    Log.info("H700 GL API wall gen={} last={} window_ms={:.1f}; completed-call CPU wall, approximate report edges; "
+             "thread sums overlap, not GPU time", flight.descriptor.generation, flight.descriptor.frame,
+             std::chrono::duration<double, std::milli>(now - backend->last_wall_report).count());
+    for (size_t i = 0; i < api_samples.size(); ++i) {
+      const auto& sample = api_samples[i];
+      if (sample.empty()) continue;
+      Log.info("H700 GL API wall gen={} last={} api={} calls={} total_ns={} max_ns={} requested_buffer_bytes={}",
+               flight.descriptor.generation, flight.descriptor.frame, GLWall::Names[i], sample.calls,
+               sample.total_ns, sample.max_ns, sample.bytes);
+    }
+  }
   backend->frame_wall = {};
   backend->last_wall_report = now;
 }

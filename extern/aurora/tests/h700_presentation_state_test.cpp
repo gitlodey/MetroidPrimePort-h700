@@ -43,6 +43,100 @@ TEST(H700PresentationTiming, FixedSummaryReportsIndependentMeansMaximaAndResets)
   EXPECT_EQ(summary.maximum, FrameWallTimings::Sample{});
 }
 
+TEST(H700PresentationTiming, GLApiTimingRequiresExactOptInAndNonnegativeByteRanges) {
+  EXPECT_FALSE(gl_api_timing_enabled(nullptr));
+  for (const char* value : {"", "0", "true", "01", "1 ", " 1", "11"}) {
+    EXPECT_FALSE(gl_api_timing_enabled(value)) << value;
+  }
+  EXPECT_TRUE(gl_api_timing_enabled("1"));
+  EXPECT_EQ(requested_gl_buffer_bytes(-1), 0);
+  EXPECT_EQ(requested_gl_buffer_bytes(0), 0);
+  EXPECT_EQ(requested_gl_buffer_bytes(4096), 4096);
+}
+
+TEST(H700PresentationTiming, GLApiSummaryKeepsIndependentCountsBytesMaximaAndResets) {
+  using T = GLApiWallSummary;
+  T summary;
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+  summary.record(T::MapBufferRange, 30, 4096);
+  summary.record(T::MapBufferRange, 10, 1024);
+  summary.record(T::GetError, 7);
+  summary.record(T::Uniform1uiv, 11);
+  summary.record(T::Uniform1uiv, 3);
+  summary.record(T::UseProgram, 17);
+  summary.record(T::BindBufferRange, 19, requested_gl_buffer_bytes(256));
+  summary.record(T::BindBufferRange, 5, requested_gl_buffer_bytes(128));
+  const auto samples = summary.sample_and_reset();
+  EXPECT_EQ(samples[T::MapBufferRange].calls, 2);
+  EXPECT_EQ(samples[T::MapBufferRange].total_ns, 40);
+  EXPECT_EQ(samples[T::MapBufferRange].max_ns, 30);
+  EXPECT_EQ(samples[T::MapBufferRange].bytes, 5120);
+  EXPECT_EQ(samples[T::GetError].calls, 1);
+  EXPECT_EQ(samples[T::GetError].total_ns, 7);
+  EXPECT_EQ(samples[T::GetError].max_ns, 7);
+  EXPECT_EQ(samples[T::GetError].bytes, 0);
+  EXPECT_STREQ(T::Names[T::Uniform1uiv], "glUniform1uiv");
+  EXPECT_EQ(samples[T::Uniform1uiv].calls, 2);
+  EXPECT_EQ(samples[T::Uniform1uiv].total_ns, 14);
+  EXPECT_EQ(samples[T::Uniform1uiv].max_ns, 11);
+  EXPECT_EQ(samples[T::Uniform1uiv].bytes, 0);
+  EXPECT_STREQ(T::Names[T::UseProgram], "glUseProgram");
+  EXPECT_EQ(samples[T::UseProgram].calls, 1);
+  EXPECT_EQ(samples[T::UseProgram].total_ns, 17);
+  EXPECT_EQ(samples[T::UseProgram].max_ns, 17);
+  EXPECT_EQ(samples[T::UseProgram].bytes, 0);
+  EXPECT_STREQ(T::Names[T::BindBufferRange], "glBindBufferRange");
+  EXPECT_EQ(samples[T::BindBufferRange].calls, 2);
+  EXPECT_EQ(samples[T::BindBufferRange].total_ns, 24);
+  EXPECT_EQ(samples[T::BindBufferRange].max_ns, 19);
+  EXPECT_EQ(samples[T::BindBufferRange].bytes, 384);
+  EXPECT_TRUE(samples[T::MakeCurrent].empty());
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+  summary.record(T::MapBufferRange, 3, 8);
+  const auto next = summary.sample_and_reset();
+  EXPECT_EQ(next[T::MapBufferRange].calls, 1);
+  EXPECT_EQ(next[T::MapBufferRange].total_ns, 3);
+  EXPECT_EQ(next[T::MapBufferRange].max_ns, 3);
+  EXPECT_EQ(next[T::MapBufferRange].bytes, 8);
+}
+
+TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals) {
+  using T = GLApiWallSummary;
+  constexpr size_t Writers = 3;
+  constexpr uint64_t CallsPerWriter = 1024;
+  T summary;
+  std::latch start(Writers + 1);
+  std::atomic<size_t> done{0};
+  std::array<std::thread, Writers> workers;
+  for (auto& worker : workers) {
+    worker = std::thread([&] {
+      start.arrive_and_wait();
+      for (uint64_t i = 1; i <= CallsPerWriter; ++i) summary.record(T::BufferSubData, i, 64);
+      done.fetch_add(1, std::memory_order_release);
+    });
+  }
+  T::Sample total;
+  const auto collect = [&] {
+    const auto sample = summary.sample_and_reset()[T::BufferSubData];
+    total.calls += sample.calls;
+    total.total_ns += sample.total_ns;
+    total.max_ns = std::max(total.max_ns, sample.max_ns);
+    total.bytes += sample.bytes;
+  };
+  start.arrive_and_wait();
+  while (done.load(std::memory_order_acquire) != Writers) {
+    collect();
+    std::this_thread::yield();
+  }
+  for (auto& worker : workers) worker.join();
+  collect();
+  EXPECT_EQ(total.calls, Writers * CallsPerWriter);
+  EXPECT_EQ(total.total_ns, Writers * CallsPerWriter * (CallsPerWriter + 1) / 2);
+  EXPECT_EQ(total.max_ns, CallsPerWriter);
+  EXPECT_EQ(total.bytes, Writers * CallsPerWriter * 64);
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+}
+
 static_assert(!std::is_copy_assignable_v<FrameDescriptor>);
 static_assert(!std::is_move_assignable_v<FrameDescriptor>);
 

@@ -734,6 +734,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
                              // The pass's target, not only the FIFO's switch: a new frame (reset to LDR),
                              // an offscreen pass or a colour pass must not keep an HDR pipeline, or back.
                              cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
+                             cache.config.shaderConfig.drawUniform == draw_uniform_for_state(cache.config.shaderConfig) &&
                              // A lit config made before aurora_set_per_pixel_lighting changed.
                              cache.config.shaderConfig.perPixelLight ==
                                  config_per_pixel_light(cache.config.shaderConfig) &&
@@ -791,6 +792,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       const auto casterConfig = [&](u8 shadowPass) {
         PipelineConfig config = cache.config;
         config.shadowPass = shadowPass;
+        config.shaderConfig.drawUniform = 0;
         config.msaaSamples = 1;
         if (prepassShade) {
           config.depthFunc = state.depthFunc;
@@ -893,28 +895,43 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
   } else if (prim == GX_POINTS) {
     instanceCount = vtxCount;
   }
-  cache.lastDrawFmt = fmt;
-  const DrawData draw{
-      .pipeline = cache.pipelineRef,
-      .vertRange = vertRange,
-      .idxRange = idxRange,
-      .uniformRange = cache.uniformRange,
-      .immediateData = immediates,
-      .vtxCount = vtxCount,
-      .indexCount = numIndices,
-      .instanceCount = instanceCount,
-      .bindGroups = cache.bindGroups,
-      .dstAlpha = state.dstAlpha,
-      .shadowGroup = cache.shaderInfo.shadowReceive,
-  };
   if (cache.prepassSkip) {
     return;
   }
+  const bool drawUniform = uses_draw_uniform(cache.config.shaderConfig);
+  gfx::Range drawUniformRange;
+  if (drawUniform) {
+    // This snapshot is not the cached material uniform: vertex/array starts and fogRangeBase
+    // are final only here, and can differ with DirtyUniform clear on the next unmerged draw.
+    drawUniformRange = gfx::push_uniform(immediates);
+    if (drop_overflowed_draw(drawUniformRange, "draw uniform")) {
+      return;
+    }
+    AURORA_ASSERT(drawUniformRange.size == sizeof(immediates), "Missing GX draw uniform snapshot");
+  }
+  AURORA_ASSERT(instanceCount <= UINT16_MAX, "GX instance count exceeds its u16 vertex count");
+  cache.lastDrawFmt = fmt;
+  const DrawData draw{
+      .pipeline = cache.pipelineRef,
+      .bindGroups = cache.bindGroups,
+      .vertRange = vertRange,
+      .idxRange = idxRange,
+      .uniformRange = cache.uniformRange,
+      .drawUniformRange = drawUniformRange,
+      .immediateData = immediates,
+      .vtxCount = vtxCount,
+      .indexCount = numIndices,
+      .dstAlpha = state.dstAlpha,
+      .instanceCount = static_cast<uint16_t>(instanceCount),
+      .shadowGroup = cache.shaderInfo.shadowReceive,
+      .drawUniform = drawUniform,
+  };
   if (!state.shadowCasterOnly) {
     gfx::push_draw_command(draw);
   }
   if (cache.shadowCaster) {
     DrawData caster = draw;
+    clear_draw_uniform(caster);
     caster.pipeline = cache.shadowPipelineRef;
     caster.bindGroups = {};
     // The PBR mode's cut bit (512): the colour pass discards the pixel, so it casts no shadow either.
@@ -927,6 +944,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       // frame is mirrored (z = -world z), which flips the winding: back and front swap. A cutout's
       // caster (shadowPass 2) alpha-tests the same way and takes the same cull.
       PipelineConfig actorConfig = cache.config;
+      actorConfig.shaderConfig.drawUniform = 0;
       actorConfig.shadowPass = caster.pipeline == cache.shadowPipelineRef ? 1 : 2;
       if (actorConfig.cullMode == GX_CULL_BACK) {
         actorConfig.cullMode = GX_CULL_FRONT;
@@ -991,7 +1009,10 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   const bool cleanState = g_gxState.dirty == 0 && !g_gxState.shadowCasterOnly && !sDrawCache.prepassSkip && g_gxState.actorLayer < 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
                           prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;
   auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
-  const bool canMerge = lastDraw != nullptr && lastDraw->instanceCount == 1;
+  const bool canMerge = lastDraw != nullptr && lastDraw->instanceCount == 1 &&
+                        sDrawCache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
+                        lastDraw->drawUniform == uses_draw_uniform(sDrawCache.config.shaderConfig) &&
+                        lastDraw->drawUniform == draw_uniform_for_state(sDrawCache.config.shaderConfig);
 
   // Push raw vertex data to buffer. Merged draws must remain contiguous with the previous range.
   const auto vertexData = reader.take(totalVtxBytes);

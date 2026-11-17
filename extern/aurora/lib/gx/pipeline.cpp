@@ -41,9 +41,18 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
   }
 
   const auto& resources = gfx::detail::resources();
-  pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
-  const std::array offsets{data.uniformRange.offset};
-  pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
+  AURORA_ASSERT(draw_uniform_range_valid(data, gfx::frame_buffer_sizes().deviceUniform,
+                                        resources.limits.minUniformBufferOffsetAlignment),
+                "GX draw uniform mode/range mismatch");
+  if (data.drawUniform) {
+    AURORA_ASSERT(gfx::g_mixedFetch && resources.drawUniformBindGroup, "GX draw uniform layout unavailable");
+    const std::array offsets{data.uniformRange.offset, data.drawUniformRange.offset};
+    pass.SetBindGroup(1, resources.drawUniformBindGroup, offsets.size(), offsets.data());
+  } else {
+    pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
+    const std::array offsets{data.uniformRange.offset};
+    pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
+  }
   // A shadow receiver's group 2 has its own layout, so a draw without a group of its own can't
   // inherit it. A stale flag (a pass starts with the empty group bound) only costs a rebind.
   static bool sShadowGroupBound = false;
