@@ -28,8 +28,8 @@ class PackageTests(unittest.TestCase):
             path.write_text('CPU fixture, not ELF\n'); path.chmod(0o644)
         self.seal()
 
-    def seal(self):
-        build.write_json(self.stage / 'manifest.json', dict(scenario=package.SCENARIO, device_status='pending', payload=package.payload(self.stage)))
+    def seal(self, scenario=package.SCENARIO, allowed_files=None):
+        build.write_json(self.stage / 'manifest.json', dict(scenario=scenario, device_status='pending', payload=package.payload(self.stage, allowed_files)))
         (self.stage / 'SHA256SUMS').write_text(''.join(build.sha256(p)+'  '+p.relative_to(self.stage).as_posix()+'\n'
              for p in sorted(self.stage.rglob('*')) if p.is_file() and p.name != 'SHA256SUMS'))
 
@@ -75,6 +75,47 @@ class PackageTests(unittest.TestCase):
             self.assertTrue(all(m.isfile() and m.uid == 0 and m.gid == 0 and m.mtime == 0 for m in archive))
         with self.assertRaisesRegex(ValueError, 'already exists'): package.archive_package(self.stage, a)
 
+    def test_custom_payload_and_scenario_keep_exact_inventory_and_library_rejection(self):
+        self.fixture()
+        (self.stage / 'h700_integration_driver').rename(self.stage / 'metroid_prime_port')
+        allowed = {'metroid_prime_port', 'lib/libSDL3.so.0', 'run.sh'}
+        scenario = {'profile': 'game', 'device_validated': False}
+        self.seal(scenario, allowed)
+        package.validate_package(self.stage, scenario=scenario, allowed_files=allowed)
+        with self.assertRaisesRegex(ValueError, 'Scenario'):
+            package.validate_package(self.stage, allowed_files=allowed)
+        with self.assertRaisesRegex(ValueError, 'Unexpected'):
+            package.payload(self.stage)
+        for name in ('h700_integration_driver', 'game.iso', 'lib/libc.so.6', 'lib/extra.so'):
+            with self.subTest(name=name):
+                path = self.stage / name
+                path.write_text('unapproved extra')
+                with self.assertRaisesRegex(ValueError, 'Unexpected'):
+                    package.validate_package(self.stage, scenario, allowed)
+                path.unlink()
+        # A supplied empty allowlist is not a request for integration defaults.
+        with self.assertRaisesRegex(ValueError, 'Unexpected'):
+            package.payload(self.stage, set())
+        (self.stage / 'metroid_prime_port').write_text('tampered game')
+        with self.assertRaisesRegex(ValueError, 'mismatch'):
+            package.validate_package(self.stage, scenario, allowed)
+
+    def test_custom_archive_root_inventory_and_unsafe_components(self):
+        self.fixture()
+        a, b = self.root / 'game-a.tar.gz', self.root / 'game-b.tar.gz'
+        self.assertEqual(package.archive_package(self.stage, a, 'H700Game')['sha256'],
+                         package.archive_package(self.stage, b, root_name='H700Game')['sha256'])
+        with tarfile.open(a) as archive:
+            self.assertEqual({m.name for m in archive},
+                             {'H700Game/' + p.relative_to(self.stage).as_posix()
+                              for p in self.stage.rglob('*') if p.is_file()})
+        target = self.root / 'unsafe.tar.gz'
+        for name in ('', '.', '..', '../escape', '/absolute', 'nested/root', 'root\\escape',
+                     'root:escape', './Game', 'Game/'):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'Unsafe'):
+                package.archive_package(self.stage, target, root_name=name)
+            self.assertFalse(target.exists())
+
     def test_pending_cannot_be_relabelled_device_pass(self):
         self.fixture()
         m = json.loads((self.stage/'manifest.json').read_text()); m['device_status'] = 'PASS'
@@ -113,6 +154,68 @@ class PackageTests(unittest.TestCase):
         self.assertNotEqual(first['source_sha256'], second['source_sha256'])
         self.assertEqual(first['dirty_source_files'], ['tools/h700_integration_driver/own.py'])
         self.assertNotIn('.DS_Store', first['files'])
+
+    def test_source_snapshot_extensions_union_existing_inputs(self):
+        prefixes = ('src/', 'include/', 'platform/', 'tests/', 'tools/h700_game/', 'extern/musyx/',
+                    'extern/astcenc/', 'extern/GamepadMotionHelpers/', 'textures/', 'assets/', 'config/')
+        exact = ('CMakeLists.txt', 'files.cmake', 'version.txt')
+        selected = ['tools/h700_integration_driver/build.py', 'LICENSE'] + [p + 'fixture' for p in prefixes] + list(exact)
+        ignored = ['unrelated.txt', 'src/.DS_Store', 'tools/h700_game/__pycache__/cache.pyc']
+        for name in selected + ignored:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(name)
+        def git(command, **kwargs):
+            args = command[2:]
+            if args[:1] == ['rev-parse']: return b'fixture-revision\n'
+            if args[:1] == ['diff']: return b'src/fixture\nCMakeLists.txt\nunrelated.txt\n'
+            if '--cached' in args: return ('\0'.join(selected + ignored) + '\0').encode()
+            return b''
+        with mock.patch.object(package.subprocess, 'check_output', side_effect=git):
+            default = package.source_snapshot(self.root)
+            first = package.source_snapshot(self.root, extra_prefixes=prefixes, extra_names=exact)
+            (self.root / 'src/fixture').write_text('changed game bytes')
+            second = package.source_snapshot(self.root, prefixes, exact)
+        self.assertEqual(set(default['files']), {'tools/h700_integration_driver/build.py', 'LICENSE'})
+        self.assertEqual(set(first['files']), set(selected))
+        self.assertEqual(first['dirty_source_files'], ['CMakeLists.txt', 'src/fixture'])
+        self.assertEqual(first['revision'], second['revision'])
+        self.assertNotEqual(first['source_sha256'], second['source_sha256'])
+
+    def test_audit_uses_actual_executable_for_elf_symbols_and_strict_runpath(self):
+        out = self.root / 'out'
+        (out / 'build').mkdir(parents=True)
+        (out / 'build/providers.txt').write_text(
+            'SDL3::SDL3=:source:/out/inputs/sdl\nZLIB::ZLIB=fixture\nzstd::libzstd=fixture\n'
+            'dawn::webgpu_dawn=:package:/out/inputs/dawn/\nnod::nod_static=fixture\n')
+        (self.root / 'docs').mkdir()
+        build.write_json(self.root / 'docs/H700_RUNTIME_ABI.json', {'libraries': {}})
+        for rpath in ('$ORIGIN/lib', '/out/lib', '$ORIGINevil/lib', '$ORIGIN/../lib'):
+            with self.subTest(rpath=rpath):
+                elf = self.root / 'elf.txt'
+                elf.write_text('(RUNPATH) Library runpath: [' + rpath + ']\nLibrary soname: [libSDL3.so.0]\n')
+                symbols = self.root / 'symbols.txt'
+                symbols.write_text('spvtools::fixture\n')
+                commands = mock.Mock()
+                commands.run.side_effect = lambda label, *args: symbols if label == 'linked-symbols' else elf
+                verifier = mock.Mock()
+                verifier.elf_info.return_value = {'needed': ['libSDL3.so.0']}
+                verifier.firmware_gate.return_value = {'status': 'fixture'}
+                with mock.patch.object(package, 'ROOT', self.root), \
+                     mock.patch.object(package, 'probe_verifier', return_value=verifier), \
+                     mock.patch.object(package, 'firmware_closure', return_value={}), \
+                     mock.patch.object(build.environment, 'symbols', return_value={'SDL_Fixture': ['SDL_Fixture']}):
+                    if rpath != '$ORIGIN/lib':
+                        with self.assertRaisesRegex(ValueError, 'RPATH|RUNPATH'):
+                            package.audit(out, self.stage, commands, executable='metroid_prime_port')
+                        continue
+                    report = package.audit(out, self.stage, commands, executable='metroid_prime_port')
+                calls = {c.args[0]: c.args[1] for c in commands.run.call_args_list}
+                self.assertEqual(calls['staged-executable-elf'][-1], self.stage / 'metroid_prime_port')
+                self.assertEqual(calls['linked-symbols'][-1], self.stage / 'metroid_prime_port')
+                self.assertEqual(calls['staged-sdl-elf'][-1], self.stage / 'lib/libSDL3.so.0')
+                self.assertEqual(verifier.firmware_gate.call_count, 2)
+                self.assertEqual(report['exact_bundled_sdl_imports'], {'SDL_Fixture': ['SDL_Fixture']})
 
     def test_package_profile_and_fresh_output_are_explicit(self):
         args = type('Args', (), dict(jobs=2,configure_only=False,package=True))()

@@ -18,7 +18,8 @@ SPEC.loader.exec_module(bootstrap)
 GAME = bootstrap.BuildProfile(
     source="/src", cache="/src/cmake/h700/GameInitialCache.cmake",
     script="/src/tools/h700_game/build.py", target="metroid_prime_port",
-    marker=".h700-game", prefix="h700-game", check_argument="--version")
+    marker=".h700-game", prefix="h700-game", check_argument="--version",
+    package_script="/src/tools/h700_game/package.py")
 
 
 def main(argv=None):

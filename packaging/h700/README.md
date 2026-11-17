@@ -1,6 +1,6 @@
 # H700 game installation contract
 
-Target: Metroid Prime Unbound v0.46.0, ANBERNIC RG40XX H / muOS 2601.0 Jacaranda. This layout is separate from every old port and from `.h700-integration-test`. No device installation/run is authorized by this document. The launcher is locally validated; game packaging is the next step. No unimplemented package CLI is advertised here.
+Target: Metroid Prime Unbound v0.46.0, ANBERNIC RG40XX H / muOS 2601.0 Jacaranda. This layout is separate from every old port and from `.h700-integration-test`. No device installation/run is authorized by this document. The launcher and game package profile reuse the approved offline build/audit helpers. Actual build results and selected RC hashes are recorded in `docs/H700_GAME_REMAINING_PLAN.md` in the source checkout; no device PASS is implied.
 
 ## Physical layout
 
@@ -41,7 +41,7 @@ These results do not prove physical save-station/load behavior: that is window B
 
 ## Launcher and logs (GM-15)
 
-`run-game.sh` lives inside the fixed payload and accepts exactly one readable regular absolute disc path. The adjacent `Metroid Prime Unbound.sh.in` Ports-entry template starts with `DISC=''` and deliberately refuses launch until that line contains the user's safely quoted literal path. Do not execute the disc value with `eval`, derive it from old settings or pass it unquoted. The package/configuration step will supply the entry; no private disc path is committed.
+`run-game.sh` lives inside the fixed payload and accepts exactly one readable regular absolute disc path. The adjacent `Metroid Prime Unbound.sh.in` Ports-entry template starts with `DISC=''` and deliberately refuses launch until that line contains the user's safely quoted literal path. Do not execute the disc value with `eval`, derive it from old settings or pass it unquoted. Copy that template to the adjacent Ports entry and configure it privately before window A; no private disc path is committed.
 
 The launcher keeps the two required SDL video variables, the five known muOS frontend SDL values and explicitly supplied audio-routing values. PipeWire `/run` is a default only when `PIPEWIRE_RUNTIME_DIR` is unset and `/run/pipewire-0` is an actual socket. No audio gain/backend is forced. Conflicting renderer/presence pins are rejected before sanitation; arbitrary MP/AURORA/debug/path and loader-injection overrides are not inherited. Libraries use the package RUNPATH, never an injected `LD_LIBRARY_PATH`.
 
@@ -50,3 +50,30 @@ The launcher keeps the two required SDL video variables, the five known muOS fro
 The game uses its existing logger/redaction and RAM diagnostics. Its initial terminal output goes to `/dev/null`, avoiding a second unlimited frontend file; the existing copier writes `user/metroid_prime_port.log` and retains the previous run as `.old.log`. H700 caps each file at **8 MiB including header and an explicit truncation marker**, while continuing to drain every pipe byte to EOF. Missing/truncated logs cannot prove absence of errors. There is no new ready/health/final messaging protocol. Before copying, inspecting a final log, or cleaning it, account for a copier which may still be draining after game exit; never kill it or delete active logs to manufacture a clean run.
 
 Validated: shell syntax;13/13 bounded mock-child launcher cases on macOS and approved ARM64 Linux (literal metacharacters, invalid inputs, profile/env/audio, actual socket fixture, live-child signals/lock/exit7, repeat launches, copier-descendant independence). Actual production copier flood/split-redaction/unterminated-tail tests pass, including writer completion with default SIGPIPE and actual copier exit/reap. Full game+copier target build,50/50 scoped CTest, non-H700 log TU compile pass. No real game/GPU/device launch.
+
+## Fresh game package recipe (GM-16/17)
+
+From the H700 checkout, with the existing approved native ARM64 Docker image and14 pinned local inputs:
+
+```sh
+python3 -B tools/h700_game/build.py --package --output build/h700-game-rc1 --jobs 2
+python3 -B tools/h700_game/build.py --package --output build/h700-game-rc2 --jobs 2
+```
+
+Each output must be new. No pull, network, package installs or GPU run occurs. Both commands compile the actual game and relevant CPU targets, run no-init/game/lifecycle/DVD/skinning/recording/readback/CARD/atomic/launcher/helper checks, and stage game+matched SDL with exact local `$ORIGIN/lib`. The package-profile build-tree binary also has that SDL in its own `lib/`; it does not need a build-path RPATH or `LD_LIBRARY_PATH`.
+
+Outputs include `h700-game-rc.tar.gz` (top-level `H700Game/`), `package-result.json`, source/input/environment/provider/ELF records, audit and all notices/checksums. The source inventory includes actual game/CMake/version/embedded inputs and shared/vendored code used by this recipe, not only the diagnostic slice. Archives contain no user/cache/disc/save data and no container EGL/GLES/SDL2/libmali. The audit checks known providers and version nodes against the existing firmware snapshot; incomplete exact-symbol evidence and all untested runtime/kernel/driver paths remain explicitly reported.
+
+Keep the same build-relevant source/config/input bytes for the second build. Compare source/input/provider manifests and executable/archive hashes, not just successful commands. Preserve completed packages, manifests and logs; if space is limited, only that newly completed build's disposable `build/` and extracted `inputs/` may be removed before the next fresh output. Do not remove shared input archives, previous outputs or user data. A source/package edit creates new bytes and requires a new RC.
+
+### Install/update/rollback after separate device permission
+
+Extract the chosen verified archive into a new private staging directory. Inspect `manifest.json` and check `SHA256SUMS` before using it. Place the physical `H700Game` payload as the fixed `.metroid-prime-unbound-h700` beside the Ports entry. Copy its unconfigured `Metroid Prime Unbound.sh.in` to `Metroid Prime Unbound.sh` beside the payload, and replace only `DISC=''` with one safely quoted absolute legal disc path. It is intentionally not runnable before that private choice; do not infer it from old settings.
+
+On first installation there is no `user/` or cache to import. The launcher creates its own directories. On update, first establish actual child exit; replace only payload files from the new verified archive and keep `user/`/`cache/`. Keep a copy/hash of the old executable+SDL+launcher for rollback, without mixing versions. Never roll a live process back or delete cards/settings/cache to force a cold-launch PASS. Firmware libraries and the old port remain untouched.
+
+### Notices and local-only scope
+
+The existing full collector is retained, with game-specific actual-source coverage for MusyX, G.721, astcenc, SDL embedded codecs, ImGui/STB/fonts, SQLite, GamepadMotionHelpers, nod and pinned Dawn/transitives. Compiled Remastered codecs are included even with runtime mods OFF. `licenses/game-coverage.json` records exact source evidence and missing primary grants separately.
+
+**This is a private local RC, not permission for public distribution.** Six documented unresolved groups include primary texts/revision evidence for tegra_swizzle, bcdec_rs/bcdec, astc-decode/UNC-derived portions, retrotool/LZSS, Kenney/Xelu packs, and game/SDK/source-derived code. Existing attribution is preserved; no missing grant is invented or replaced by the port's MIT. Metadata/provider audit PASS likewise does not authorize game assets or certify every firmware symbol.

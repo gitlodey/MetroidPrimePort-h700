@@ -681,6 +681,15 @@ endif()
 include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
 aurora_copy_runtime_dlls(metroid_prime_port)
 if(AURORA_H700)
+    if(H700_STAGE_PACKAGE)
+        set_target_properties(metroid_prime_port PROPERTIES
+            BUILD_WITH_INSTALL_RPATH ON INSTALL_RPATH "$ORIGIN/lib")
+        add_custom_command(TARGET metroid_prime_port POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:metroid_prime_port>/lib"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>"
+                "$<TARGET_FILE_DIR:metroid_prime_port>/lib/libSDL3.so.0"
+            VERBATIM)
+    endif()
     file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/artifacts.json" CONTENT
         "{\"executable\":\"$<TARGET_FILE:metroid_prime_port>\",\"sdl\":\"$<TARGET_FILE:SDL3::SDL3>\"}\n")
 endif()

@@ -212,4 +212,14 @@ Full ARM64 game/probe/card/IO build;48/48 scoped CPU/no-init/DVD/CARD/GCI/atomic
 
 Existing H700 file sink ограничен8MiB включая header/explicit truncation marker. После cap pipe продолжает дренироваться до EOF; redaction сохранён, второго growing redirected stdout нет. No new logging protocol. [Invocation/layout/log limitations](../packaging/h700/README.md).
 
-Full ARM64 game+copier test build,50/50 scoped CPU/no-init/DVD/CARD/GCI/atomic CTest PASS;13/13 mock-child launcher cases PASS на macOS и Linux, actual production copier flood/redaction/EOF/reap PASS. Non-H700 log TU compile PASS. Commands/logs — ignored `gm15-*`; GPU/device не запускались. Private legal disc path выбирается перед A, template пока намеренно не запускает игру. Далее GM-16 — настоящий game package/ABI/provenance/notices.
+Full ARM64 game+copier test build,50/50 scoped CPU/no-init/DVD/CARD/GCI/atomic CTest PASS;13/13 mock-child launcher cases PASS на macOS и Linux, actual production copier flood/redaction/EOF/reap PASS. Non-H700 log TU compile PASS. Commands/logs — ignored `gm15-*`; GPU/device не запускались. Private legal disc path выбирается перед A, template пока намеренно не запускает игру. Commit `56e856111` отправлен.
+
+### GM-16, итерация 1 — LOCAL PASS: game package implementation/staging
+
+Existing BuildProfile/staging/audit helpers расширены game profile без второго input manifest/framework. Actual game+matched SDL используют `$ORIGIN/lib`; package-profile build-tree binary получает ту же local SDL до no-init tests. Common payload/archive/provider gates переиспользуются с game inventory/root. Source snapshot охватывает3344build-relevant files текущего среза, включая game/CMake/embedded и реально используемые shared/vendored helpers. Никаких user/cache/ISO/старых бинарников в payload.
+
+Existing full collector сохранён, added actual-source game notice coverage. Шесть групп отсутствующих primary grant/revision evidence явно перечислены в `licenses/game-coverage.json`; local RC не является public distribution clearance. Полная firmware exact-symbol матрица не добавлялась; known provider/version gate и прежние ограничения сохранены.
+
+Incremental actual staging build+audit+archive/no-init PASS:125/125scoped CPU CTest,269/269FIFO,39/39shared helper и34/34game helper tests в Linux. Initial local-RUNPATH/no-SDL loader failure исправлен копированием same target SDL, не LD_LIBRARY_PATH. Source/helpers also tested on macOS; timeout-only test skipped там иpassed вLinux. Commands/logs — ignored `gm16-*`; smoke archive не qualifying fresh RC. [Проверенный layout/recipe/ограничения](../packaging/h700/README.md).
+
+**GM-16 ещё не завершён:** далее первый qualifying fresh package, затем GM-17 повтор тех же bytes. При3,1GiB free сохраняем первый завершённый package/manifests/logs, удаляем только его newly-created disposable build/inputs intermediates перед второй fresh build; чужие outputs/исходные14archives не затрагиваются. GPU/device не запускались.

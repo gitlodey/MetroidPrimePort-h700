@@ -1,5 +1,5 @@
 #!/bin/sh
-# The installer will fill this with one safely quoted literal absolute path.
+# Set one safely quoted literal absolute disc path before the permitted run.
 DISC=''
 set -eu
 [ "$#" -eq 0 ] || { printf '%s\n' 'Launch this entry from muOS Ports; no runtime options' >&2; exit 2; }

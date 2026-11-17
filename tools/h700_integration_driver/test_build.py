@@ -5,6 +5,8 @@ import copy
 import io
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 import tarfile
 import tempfile
 import unittest
@@ -174,6 +176,118 @@ class BuildTests(unittest.TestCase):
         self.assertIn("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON", configure)
         self.assertEqual(build.build_command(2), ["cmake", "--build", "/out/build", "--target",
                                                 "h700_integration_driver", "--parallel", "2"])
+
+    def test_staging_loads_literal_profile_path_and_restores_build_alias(self):
+        common = self.root / build.DRIVER / 'package.py'
+        common.write_text('import build\nbootstrap = build\n')
+        game_dir = self.root / 'tools/h700_game'
+        game_dir.mkdir()
+        (game_dir / 'package.py').write_text(
+            'import h700_bootstrap\ncommon = h700_bootstrap.load_staging(h700_bootstrap.INTEGRATION)\n')
+        profile = build.BuildProfile(package_script='/src/tools/h700_game/package.py')
+        wrapper = SimpleNamespace()
+        with mock.patch.object(build, 'ROOT', self.root), \
+             mock.patch.dict(sys.modules, {'build': wrapper, 'package': wrapper, 'h700_bootstrap': build}):
+            staging = build.load_staging(profile)
+            self.assertIs(staging.common.bootstrap, build)
+            self.assertIs(sys.modules['build'], wrapper)
+            self.assertIs(sys.modules['package'], wrapper)
+
+    def test_staging_alias_restored_when_missing_or_execution_fails(self):
+        script = self.root / build.DRIVER / 'package.py'
+        for present in (False, True):
+            for fail in (False, True):
+                with self.subTest(present=present, fail=fail), mock.patch.dict(sys.modules), \
+                     mock.patch.object(build, 'ROOT', self.root):
+                    wrapper = SimpleNamespace()
+                    if present:
+                        sys.modules['build'] = wrapper
+                    else:
+                        sys.modules.pop('build', None)
+                    script.write_text('import build\nbootstrap = build\n' +
+                                      ('raise ValueError("staging failure")\n' if fail else ''))
+                    if fail:
+                        with self.assertRaisesRegex(ValueError, 'staging failure'):
+                            build.load_staging(build.INTEGRATION)
+                    else:
+                        self.assertIs(build.load_staging(build.INTEGRATION).bootstrap, build)
+                    if present:
+                        self.assertIs(sys.modules['build'], wrapper)
+                    else:
+                        self.assertNotIn('build', sys.modules)
+
+    def test_only_game_package_gets_native_clean_fixture_tmpfs(self):
+        game = build.BuildProfile(target='metroid_prime_port', script='/src/tools/h700_game/build.py',
+                                  package_script='/src/tools/h700_game/package.py')
+        for profile in (build.INTEGRATION, game):
+            for packaging in (False, True):
+                with self.subTest(profile=profile.target, package=packaging):
+                    args = SimpleNamespace(jobs=2, configure_only=False, package=packaging)
+                    command = build.docker_command(self.root, self.out, 'unit-test', args, profile)
+                    mounts = [command[i + 1] for i, item in enumerate(command) if item == '--tmpfs']
+                    if profile == game and packaging:
+                        self.assertEqual(mounts, ['/tmp:rw,exec,nosuid,size=96m',
+                                                  '/out/build/card-test-data:rw,noexec,nosuid,size=16m'])
+                        self.assertIn('TMPDIR=/tmp', command)
+                        self.assertNotIn('TMPDIR=/out/tmp', command)
+                    else:
+                        self.assertEqual(mounts, [])
+                        self.assertIn('TMPDIR=/out/tmp', command)
+                    self.assertEqual('--package' in command, packaging)
+                    self.assertIn(profile.script, command)
+
+    def test_package_container_uses_profile_options_targets_and_checks(self):
+        args = SimpleNamespace(jobs=2, configure_only=False, package=True)
+        game = build.BuildProfile(target='metroid_prime_port')
+        for custom in (False, True):
+            with self.subTest(custom=custom):
+                staging = SimpleNamespace(CPU_TARGETS=['cpu-target'], CPU_FILTER='ExactCPU',
+                                          stage_package=mock.Mock())
+                if custom:
+                    staging.CONFIGURE_OPTIONS = ['-DMP_BUILD_TESTS=ON', '-DBUILD_TESTING=ON']
+                    staging.run_checks = mock.Mock()
+                commands = mock.Mock()
+                commands.run.return_value.read_text.return_value = 'clang version 16.0\n'
+                profile = game if custom else build.INTEGRATION
+                def read_text(path):
+                    return build.IMAGE_ID + '\n' if path.name == profile.marker else '{}'
+                with mock.patch.object(build, 'ROOT', Path('/src')), \
+                     mock.patch.object(Path, 'read_text', autospec=True, side_effect=read_text), \
+                     mock.patch.object(build.environment, 'inspect_environment', return_value={}), \
+                     mock.patch.object(build, 'Commands', return_value=commands), \
+                     mock.patch.object(build, 'write_json'), mock.patch.object(build.shutil, 'copyfile'), \
+                     mock.patch.object(build, 'stage_inputs'), mock.patch.object(build, 'inspect_artifacts'), \
+                     mock.patch.object(build, 'load_staging', return_value=staging) as loader:
+                    build.container_build(args, profile)
+                loader.assert_called_once_with(profile)
+                calls = {c.args[0]: c.args[1] for c in commands.run.call_args_list}
+                configure = build.configure_command(profile) + ['-DAURORA_ENABLE_TESTS=ON', '-DH700_STAGE_PACKAGE=ON']
+                self.assertEqual(calls['configure'], configure + getattr(staging, 'CONFIGURE_OPTIONS', []))
+                self.assertEqual(calls['build'], ['cmake', '--build', '/out/build', '--target',
+                                                 profile.target, 'cpu-target', '--parallel', '2'])
+                if custom:
+                    staging.run_checks.assert_called_once_with(Path('/out'), commands)
+                    self.assertNotIn('cpu-tests', calls)
+                    self.assertNotIn('fifo-tests', calls)
+                    self.assertNotIn('helper-tests', calls)
+                else:
+                    self.assertEqual(calls['cpu-tests'], ['ctest', '--test-dir', '/out/build', '-R',
+                                     'ExactCPU', '--output-on-failure', '--timeout', '10'])
+                    self.assertEqual(calls['fifo-tests'], ['/out/build/aurora/tests/gx_fifo_tests'])
+                    self.assertIn('helper-tests', calls)
+                staging.stage_package.assert_called_once_with(Path('/out'), commands)
+
+    def test_game_package_cli_allows_full_build_only(self):
+        game = build.BuildProfile(target='metroid_prime_port')
+        with mock.patch.object(build, 'container_build') as container:
+            self.assertEqual(build.main(['--container', '--package'], game), 0)
+            container.assert_called_once()
+        for option in ('--configure-only', '--check-inputs'):
+            with self.subTest(option=option), mock.patch.object(build, 'load_staging') as loader, \
+                 contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(build.main(['--package', option], game), 1)
+                loader.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

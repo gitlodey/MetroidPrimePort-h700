@@ -8,6 +8,7 @@ InitialCache.cmake owns the build/provider profile; Inputs.cmake owns staging.
 import argparse
 from dataclasses import dataclass
 import hashlib
+import importlib.util
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -36,9 +37,11 @@ class BuildProfile:
     prefix: str = "h700-integration-driver"
     help_check: bool = True
     check_argument: str = "--help"
+    package_script: str = "/src/tools/h700_integration_driver/package.py"
 
 
 INTEGRATION = BuildProfile()
+_BOOTSTRAP = sys.modules[__name__]
 
 # Reuse the ABI/environment inspector, not the old probe's production-hash gate.
 sys.path.insert(0, str(ROOT / "tools/h700_graphics_probe"))
@@ -48,6 +51,24 @@ import verify_environment as environment
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def load_staging(profile):
+    path = ROOT / str(relative_path(Path(profile.package_script).relative_to("/src").as_posix()))
+    spec = importlib.util.spec_from_file_location("h700_staging", path)
+    module = importlib.util.module_from_spec(spec)
+    # The shared package imports build; never let it resolve to the game wrapper.
+    missing = object()
+    previous = sys.modules.get("build", missing)
+    sys.modules["build"] = _BOOTSTRAP
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is missing:
+            sys.modules.pop("build", None)
+        else:
+            sys.modules["build"] = previous
+    return module
 
 
 def sha256(path):
@@ -245,11 +266,16 @@ def build_command(jobs, profile=INTEGRATION):
 
 
 def docker_command(root, out, name, args, profile=INTEGRATION):
+    game_package = getattr(args, "package", False) and profile != INTEGRATION
     command = ["docker", "run", "--rm", "--pull=never", "--name", name, "--platform", "linux/arm64",
                "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
                "--volume", f"{root}:/src:ro", "--volume", f"{out}:/out:rw", "--workdir", "/out",
-               "--env", "HOME=/out/home", "--env", "TMPDIR=/out/tmp", "--env", "XDG_CACHE_HOME=/out/cache",
-               IMAGE_ID, "python3", "-B", profile.script,
+               "--env", "HOME=/out/home", "--env", "TMPDIR=/tmp" if game_package else "TMPDIR=/out/tmp",
+               "--env", "XDG_CACHE_HOME=/out/cache"]
+    if game_package:
+        command += ["--tmpfs", "/tmp:rw,exec,nosuid,size=96m",
+                    "--tmpfs", "/out/build/card-test-data:rw,noexec,nosuid,size=16m"]
+    command += [IMAGE_ID, "python3", "-B", profile.script,
                "--container", "--jobs", str(args.jobs)]
     if args.configure_only:
         command.append("--configure-only")
@@ -304,22 +330,26 @@ def container_build(args, profile=INTEGRATION):
     stage_inputs(ROOT, out)
     configure = configure_command(profile)
     if args.package:
+        staging = load_staging(profile)
         configure += ["-DAURORA_ENABLE_TESTS=ON", "-DH700_STAGE_PACKAGE=ON"]
+        configure += list(getattr(staging, "CONFIGURE_OPTIONS", ()))
     commands.run("configure", configure, 300)
     if not args.configure_only:
         command = build_command(args.jobs, profile)
         if args.package:
-            import package as staging
             command[command.index("--parallel"):command.index("--parallel")] = staging.CPU_TARGETS
         commands.run("build", command, 1800)
         inspect_artifacts(out, commands, help_check=profile.help_check and not args.package,
                           check_argument=profile.check_argument)
         if args.package:
-            commands.run("cpu-tests", ["ctest", "--test-dir", "/out/build", "-R", staging.CPU_FILTER,
-                                      "--output-on-failure", "--timeout", "10"], 180)
-            commands.run("fifo-tests", ["/out/build/aurora/tests/gx_fifo_tests"], 120)
-            commands.run("helper-tests", ["python3", "-B", "-m", "unittest", "discover", "-s",
-                         "/src/tools/h700_integration_driver", "-p", "test_*.py", "-v"], 180)
+            if hasattr(staging, "run_checks"):
+                staging.run_checks(out, commands)
+            else:
+                commands.run("cpu-tests", ["ctest", "--test-dir", "/out/build", "-R", staging.CPU_FILTER,
+                                          "--output-on-failure", "--timeout", "10"], 180)
+                commands.run("fifo-tests", ["/out/build/aurora/tests/gx_fifo_tests"], 120)
+                commands.run("helper-tests", ["python3", "-B", "-m", "unittest", "discover", "-s",
+                             "/src/tools/h700_integration_driver", "-p", "test_*.py", "-v"], 180)
             staging.stage_package(out, commands)
     write_json(out / "result.json", {"status": "configure-only" if args.configure_only else "local-readiness-complete" if args.package else "build-complete",
                "device_validated": False, "image_id": IMAGE_ID, "target": profile.target})
@@ -330,12 +360,11 @@ def main(argv=None, profile=INTEGRATION):
     parser.add_argument("--check-inputs", action="store_true", help="Read-only archive hash check; no Docker")
     parser.add_argument("--output", default=f"build/{profile.prefix}", help="NEW project/build/... directory")
     parser.add_argument("--configure-only", action="store_true", help="Stage inputs and configure, without building")
-    parser.add_argument("--package", action="store_true", help="IG13 fresh build, CPU tests, audit and explicit package; never graphics")
+    parser.add_argument("--package", action="store_true", help="Fresh full build, CPU tests, audit and explicit package; never graphics")
     parser.add_argument("--jobs", type=int, default=2, choices=range(1, 9), metavar="1..8")
     parser.add_argument("--container", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     try:
-        require(not args.package or profile == INTEGRATION, "--package is only available for the integration driver")
 
         require(not args.package or not (args.configure_only or args.check_inputs), "--package requires a complete fresh build")
         if args.check_inputs:
@@ -348,7 +377,7 @@ def main(argv=None, profile=INTEGRATION):
         out = output_path(ROOT, args.output)
         manifest = check_inputs()
         if args.package:
-            import package as staging
+            staging = load_staging(profile)
             staging.verify_notices(ROOT)
             source = staging.source_snapshot(ROOT)
         for rel in (Path(profile.source).relative_to("/src") / "CMakeLists.txt",

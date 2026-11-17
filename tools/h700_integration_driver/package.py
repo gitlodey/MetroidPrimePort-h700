@@ -27,14 +27,15 @@ SCENARIO = dict(profile='h700-mixed-v1', backend='hardware OpenGLES Compatibilit
                 fresh_cache_per_generation=True, assets=False, cards=False, device_validated=False)
 
 
-def source_snapshot(root):
+def source_snapshot(root, extra_prefixes=(), extra_names=()):
     """Hash build-relevant tracked + uncommitted inputs, not user files/output/docs."""
     def git(*args):
         return subprocess.check_output(['git', '--no-pager', *args], cwd=root, timeout=30)
     prefixes = ('extern/aurora/', 'cmake/', 'tools/h700_integration_driver/', 'tools/h700_graphics_probe/',
-                'packaging/', 'platform/glibc_compat.c', 'tools/collect_licenses.sh', 'docs/H700_RUNTIME_ABI.json')
+                'packaging/', 'platform/glibc_compat.c', 'tools/collect_licenses.sh', 'docs/H700_RUNTIME_ABI.json') + tuple(extra_prefixes)
+    exact_names = {'LICENSE', 'NOTICE'} | set(extra_names)
     names = set(git('ls-files', '-z', '--cached', '--others', '--exclude-standard').decode().split('\0'))
-    names = sorted(n for n in names if n and (n in ('LICENSE', 'NOTICE') or n.startswith(prefixes))
+    names = sorted(n for n in names if n and (n in exact_names or n.startswith(prefixes))
                    and Path(n).name != '.DS_Store' and '__pycache__' not in Path(n).parts)
     hashes = {}
     for name in names:
@@ -91,11 +92,11 @@ def firmware_closure(snapshot, roots):
     return found
 
 
-def audit(out, stage, commands):
+def audit(out, stage, commands, executable='h700_integration_driver'):
     verifier = probe_verifier()
     snapshot = json.loads((ROOT / 'docs/H700_RUNTIME_ABI.json').read_text())
     infos, exports, texts = {}, {}, {}
-    for name, rel in [('executable', 'h700_integration_driver'), ('sdl', 'lib/libSDL3.so.0')]:
+    for name, rel in [('executable', executable), ('sdl', 'lib/libSDL3.so.0')]:
         text = commands.run('staged-' + name + '-elf', ['readelf', '-W', '-h', '-l', '-d', '--dyn-syms',
                                                        '--version-info', stage / rel], 30).read_text()
         texts[name] = text
@@ -105,7 +106,7 @@ def audit(out, stage, commands):
         build.require(all(p.startswith('$ORIGIN') and '..' not in p and not p.startswith('$ORIGINevil')
                           for entry in rpaths for p in entry.split(':')), f'Nonlocal RPATH: {name}')
         if name == 'executable':
-            build.require(rpaths == ['$ORIGIN/lib'], 'Driver requires exactly local $ORIGIN/lib RUNPATH')
+            build.require(rpaths == ['$ORIGIN/lib'], f'{executable} requires exactly local $ORIGIN/lib RUNPATH')
         else:
             build.require('Library soname: [libSDL3.so.0]' in text, 'Wrong bundled SDL SONAME')
     bundled = {'libSDL3.so.0': infos['sdl']}
@@ -126,7 +127,7 @@ def audit(out, stage, commands):
         build.require(target + '=' in providers, f'Provider report missing {target}')
     build.require(':source:/out/inputs/sdl' in providers and ':package:/out/inputs/dawn/' in providers,
                   'Unexpected SDL/Dawn providers')
-    symbols = commands.run('linked-symbols', ['nm', '-C', '--defined-only', stage / 'h700_integration_driver'], 60).read_text()
+    symbols = commands.run('linked-symbols', ['nm', '-C', '--defined-only', stage / executable], 60).read_text()
     inventory = {k: sum(k in line for line in symbols.splitlines()) for k in
                  ('spvtools::', 'tint::', 'absl::', 'partition_alloc::', 'dawn::native::vulkan::', 'google::protobuf::', 'glslang::')}
     report = dict(status='metadata-provider-gate-pass; NOT runtime/device PASS', artifacts=infos,
@@ -177,7 +178,9 @@ def safe_file_mode(mode):
     return not mode & 0o6022  # setuid/setgid and group/other writable are never package metadata
 
 
-def payload(stage):
+def payload(stage, allowed_files=None):
+    if allowed_files is None:
+        allowed_files = {'h700_integration_driver', 'lib/libSDL3.so.0', 'run.sh', 'audit.json', 'source.json', 'README.txt'}
     result = {}
     for path in sorted(stage.rglob('*')):
         build.require(not path.is_symlink(), f'Package cannot contain symlinks: {path}')
@@ -185,7 +188,7 @@ def payload(stage):
             continue
         rel = path.relative_to(stage).as_posix()
         build.require(path.is_file() and safe_file_mode(path.stat().st_mode), f'Unsafe package file/mode: {rel}')
-        allowed = rel in ('h700_integration_driver', 'lib/libSDL3.so.0', 'run.sh', 'audit.json', 'source.json', 'README.txt') or rel.startswith('licenses/')
+        allowed = rel in allowed_files or rel.startswith('licenses/')
         if rel in ('manifest.json', 'SHA256SUMS'):
             continue
         build.require(allowed, f'Unexpected package content: {rel}')
@@ -193,10 +196,10 @@ def payload(stage):
     return result
 
 
-def validate_package(stage):
+def validate_package(stage, scenario=SCENARIO, allowed_files=None):
     manifest = json.loads((stage / 'manifest.json').read_text())
-    build.require(manifest['scenario'] == SCENARIO and manifest['device_status'] == 'pending', 'Scenario/device status changed')
-    build.require(manifest['payload'] == payload(stage), 'Package content/hash/mode mismatch')
+    build.require(manifest['scenario'] == scenario and manifest['device_status'] == 'pending', 'Scenario/device status changed')
+    build.require(manifest['payload'] == payload(stage, allowed_files), 'Package content/hash/mode mismatch')
     expected = {p.relative_to(stage).as_posix(): build.sha256(p) for p in stage.rglob('*') if p.is_file() and p.name != 'SHA256SUMS'}
     entries = {}
     for line in (stage / 'SHA256SUMS').read_text().splitlines():
@@ -207,20 +210,21 @@ def validate_package(stage):
     return manifest
 
 
-def archive_package(stage, target):
+def archive_package(stage, target, root_name='H700Integration'):
+    build.require(build.relative_path(root_name).parts == (root_name,), 'Unsafe archive root component')
     build.require(not target.exists(), 'Archive already exists')
     with target.open('xb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', filename='', mtime=0) as zipped:
         with tarfile.open(fileobj=zipped, mode='w') as archive:
             for path in sorted(stage.rglob('*')):
                 if not path.is_file():
                     continue
-                info = archive.gettarinfo(str(path), 'H700Integration/' + path.relative_to(stage).as_posix())
+                info = archive.gettarinfo(str(path), root_name + '/' + path.relative_to(stage).as_posix())
                 info.uid = info.gid = info.mtime = 0
                 info.uname = info.gname = ''
                 with path.open('rb') as stream:
                     archive.addfile(info, stream)
     with tarfile.open(target) as archive:
-        expected = {'H700Integration/' + p.relative_to(stage).as_posix(): build.sha256(p) for p in stage.rglob('*') if p.is_file()}
+        expected = {root_name + '/' + p.relative_to(stage).as_posix(): build.sha256(p) for p in stage.rglob('*') if p.is_file()}
         actual = {}
         for info in archive:
             build.require(info.isfile() and not info.issym() and not info.islnk(), 'Archive special member')
