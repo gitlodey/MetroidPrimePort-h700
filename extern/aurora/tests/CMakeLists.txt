@@ -269,9 +269,15 @@ if (AURORA_ENABLE_GX)
     ../lib
   )
   target_compile_definitions(gfx_recording_tests PRIVATE AURORA TARGET_PC)
+  # Core's H700 lifetime guard queries GX's resident registry; both static
+  # archives must be rescanned regardless of which recording API pulled core in.
+  if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED OR CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(gfx_recording_tests PRIVATE
+      "$<LINK_GROUP:RESCAN,aurora::core,aurora::gx,aurora::vi>")
+  else ()
+    target_link_libraries(gfx_recording_tests PRIVATE aurora::gx aurora::vi)
+  endif ()
   target_link_libraries(gfx_recording_tests PRIVATE
-    aurora::gx
-    aurora::vi
     gtest
     gtest_main
     absl::btree # gx.hpp includes absl headers; aurora_gx only gets them privately

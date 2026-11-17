@@ -192,4 +192,10 @@ Full incremental ARM64 game compile/link PASS;25/25 CPU/no-init/DVD CTest PASS, 
 
 Full ARM64 game+skin test target compile/link PASS;38/38 CPU/no-init/DVD CTest PASS. Новые12 behavioral cases связывают production skin TU и CCircularBuffer с stub external services: pending handshake, health/progress failure, ref balancing, invalid sizing, exact-capacity/prefix reuse,65538 wrap iterations, metadata bad_alloc без выдачи указателя. Source bindings отдельно покрывают constructors/publication/consumers/actual Run wait; они не заявлены runtime исполнением renderer/skin jobs. Четыре изменённых game TUs без AURORA_H700 compile PASS. Focused independent read-only review включённых producers/direct consumers не нашёл defects. Initial compile/accessor и diagnostic post-read guard failures исправлены до успешного прогона. Commands/logs — ignored `gm12-skin-*`.
 
-**GM-12 LOCAL PASS:** три безопасные итерации завершены, producers включены после consumers. Это не game/GPU/device PASS; далее GM-13 — согласованная интеграционная проверка изменённой цепочки.
+**GM-12 LOCAL PASS:** три безопасные итерации завершены, producers включены после consumers. Commits `fa1eaba58`, `e9af0acbc`, `874128da6` отправлены. Это не game/GPU/device PASS.
+
+### GM-13 — LOCAL PASS: изменённая game/lifecycle цепочка
+
+Full ARM64 game compile/link и38/38CPU/no-init/DVD CTest PASS. Existing Aurora CPU suites:269/269 GX FIFO,53/53 render/terminal lifecycle,13/13 recording/ownership (`GfxRecordingTest.*:GfxFrameWaitOwnership.*`) и9/9 bloom readback slots PASS. Остальные gfx scene/Null-backend tests намеренно не запускались: они не нужны для проверки исправленного status/lifetime path и не заменяют Mali game acceptance.
+
+Найден и исправлен прямой test-target link defect: core lifetime guard ссылается на GX resident registry, поэтому `gfx_recording_tests` использует existing CMake RESCAN static archive group. Production backend/параметры/зависимости не менялись, meaningful tests не отключались. Полные non-H700 aurora_core/aurora_gx compile PASS; все20 game TUs, изменённые с GM-04 по GM-12, отдельно скомпилированы без AURORA_H700. Commands/logs — ignored `gm13-*` в existing H700/non-H700 outputs. GPU/device не запускались. Далее GM-14 — physical install layout и actual data paths.
