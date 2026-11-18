@@ -132,4 +132,25 @@ Runtime quit-test **pending**: ручной menu run → Select+Start, native AU
 - Отдельный **Metroid Prime Unbound PERF09** установлен:101payload checksum PASS; own user/cache физически скопированы с неактивного PERF07, source/copy hashes verified и исходные данные неизменны. Pre/post no-game/copier/launcher proof, agent game starts/signals0. Ручной запуск нужен для настоящего FPS/correctness capture; текущий FPS PERF09 **ещё не измерен**.
 - Для атрибуции горячего потока проверен существующий kernel `perf_event_open`: private bounded userspace-IP sampler прошёл80ms self-test,7samples/lost0/invalid0. Новых packages/sysctl/services не установлено/не изменено, временный helper удалён; ни к игре, ни к драйверному thread ещё не подключался. В следующем run сначала чистый simultaneous FPS/power/process capture, затем отдельно до2s CPU sampling; эти2s не включать в FPS. Сам self-test не доказывает доступность/символизацию game-thread samples.
 
+## PERF09 live — FPS не вырос; горячий поток копирует память
+
+User manual FileSelect run, проверены exact executable hash/PID/starttime.11samples/~20s: все ondemand/idlefalse, CPU1,200–1,416GHz, GPU util6–7%; errors/compile warnings0, min available381,379MiB. Steady4полных reports:92frames/8,1497s = **11,288759FPS**, interval88,5837ms. Prepare8,535ms, Submit14,145ms, completion-observed151,5625ms, presenter0,5675ms/swap0,040ms; перекрывающиеся интервалы не складывать, не GPU time.
+
+| Метрика | PERF07 | PERF09 | Вывод |
+| --- | ---: | ---: | --- |
+| FPS |11,33647|11,28876|Ускорение не установлено; численно−0,42%, не matched A/B/не доказанная регрессия|
+| forward WaitAny/frame |83,8913|43,5652|−48,07% actual calls|
+| eglMakeCurrent/frame |371,8043|290,3478|−21,91% actual calls|
+| EGL ClientWait/frame |176,5435|135,5217|−23,24% actual calls|
+
+Batch исполняется и убирает повторную работу, но основную88ms задержку **не устранил**. Нельзя объявлять оставшуюся стоимость GPU bound или доказывать gain по уменьшению counters. Source/binaries/runs различаются, в PERF09 producer flushOFF против PERF07ON.
+
+**Новая адресная CPU-находка:** по последним двум одновременным CPU snapshots самый горячий `mali-utility-wo` потреблял25,19% четырёхъядерной capacity≈одно ядро. Отдельно ПОСЛЕ FPS capture выполнен2s kernel userspace-IP profile: **195samples, lost0, invalid0;195/195 в executable libc mapping**. PID/TID/starttime/executable проверены до/после, helper удалён. Exact firmware libc скопирована read-only, source-before/source-after/local SHA256 совпали. ELF LOAD offsets проверены: PCs соответствуют libc offsets `0x9b8c4`, `0x9b8c8`, `0x9b8cc`, `0x9b8d4`. Disassembly показывает NEON `ldp/stp`, увеличение source/destination на64bytes и цикл по оставшейся длине: **цикл копирования памяти**, не spinlock. Сами sampled PCs не в коде компилятора, но без caller нельзя исключить, например, copy из compiler path. Ближайшая подпись objdump `__xpg_strerror_r+…` не является атрибуцией: ни один exported FUNC-range эти PCs не покрывает; реализация copy скрытая/IFUNC.195/195 — доля samples, не доказательство100% полного времени работы.
+
+**Граница вывода:** пока неизвестны caller и размер копирования; нельзя утверждать, что это именно full staging copy, texture upload или установленная причина каждого медленного кадра. Для этих двух вопросов собран LR/register sampler, но его первый attach **не состоялся**: до передачи helper исходные PID/TID уже исчезли. Повторов/сигналов игре не было. Fresh final state: game/copier/launcher0, lock absent; log содержит Select+Start, native audio released refs1, Released/Done, без SIGSEGV. Exit code отдельно не зафиксирован; это не повод снова переключаться с FPS на приёмку выхода.
+
+Следующий минимальный шаг — **тот же PERF09**, новый ручной menu run, fresh identity/hash и1s CPU selection → отдельный2s LR/register profile без повторения FPS-capture/новой сборки. `sample_callsite_live.py` готов; register sampler скомпилирован, но runtime registers ещё не проверены. Сначала установить caller/размер copy, затем выбирать изменение upload path; не начинать owner rewrite только по общему CPU counter.
+
+Evidence: `build/h700-perf09-batched-forward/live-capture/{analysis.json,comparison.json,cpu-profile-private.json,cpu-profile-libc-symbols.json,cpu-callsite-attempt.json,post-profile-summary.json}`; raw samples/maps/firmware binary остаются private ignored. Никаких изменений firmware/clocks/services/sysctl/game data, game starts/signals0; оба профиля не включены в FPS (второй не был запущен).
+
 Private scripts/evidence/results остаются в ignored `build/h700-perf06-recovery/`, `build/h700-perf07-producer-flush/`, `build/h700-perf08-audio-exit/` и `build/h700-perf09-batched-forward/`. Чужой local diff progress и `.DS_Store` сохранены, в commits не включаются.
