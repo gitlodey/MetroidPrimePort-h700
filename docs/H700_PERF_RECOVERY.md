@@ -30,4 +30,15 @@ Pinned Dawn zero-timeout completion poll действительно захват
 
 Добавлен exact `MP_H700_PROGRAM_CACHE=1` + `MP_H700_BENCH=1|menu`; default OFF. Используется существующий checksummed Dawn cache и закреплённый GL program-binary loader с fallback, не собственный новый cache format. Linux Mesa/non-H700 policy не меняется. Existing `MP_H700_GL_TIMING=1` теперь отдельно считает ProcessEvents/forwardWaitAny/deviceLostPoll/reversePoll и core/KHR EGL waits с timeout/flags/outcomes; вложенные суммы не складывать.
 
-Device preflight обнаружил другую активную игру; она не затронута. Ожидается упаковка отдельного тестового stage и ручной запуск пользователем после освобождения приставки. Прежний пользовательский diff progress не включается в commit.
+### Artifact / установка — PASS, runtime pending
+
+- Код: `4d1c9595feb5b782a581aa049b9326be49298432`, ветка `h700/perf-recovery`, commit/push выполнены. Финальный incremental recheck также86/86CTest +269/269FIFO PASS. `--version` в изолированном builder печатает `source-snapshot`; точная ревизия/bytes привязаны через `source.json` и manifest, не выдуманный embedded revision.
+- `build/h700-perf06-recovery/package`:18staged source/ELF/ABI/providers/notices/content/hash/no-init/syntax gates PASS; source-before/after совпал, dirty build-relevant sources0. SDL/dependencies byte-identical RC6 и не пересобирались.
+- Source SHA256: `b4f074cf7589b23bdc034501b87bd61ea44c5a783a41ff2c119b99a8de7ccf10`.
+- Stripped executable62,860,928bytes, SHA256 `5d6b0b6f61c918e0079cee01bf7ac1b25edbdbcab773d4fe29ac7d7e66f25034`. Unstripped229,466,696bytes сохранён в existing build; transform/hashes записаны в manifest.
+- Архив `build/h700-perf06-recovery/h700-perf06.tar.gz`:21,203,501bytes, SHA256 `1327155fa356d03fc39267a70d7c7f6fd46b33bde6e3a8f475aac4cf18d2e41e`;133members, без user/cache/disc/save/symlink payload. Это private incremental test package, не fresh RC и не разрешение public distribution.
+- На устройстве отдельный пункт **Metroid Prime Unbound PERF06**,101payload checksum PASS. Физическая копия30user/cache files из неактивного NATIVE verified; source до/после совпал. Отдельный benchmark entry задаёт прежние DRAW_UBO/GATHER/NATIVE1 плюс PROGRAM_CACHE1/GL_TIMING1 и FastBoot menu,1×/640×480/dynamicOff/cap30 сохранены. Existing warm data copy не означает уже прогретый новый Dawn program cache.
+- Game starts0/signals0. Device preflight обнаружил другую активную игру; она не прерывалась и fullscreen нагрузка поверх неё не запускалась. Runtime FPS/картинка/physical chord/normal Exit **не проверены**.
+- Следующий шаг: после освобождения приставки ручной Ports launch, проверить FileSelect/звук/картинку и фактический Select+Start exit; в отдельном run собрать simultaneous power/process/progress и новые wait counters, различить cold/warm cache. Ошибки, удержанный lock или отсутствие exit не скрывать и не лечить reboot как штатным завершением.
+
+Прежний пользовательский diff progress и `.DS_Store` не включены в commits. Private scripts/evidence/results сохранены в ignored `build/h700-perf06-recovery/`.
