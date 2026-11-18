@@ -41,4 +41,12 @@ Pinned Dawn zero-timeout completion poll действительно захват
 - Game starts0/signals0. Device preflight обнаружил другую активную игру; она не прерывалась и fullscreen нагрузка поверх неё не запускалась. Runtime FPS/картинка/physical chord/normal Exit **не проверены**.
 - Следующий шаг: после освобождения приставки ручной Ports launch, проверить FileSelect/звук/картинку и фактический Select+Start exit; в отдельном run собрать simultaneous power/process/progress и новые wait counters, различить cold/warm cache. Ошибки, удержанный lock или отсутствие exit не скрывать и не лечить reboot как штатным завершением.
 
+## Следующий live шаг: PERF07 / producer flush A/B
+
+Пользователь подтвердил Select+Start exit и разрешил активные tests на свободной приставке. Первый PERF06 capture разделён по одновременно записанному power state; steady active tail138frames/12,1286s=11,378FPS. Submit12,45ms, completion-observed152,89ms; actual EGL waits~0,186ms/frame и множество timeout0/Pending. Значит, steady153ms не находятся внутри poll/mutex. Возврат меню и normal release stage11 после физического Select+Start записаны в логе.
+
+Проверяем только гипотезу задержанной producer dispatch: exact opt-in `MP_H700_PRODUCER_FLUSH=1` + bench1/menu добавляет один реальный glFlush после успешного создания нового Dawn FENCE/NATIVE_FENCE, пока известный live producer context current. Presenter/imported FD fences исключены; arguments/results/real completion/reverse/swap guards неизменны. Default OFF; glFinish не добавляется. Считать фактические типы sync и число flush. Если FPS не растёт или ожидание просто переезжает в Submit — кандидат не включать.
+
+Проверка: узкие CPU/source tests + existing incremental ARM64 build/package gates; один и тот же binary/меню/settings/cache, OFF→ON и при необходимости обратный контроль; simultaneous process/power/progress, без смешивания idle/transitions. Штатный muOS content-loader route с существующими configured flags, не bare SDL поверх меню. Не менять firmware, governors или services; остановка только identity-bound own game и один TERM с последующим actual release/lock drain. Исходные установки/сохранения не трогать.
+
 Прежний пользовательский diff progress и `.DS_Store` не включены в commits. Private scripts/evidence/results сохранены в ignored `build/h700-perf06-recovery/`.

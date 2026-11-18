@@ -75,9 +75,13 @@ struct Backend {
   FrameWallSummary frame_wall;
   FrameWallTimings::Clock::time_point last_wall_report = FrameWallTimings::Clock::now();
   const bool gl_timing_enabled = gl_api_timing_enabled(std::getenv("MP_H700_GL_TIMING"));
+  const bool producer_flush_enabled = h700::producer_flush_enabled(std::getenv("MP_H700_PRODUCER_FLUSH"),
+                                                                 std::getenv("MP_H700_BENCH"));
+  PFNGLFLUSHPROC producer_flush = nullptr;
   GLApiWallSummary gl_wall;
   std::array<GLProcCache, GLApiWallSummary::WrappedGLCount> gl_procs;
   std::array<GLProcCache, GLApiWallSummary::DawnClientWaitFields.size()> egl_wait_procs;
+  std::array<GLProcCache, GLApiWallSummary::DawnCreateSyncFields.size()> egl_create_sync_procs;
   PFNEGLMAKECURRENTPROC make_current = nullptr;
   bool progressing = false;
   bool presenter_ready = false;
@@ -128,6 +132,7 @@ void* raw_proc(const char* name) {
   return proc;
 }
 using GLWall = GLApiWallSummary;
+bool live_dawn_current(EGLDisplay display);
 
 template <GLWall::Field Api, typename Proc, typename... Args>
 auto timed_driver_call(Proc proc, uint64_t bytes, Args... args) -> std::invoke_result_t<Proc, Args...> {
@@ -178,6 +183,27 @@ EGLint EGLAPIENTRY timed_client_wait_sync(EGLDisplay display, EGLSync sync, EGLi
 EGLint EGLAPIENTRY timed_client_wait_sync_khr(EGLDisplay display, EGLSyncKHR sync, EGLint flags, EGLTimeKHR timeout) {
   const auto proc = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(backend->egl_wait_procs[1].original);
   return timed_egl_wait_call<GLWall::ClientWaitSyncKHR>(proc, display, sync, flags, timeout);
+}
+
+template <GLWall::Field Api, typename Proc, typename Attribute>
+auto producer_create_sync_call(Proc proc, EGLDisplay display, EGLenum type, const Attribute* attrs)
+    -> std::invoke_result_t<Proc, EGLDisplay, EGLenum, const Attribute*> {
+  static_assert(ProducerFenceSyncType == EGL_SYNC_FENCE && EGL_SYNC_FENCE == EGL_SYNC_FENCE_KHR &&
+                ProducerNativeFenceSyncType == EGL_SYNC_NATIVE_FENCE_ANDROID && ProducerSyncNone == EGL_NONE);
+  return producer_sync_call(backend->producer_flush_enabled, backend->gl_timing_enabled, backend->gl_wall, Api,
+      static_cast<uint32_t>(type), producer_sync_attributes_empty(attrs),
+      [=] { return proc(display, type, attrs); },
+      [=] { return live_dawn_current(display); },
+      [] { backend->producer_flush(); });
+}
+
+EGLSync EGLAPIENTRY observed_create_sync(EGLDisplay display, EGLenum type, const EGLAttrib* attrs) {
+  const auto proc = reinterpret_cast<PFNEGLCREATESYNCPROC>(backend->egl_create_sync_procs[0].original);
+  return producer_create_sync_call<GLWall::CreateSync>(proc, display, type, attrs);
+}
+EGLSyncKHR EGLAPIENTRY observed_create_sync_khr(EGLDisplay display, EGLenum type, const EGLint* attrs) {
+  const auto proc = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(backend->egl_create_sync_procs[1].original);
+  return producer_create_sync_call<GLWall::CreateSyncKHR>(proc, display, type, attrs);
 }
 
 template <GLWall::Field Api, typename Proc, typename... Args>
@@ -298,6 +324,9 @@ static_assert(TimedGLWrappers.size() == GLWall::MakeCurrent);
 const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::DawnClientWaitFields.size()> TimedEGLWaitWrappers{
     checked_gl_wrapper<PFNEGLCLIENTWAITSYNCPROC>(timed_client_wait_sync),
     checked_gl_wrapper<PFNEGLCLIENTWAITSYNCKHRPROC>(timed_client_wait_sync_khr)};
+const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::DawnCreateSyncFields.size()> ObservedEGLCreateWrappers{
+    checked_gl_wrapper<PFNEGLCREATESYNCPROC>(observed_create_sync),
+    checked_gl_wrapper<PFNEGLCREATESYNCKHRPROC>(observed_create_sync_khr)};
 
 void observation_failure(const char* reason) {
   if (backend->trustworthy) {
@@ -313,6 +342,19 @@ ContextRecord* live_context(EGLContext context) {
     if (it->context == context && !it->destroyed) return &*it;
   }
   return nullptr;
+}
+bool live_dawn_current(EGLDisplay display) {
+  if (display == EGL_NO_DISPLAY || display != backend->display || eglGetCurrentDisplay() != display) return false;
+  const auto current = eglGetCurrentContext();
+  if (current == EGL_NO_CONTEXT || current == backend->presenter) return false;
+  // Release the ledger lock on return, before producer_sync_call invokes the driver flush.
+  std::lock_guard lock(backend->observer_mutex);
+  const auto* record = live_context(current);
+  const auto thread = std::this_thread::get_id();
+  return backend->trustworthy && record && !record->destroy_requested &&
+         std::any_of(backend->bindings.begin(), backend->bindings.end(), [&](const ContextBinding& binding) {
+           return binding.thread == thread && binding.context == current;
+         });
 }
 void append_event(const ContextEvent& event) {
   if (!diagnostic::current()) return;
@@ -435,6 +477,10 @@ bool initialize_presenter(SDL_Window* window) {
   backend->gles_library = dlopen("libGLESv2.so.2", RTLD_NOW | RTLD_LOCAL);
   if (!backend->egl_library || !backend->gles_library) return fail("Cannot retain firmware EGL/GLES libraries");
   backend->make_current = reinterpret_cast<PFNEGLMAKECURRENTPROC>(raw_proc("eglMakeCurrent"));
+  if (backend->producer_flush_enabled) {
+    backend->producer_flush = reinterpret_cast<PFNGLFLUSHPROC>(raw_proc("glFlush"));
+    if (!backend->producer_flush) return fail("H700 producer flush requires the real glFlush entry point");
+  }
   backend->sdl_context = SDL_GL_CreateContext(window);
   if (!backend->sdl_context) return fail(std::string("Cannot create mali presenter: ") + SDL_GetError());
   backend->display = eglGetCurrentDisplay();
@@ -464,8 +510,9 @@ bool initialize_presenter(SDL_Window* window) {
   if (!backend->create_image || !backend->destroy_image || !resolve("glEGLImageTargetTexture2DOES")) {
     return fail("H700 EGLImage entrypoints missing");
   }
-  backend->create_sync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(resolve("eglCreateSyncKHR"));
-  // Keep the presenter raw: its separately labelled probe must not also enter the Dawn wrapper.
+  // Keep the presenter raw: reverse fences must not enter Dawn's create/producer-flush counters.
+  backend->create_sync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(raw_proc("eglCreateSyncKHR"));
+  // Its separately labelled wait probe must not also enter the Dawn wrapper.
   backend->client_wait_sync = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(raw_proc("eglClientWaitSyncKHR"));
   backend->destroy_sync = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(resolve("eglDestroySyncKHR"));
   if (!backend->create_sync || !backend->client_wait_sync || !backend->destroy_sync) {
@@ -497,8 +544,10 @@ bool initialize_presenter(SDL_Window* window) {
   if (!SDL_GL_SetSwapInterval(1)) return fail("Cannot set H700 presenter swap interval");
   backend->presenter_ready = true;
   Log.info("H700 generation {}: {} / {}, two permanent 640x480 RGBA8 exports", backend->generation, renderer, version);
+  Log.info("H700 producer fence flush {} (MP_H700_PRODUCER_FLUSH=1 + MP_H700_BENCH=1|menu; timing independent)",
+           backend->producer_flush_enabled ? "enabled" : "disabled");
   if (backend->gl_timing_enabled) {
-    Log.info("H700 GL API wall enabled gen={} (MP_H700_GL_TIMING=1): Dawn-resolved GL/EGL ClientWait + "
+    Log.info("H700 GL API wall enabled gen={} (MP_H700_GL_TIMING=1): Dawn-resolved GL/EGL CreateSync/ClientWait + "
              "observed eglMakeCurrent + progress/poll envelopes; presenter ClientWait counted separately; "
              "wait outcomes/timeout classes/flags are call subsets, envelopes overlap API wall; "
              "requested_buffer_bytes counts buffer range/allocation arguments only "
@@ -525,6 +574,14 @@ dawn::native::opengl::EGLFunctionPointerType resolve(const char* name) {
   if (std::strcmp(name, "eglDestroyContext") == 0) return reinterpret_cast<Proc>(observed_destroy);
   if (std::strcmp(name, "eglReleaseThread") == 0) return reinterpret_cast<Proc>(observed_release_thread);
   if (std::strcmp(name, "eglGetProcAddress") == 0) return reinterpret_cast<Proc>(observed_get_proc);
+  if (backend->producer_flush_enabled || backend->gl_timing_enabled) {
+    for (size_t i = 0; i < ObservedEGLCreateWrappers.size(); ++i) {
+      if (std::strcmp(name, GLWall::Names[GLWall::DawnCreateSyncFields[i]]) != 0) continue;
+      auto& cached = backend->egl_create_sync_procs[i];
+      std::call_once(cached.once, [&] { cached.original = raw_proc(name); });
+      return cached.original ? ObservedEGLCreateWrappers[i] : nullptr;
+    }
+  }
   if (backend->gl_timing_enabled) {
     for (size_t i = 0; i < TimedGLWrappers.size(); ++i) {
       if (std::strcmp(name, GLWall::Names[i]) != 0) continue;
@@ -773,6 +830,13 @@ void report_frame_wall(const NativeFlight& flight, FrameWallTimings::Clock::time
                  "flush_calls={} timed_out={} success_or_signaled={} other={}; subsets of API calls, not extra work",
                  flight.descriptor.generation, flight.descriptor.frame, GLWall::Names[i], wait.timeout_zero,
                  wait.timeout_nonzero, wait.flags_or, wait.flush_calls, wait.timed_out, wait.signaled, wait.other);
+      }
+      if (!sample.sync.empty()) {
+        const auto& sync = sample.sync;
+        Log.info("H700 sync outcomes gen={} last={} api={} fence_calls={} native_fence_calls={} other_type_calls={} "
+                 "created={} failed={} eligible={}; subsets of CreateSync calls, producerGlFlush is separate actual work",
+                 flight.descriptor.generation, flight.descriptor.frame, GLWall::Names[i], sync.fence_calls,
+                 sync.native_fence_calls, sync.other_type_calls, sync.created, sync.failed, sync.eligible);
       }
     }
   }

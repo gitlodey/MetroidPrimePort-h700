@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
 namespace aurora::h700 {
@@ -49,6 +50,26 @@ inline bool gl_api_timing_enabled(const char* value) {
   return value && value[0] == '1' && value[1] == '\0';
 }
 
+constexpr bool producer_flush_enabled(const char* value, const char* bench) noexcept {
+  return value && std::string_view(value) == "1" && bench &&
+         (std::string_view(bench) == "1" || std::string_view(bench) == "menu");
+}
+
+// Kept EGL-header-free for the CPU policy tests; checked against the real enums at the wrapper.
+inline constexpr uint32_t ProducerFenceSyncType = 0x30f9;
+inline constexpr uint32_t ProducerNativeFenceSyncType = 0x3144;
+inline constexpr uint32_t ProducerSyncNone = 0x3038;
+
+template <typename Attribute>
+constexpr bool producer_sync_attributes_empty(const Attribute* attrs) noexcept {
+  // Reject every nonempty list, including native-fence FD imports, without scanning it.
+  return !attrs || attrs[0] == static_cast<Attribute>(ProducerSyncNone);
+}
+
+constexpr bool producer_sync_eligible(uint32_t type, bool created, bool empty_attrs) noexcept {
+  return created && empty_attrs && (type == ProducerFenceSyncType || type == ProducerNativeFenceSyncType);
+}
+
 inline uint64_t requested_gl_buffer_bytes(std::ptrdiff_t size) {
   return size > 0 ? static_cast<uint64_t>(size) : 0;
 }
@@ -78,7 +99,8 @@ struct GLApiWallSummary {
     BlitFramebuffer, Flush, GetError, Uniform1uiv, UseProgram, BindBufferRange, MakeCurrent,
     BufferSubDataUniform, BufferSubDataArray,
     ProcessEvents, ForwardWaitAny, ReversePoll, DeviceLostPoll,
-    ClientWaitSync, ClientWaitSyncKHR, PresenterClientWaitSyncKHR, Count
+    ClientWaitSync, ClientWaitSyncKHR, PresenterClientWaitSyncKHR,
+    CreateSync, CreateSyncKHR, ProducerFlush, Count
   };
   static constexpr std::array<const char*, Count> Names{
       "glMapBufferRange", "glUnmapBuffer", "glBufferData", "glBufferSubData", "glCopyBufferSubData",
@@ -87,10 +109,12 @@ struct GLApiWallSummary {
       "glBlitFramebuffer", "glFlush", "glGetError", "glUniform1uiv", "glUseProgram", "glBindBufferRange",
       "eglMakeCurrent", "glBufferSubData_uniform", "glBufferSubData_array",
       "ProcessEvents", "forwardWaitAny", "reversePoll", "deviceLostPoll",
-      "eglClientWaitSync", "eglClientWaitSyncKHR", "presenterEglClientWaitSyncKHR"};
+      "eglClientWaitSync", "eglClientWaitSyncKHR", "presenterEglClientWaitSyncKHR",
+      "eglCreateSync", "eglCreateSyncKHR", "producerGlFlush"};
   // Only the contiguous GL entry points before MakeCurrent index TimedGLWrappers/gl_procs.
   static constexpr size_t WrappedGLCount = MakeCurrent;
   static constexpr std::array<Field, 2> DawnClientWaitFields{ClientWaitSync, ClientWaitSyncKHR};
+  static constexpr std::array<Field, 2> DawnCreateSyncFields{CreateSync, CreateSyncKHR};
   static constexpr uint32_t UniformBufferTarget = 0x8a11;
   static constexpr uint32_t ArrayBufferTarget = 0x8892;
   static constexpr uint32_t SyncFlushCommandsBit = 0x1;
@@ -103,10 +127,21 @@ struct GLApiWallSummary {
              timed_out == 0 && signaled == 0 && other == 0;
     }
   };
+  struct SyncSample {
+    uint64_t fence_calls = 0, native_fence_calls = 0, other_type_calls = 0;
+    uint64_t created = 0, failed = 0, eligible = 0;
+    bool empty() const {
+      return fence_calls == 0 && native_fence_calls == 0 && other_type_calls == 0 &&
+             created == 0 && failed == 0 && eligible == 0;
+    }
+  };
   struct Sample {
     uint64_t calls = 0, total_ns = 0, max_ns = 0, bytes = 0;
     WaitSample wait{};
-    bool empty() const { return calls == 0 && total_ns == 0 && max_ns == 0 && bytes == 0 && wait.empty(); }
+    SyncSample sync{};
+    bool empty() const {
+      return calls == 0 && total_ns == 0 && max_ns == 0 && bytes == 0 && wait.empty() && sync.empty();
+    }
   };
   using Samples = std::array<Sample, Count>;
 
@@ -138,6 +173,16 @@ struct GLApiWallSummary {
     result.fetch_add(1, std::memory_order_relaxed);
   }
 
+  void record_sync(Field api, uint64_t wall_ns, uint32_t type, bool created, bool eligible) {
+    record(api, wall_ns);
+    auto& counter = counters[api];
+    auto& type_calls = type == ProducerFenceSyncType ? counter.fence_calls
+        : type == ProducerNativeFenceSyncType ? counter.native_fence_calls : counter.other_type_calls;
+    type_calls.fetch_add(1, std::memory_order_relaxed);
+    (created ? counter.created : counter.failed).fetch_add(1, std::memory_order_relaxed);
+    if (eligible) counter.eligible.fetch_add(1, std::memory_order_relaxed);
+  }
+
   Samples sample_and_reset() {
     Samples result{};
     // Independent atomic exchanges keep driver threads lock-free. Concurrent records may
@@ -154,7 +199,13 @@ struct GLApiWallSummary {
                     counter.flush_calls.exchange(0, std::memory_order_relaxed),
                     counter.timed_out.exchange(0, std::memory_order_relaxed),
                     counter.signaled.exchange(0, std::memory_order_relaxed),
-                    counter.other.exchange(0, std::memory_order_relaxed)}};
+                    counter.other.exchange(0, std::memory_order_relaxed)},
+                   {counter.fence_calls.exchange(0, std::memory_order_relaxed),
+                    counter.native_fence_calls.exchange(0, std::memory_order_relaxed),
+                    counter.other_type_calls.exchange(0, std::memory_order_relaxed),
+                    counter.created.exchange(0, std::memory_order_relaxed),
+                    counter.failed.exchange(0, std::memory_order_relaxed),
+                    counter.eligible.exchange(0, std::memory_order_relaxed)}};
     }
     return result;
   }
@@ -164,8 +215,30 @@ private:
     std::atomic<uint64_t> calls{0}, total_ns{0}, max_ns{0}, bytes{0};
     std::atomic<uint64_t> timeout_zero{0}, timeout_nonzero{0}, flags_or{0}, flush_calls{0};
     std::atomic<uint64_t> timed_out{0}, signaled{0}, other{0};
+    std::atomic<uint64_t> fence_calls{0}, native_fence_calls{0}, other_type_calls{0};
+    std::atomic<uint64_t> created{0}, failed{0}, eligible{0};
   };
   std::array<Counters, Count> counters{};
 };
+
+// The EGL wrapper calls this before returning to Dawn's scoped context owner. Timing covers
+// only the original create and the actual eager flush, not eligibility/ledger checks.
+template <typename Clock = FrameWallTimings::Clock, typename Create, typename IsProducer, typename Flush>
+auto producer_sync_call(bool enabled, bool timing, GLApiWallSummary& summary, GLApiWallSummary::Field api,
+                        uint32_t type, bool empty_attrs, Create create, IsProducer is_producer, Flush flush)
+    -> std::invoke_result_t<Create> {
+  if (!enabled && !timing) return create();
+  uint64_t wall_ns = 0;
+  const auto result = probe_wall_call<Clock>(timing, create,
+      [&](uint64_t ns, const auto&) { wall_ns = ns; });
+  const bool created = static_cast<bool>(result);
+  const bool eligible = producer_sync_eligible(type, created, empty_attrs) && is_producer();
+  if (timing) summary.record_sync(api, wall_ns, type, created, eligible);
+  if (enabled && eligible) {
+    probe_wall_call<Clock>(timing, flush,
+        [&](uint64_t ns) { summary.record(GLApiWallSummary::ProducerFlush, ns); });
+  }
+  return result;
+}
 
 } // namespace aurora::h700

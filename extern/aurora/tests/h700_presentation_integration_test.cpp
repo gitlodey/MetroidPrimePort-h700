@@ -245,5 +245,86 @@ TEST(H700PresentationIntegration, ProbeKeepsActualWaitArgumentsGuardsAndProgress
                    "timeout0={}", "timeout_nonzero={}", "flags_or={:#x}", "flush_calls={}",
                    "timed_out={}", "success_or_signaled={}", "other={}"});
 }
+
+TEST(H700PresentationIntegration, ProducerFlushOptInCachesRealProcsAndKeepsCoreKhrResolverTypes) {
+  const auto presentation = source("h700/presentation.cpp");
+  const auto backend = section(presentation, "struct Backend {", "std::unique_ptr<Backend> backend;");
+  ordered(backend, {"producer_flush_enabled = h700::producer_flush_enabled(std::getenv(\"MP_H700_PRODUCER_FLUSH\")",
+                    "std::getenv(\"MP_H700_BENCH\")", "PFNGLFLUSHPROC producer_flush = nullptr",
+                    "GLApiWallSummary::WrappedGLCount> gl_procs",
+                    "GLApiWallSummary::DawnCreateSyncFields.size()> egl_create_sync_procs"});
+  const auto bootstrap = section(presentation, "bool initialize_presenter(", "std::shared_ptr<PresentationState> presentation_state()");
+  ordered(bootstrap, {"backend->gles_library = dlopen", "if (backend->producer_flush_enabled)",
+                      "backend->producer_flush = reinterpret_cast<PFNGLFLUSHPROC>(raw_proc(\"glFlush\"))",
+                      "if (!backend->producer_flush) return fail(", "SDL_GL_CreateContext(window)"});
+  EXPECT_NE(bootstrap.find("backend->create_sync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(raw_proc(\"eglCreateSyncKHR\"))"),
+            std::string::npos);
+  EXPECT_EQ(bootstrap.find("resolve(\"eglCreateSyncKHR\")"), std::string::npos);
+  EXPECT_NE(bootstrap.find("backend->producer_flush_enabled ? \"enabled\" : \"disabled\""), std::string::npos);
+  const auto resolver = section(presentation, "dawn::native::opengl::EGLFunctionPointerType resolve(", "bool begin_dawn()");
+  ordered(resolver, {"if (backend->producer_flush_enabled || backend->gl_timing_enabled)",
+                     "ObservedEGLCreateWrappers.size()", "GLWall::Names[GLWall::DawnCreateSyncFields[i]]",
+                     "backend->egl_create_sync_procs[i]", "std::call_once(cached.once",
+                     "cached.original = raw_proc(name)", "cached.original ? ObservedEGLCreateWrappers[i] : nullptr",
+                     "if (backend->gl_timing_enabled)", "TimedGLWrappers.size()"});
+  const auto wrappers = section(presentation, "GLWall::DawnCreateSyncFields.size()> ObservedEGLCreateWrappers{",
+                                "void observation_failure(");
+  ordered(wrappers, {"checked_gl_wrapper<PFNEGLCREATESYNCPROC>(observed_create_sync)",
+                     "checked_gl_wrapper<PFNEGLCREATESYNCKHRPROC>(observed_create_sync_khr)"});
+  const auto create = section(presentation, "auto producer_create_sync_call(",
+                             "template <GLWall::Field Api, typename Proc, typename... Args>\nauto timed_gl_call");
+  ordered(create, {"ProducerFenceSyncType == EGL_SYNC_FENCE", "ProducerNativeFenceSyncType == EGL_SYNC_NATIVE_FENCE_ANDROID",
+                   "return producer_sync_call(backend->producer_flush_enabled, backend->gl_timing_enabled",
+                   "static_cast<uint32_t>(type), producer_sync_attributes_empty(attrs)",
+                   "proc(display, type, attrs)", "live_dawn_current(display)", "backend->producer_flush()",
+                   "observed_create_sync(EGLDisplay display, EGLenum type, const EGLAttrib* attrs)",
+                   "PFNEGLCREATESYNCPROC>(backend->egl_create_sync_procs[0].original)",
+                   "producer_create_sync_call<GLWall::CreateSync>(proc, display, type, attrs)",
+                   "observed_create_sync_khr(EGLDisplay display, EGLenum type, const EGLint* attrs)",
+                   "PFNEGLCREATESYNCKHRPROC>(backend->egl_create_sync_procs[1].original)",
+                   "producer_create_sync_call<GLWall::CreateSyncKHR>(proc, display, type, attrs)"});
+  for (const auto forbidden : {"raw_proc(", "GetProcAddress(", "eglGetError(", "glGetError(", "glFinish(",
+                               "MakeCurrent(", "restore_presenter(", ".WaitAny(", "Log."}) {
+    EXPECT_EQ(create.find(forbidden), std::string::npos) << forbidden;
+  }
+}
+
+TEST(H700PresentationIntegration, ProducerFlushUsesLiveCurrentLedgerBindingBeforeReturningToDawnOwner) {
+  const auto presentation = source("h700/presentation.cpp");
+  const auto context = section(presentation, "bool live_dawn_current(EGLDisplay display) {", "void append_event(");
+  ordered(context, {"display == EGL_NO_DISPLAY", "display != backend->display", "eglGetCurrentDisplay() != display",
+                    "const auto current = eglGetCurrentContext()", "current == EGL_NO_CONTEXT",
+                    "current == backend->presenter", "std::lock_guard lock(backend->observer_mutex)",
+                    "const auto* record = live_context(current)", "std::this_thread::get_id()",
+                    "backend->trustworthy && record && !record->destroy_requested",
+                    "binding.thread == thread && binding.context == current"});
+  for (const auto forbidden : {"producer_flush(", "glFlush(", "glFinish(", "MakeCurrent(", "eglGetError(",
+                               "record_binding(", "append_event(", "observation_failure("}) {
+    EXPECT_EQ(context.find(forbidden), std::string::npos) << forbidden;
+  }
+  const auto timing = source("h700/presentation_timing.hpp");
+  const auto call = section(timing, "auto producer_sync_call(", "} // namespace aurora::h700");
+  ordered(call, {"if (!enabled && !timing) return create()", "probe_wall_call<Clock>(timing, create",
+                 "producer_sync_eligible(type, created, empty_attrs) && is_producer()",
+                 "if (timing) summary.record_sync(", "if (enabled && eligible)",
+                 "probe_wall_call<Clock>(timing, flush", "summary.record(GLApiWallSummary::ProducerFlush, ns)",
+                 "return result;"});
+  for (const auto forbidden : {"Clock::now(", "std::function", "mutex", "new ", "WaitAny", "Log."}) {
+    EXPECT_EQ(call.find(forbidden), std::string::npos) << forbidden;
+  }
+}
+
+TEST(H700PresentationIntegration, SyncOutcomesUseExistingFixedSummaryAndSeparateActualFlushField) {
+  const auto timing = source("h700/presentation_timing.hpp");
+  const auto fields = section(timing, "struct GLApiWallSummary {", "static constexpr std::array<const char*, Count> Names");
+  ordered(fields, {"BindBufferRange, MakeCurrent", "PresenterClientWaitSyncKHR", "CreateSync, CreateSyncKHR, ProducerFlush, Count"});
+  const auto presentation = source("h700/presentation.cpp");
+  const auto report = section(presentation, "void report_frame_wall(", "void present_ready()");
+  ordered(report, {"backend->gl_timing_enabled ? backend->gl_wall.sample_and_reset()",
+                   "if (backend->gl_timing_enabled)", "if (!sample.sync.empty())", "H700 sync outcomes",
+                   "fence_calls={}", "native_fence_calls={}", "other_type_calls={}",
+                   "created={}", "failed={}", "eligible={}", "producerGlFlush is separate actual work"});
+}
+
 } // namespace
 } // namespace aurora::h700

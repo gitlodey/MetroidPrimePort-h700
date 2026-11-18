@@ -88,6 +88,7 @@ case "${MP_H700_BENCH-}" in
     [ "${MP_H700_FETCH_GATHER+x}" != x ] || set -- "$@" "MP_H700_FETCH_GATHER=$MP_H700_FETCH_GATHER"
     [ "${MP_H700_NATIVE_VERTEX+x}" != x ] || set -- "$@" "MP_H700_NATIVE_VERTEX=$MP_H700_NATIVE_VERTEX"
     [ "${MP_H700_PROGRAM_CACHE+x}" != x ] || set -- "$@" "MP_H700_PROGRAM_CACHE=$MP_H700_PROGRAM_CACHE"
+    [ "${MP_H700_PRODUCER_FLUSH+x}" != x ] || set -- "$@" "MP_H700_PRODUCER_FLUSH=$MP_H700_PRODUCER_FLUSH"
     ;;
 esac
 [ "${MP_PASS_LOG+x}" != x ] || set -- "$@" "MP_PASS_LOG=$MP_PASS_LOG"

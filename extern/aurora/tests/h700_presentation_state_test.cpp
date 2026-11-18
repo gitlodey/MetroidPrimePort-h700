@@ -54,6 +54,37 @@ TEST(H700PresentationTiming, GLApiTimingRequiresExactOptInAndNonnegativeByteRang
   EXPECT_EQ(requested_gl_buffer_bytes(4096), 4096);
 }
 
+TEST(H700PresentationTiming, ProducerFlushRequiresExactOptInAndBenchmarkMode) {
+  for (const char* bench : {"1", "menu"}) {
+    EXPECT_TRUE(producer_flush_enabled("1", bench));
+    EXPECT_FALSE(producer_flush_enabled(nullptr, bench));
+    for (const char* value : {"", "0", "true", "01", "1 ", " 1", "11"}) {
+      EXPECT_FALSE(producer_flush_enabled(value, bench)) << value;
+    }
+  }
+  EXPECT_FALSE(producer_flush_enabled("1", nullptr));
+  EXPECT_FALSE(producer_flush_enabled(nullptr, nullptr));
+  for (const char* bench : {"", "0", "true", "01", "1 ", " menu", "menu ", "MENU", "game"}) {
+    EXPECT_FALSE(producer_flush_enabled("1", bench)) << bench;
+  }
+}
+
+TEST(H700PresentationTiming, ProducerSyncAcceptsOnlyNullOrTerminatorAttributesAtBothWidths) {
+  const auto check = []<typename Attribute>() {
+    const Attribute empty[]{static_cast<Attribute>(ProducerSyncNone)};
+    const Attribute imported_fd[]{0x3145, 7, static_cast<Attribute>(ProducerSyncNone)};
+    const Attribute new_fd_attribute[]{0x3145, -1, static_cast<Attribute>(ProducerSyncNone)};
+    const Attribute nonempty[]{0}; // a single readable entry is enough to reject; never scan
+    EXPECT_TRUE(producer_sync_attributes_empty(static_cast<const Attribute*>(nullptr)));
+    EXPECT_TRUE(producer_sync_attributes_empty(empty));
+    EXPECT_FALSE(producer_sync_attributes_empty(imported_fd));
+    EXPECT_FALSE(producer_sync_attributes_empty(new_fd_attribute));
+    EXPECT_FALSE(producer_sync_attributes_empty(nonempty));
+  };
+  check.operator()<int32_t>();
+  check.operator()<intptr_t>();
+}
+
 struct ProbeClock {
   using duration = std::chrono::nanoseconds;
   using time_point = std::chrono::time_point<ProbeClock, duration>;
@@ -100,14 +131,155 @@ TEST(H700PresentationTiming, ProbeOnMeasuresOnlyCallAndPreservesVoidAndValueResu
   EXPECT_EQ(ProbeClock::reads, 4);
 }
 
+TEST(H700PresentationTiming, ProducerFlushAndTimingAreIndependentAndPreserveCreateResult) {
+  using T = GLApiWallSummary;
+  using namespace std::chrono_literals;
+  for (const bool enabled : {false, true}) {
+    for (const bool timing : {false, true}) {
+      ProbeClock::elapsed = {};
+      ProbeClock::reads = 0;
+      T summary;
+      int handle = 0, order = 0;
+      size_t creates = 0, queries = 0, flushes = 0;
+      const auto result = producer_sync_call<ProbeClock>(enabled, timing, summary, T::CreateSync,
+          ProducerNativeFenceSyncType, true, [&] {
+            EXPECT_EQ(order++, 0);
+            ++creates;
+            ProbeClock::elapsed += 5ns;
+            return &handle;
+          }, [&] {
+            EXPECT_EQ(order++, 1);
+            ++queries;
+            ProbeClock::elapsed += 13ns; // context/ledger work must not enter either API envelope
+            return true;
+          }, [&] {
+            EXPECT_EQ(order++, 2);
+            ++flushes;
+            ProbeClock::elapsed += 7ns;
+          });
+      EXPECT_EQ(result, &handle);
+      EXPECT_EQ(creates, 1);
+      EXPECT_EQ(queries, enabled || timing ? 1 : 0);
+      EXPECT_EQ(flushes, enabled ? 1 : 0);
+      EXPECT_EQ(ProbeClock::reads, timing ? (enabled ? 4 : 2) : 0);
+      const auto samples = summary.sample_and_reset();
+      if (timing) {
+        const auto& create = samples[T::CreateSync];
+        EXPECT_EQ(create.calls, 1);
+        EXPECT_EQ(create.total_ns, 5);
+        EXPECT_EQ(create.max_ns, 5);
+        EXPECT_EQ(create.sync.native_fence_calls, 1);
+        EXPECT_EQ(create.sync.created, 1);
+        EXPECT_EQ(create.sync.failed, 0);
+        EXPECT_EQ(create.sync.eligible, 1); // baseline measures eligibility even with eager flush OFF
+        EXPECT_TRUE(create.wait.empty());
+        EXPECT_EQ(samples[T::ProducerFlush].calls, enabled ? 1 : 0);
+        EXPECT_EQ(samples[T::ProducerFlush].total_ns, enabled ? 7 : 0);
+        EXPECT_TRUE(samples[T::Flush].empty()); // the cached raw call is not counted twice
+      } else {
+        for (const auto& sample : samples) EXPECT_TRUE(sample.empty());
+      }
+      for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+    }
+  }
+}
+
+TEST(H700PresentationTiming, ProducerSyncEligibilityNeverFlushesFailedImportedOrNonProducerSyncs) {
+  using T = GLApiWallSummary;
+  struct Case {
+    uint32_t type;
+    bool created, empty_attrs, producer, eligible;
+  };
+  const Case cases[]{
+      {ProducerFenceSyncType, true, true, true, true},
+      {ProducerNativeFenceSyncType, true, true, true, true},
+      {ProducerFenceSyncType, false, true, true, false},
+      {ProducerNativeFenceSyncType, false, true, true, false},
+      {ProducerNativeFenceSyncType, true, false, true, false},
+      {ProducerFenceSyncType, true, false, true, false},
+      {ProducerFenceSyncType, true, true, false, false},
+      {ProducerNativeFenceSyncType, true, true, false, false},
+      {0x30fa, true, true, true, false}, // EGL_SYNC_REUSABLE_KHR
+      {0, true, true, true, false},
+  };
+  for (const auto api : T::DawnCreateSyncFields) {
+    for (const auto& item : cases) {
+      T summary;
+      ProbeClock::elapsed = {};
+      ProbeClock::reads = 0;
+      int handle = 0;
+      size_t creates = 0, queries = 0, flushes = 0;
+      auto* expected = item.created ? &handle : nullptr;
+      EXPECT_EQ(producer_sync_call<ProbeClock>(true, true, summary, api, item.type, item.empty_attrs,
+          [&] { ++creates; return expected; },
+          [&] { ++queries; return item.producer; },
+          [&] { ++flushes; }), expected);
+      EXPECT_EQ(creates, 1);
+      EXPECT_EQ(queries, producer_sync_eligible(item.type, item.created, item.empty_attrs) ? 1 : 0);
+      EXPECT_EQ(flushes, item.eligible ? 1 : 0);
+      EXPECT_EQ(ProbeClock::reads, item.eligible ? 4 : 2);
+      const auto samples = summary.sample_and_reset();
+      EXPECT_EQ(samples[api].calls, 1);
+      EXPECT_EQ(samples[api].sync.created, item.created ? 1 : 0);
+      EXPECT_EQ(samples[api].sync.failed, item.created ? 0 : 1);
+      EXPECT_EQ(samples[api].sync.eligible, item.eligible ? 1 : 0);
+      EXPECT_EQ(samples[T::ProducerFlush].calls, item.eligible ? 1 : 0);
+      EXPECT_TRUE(samples[T::Flush].empty());
+      EXPECT_TRUE(samples[T::MakeCurrent].empty());
+    }
+  }
+}
+
+TEST(H700PresentationTiming, SyncSummarySeparatesRealTypesCreateFailuresAndActualEagerFlushes) {
+  using T = GLApiWallSummary;
+  T summary;
+  summary.record_sync(T::CreateSync, 13, ProducerFenceSyncType, true, true);
+  summary.record_sync(T::CreateSync, 17, ProducerNativeFenceSyncType, true, false);
+  summary.record_sync(T::CreateSyncKHR, 5, ProducerNativeFenceSyncType, false, false);
+  summary.record_sync(T::CreateSyncKHR, 7, 0x30fa, true, false);
+  summary.record(T::ProducerFlush, 11);
+  const auto samples = summary.sample_and_reset();
+  const auto& core = samples[T::CreateSync];
+  EXPECT_EQ(core.calls, 2);
+  EXPECT_EQ(core.total_ns, 30);
+  EXPECT_EQ(core.max_ns, 17);
+  EXPECT_EQ(core.sync.fence_calls, 1);
+  EXPECT_EQ(core.sync.native_fence_calls, 1);
+  EXPECT_EQ(core.sync.other_type_calls, 0);
+  EXPECT_EQ(core.sync.created, 2);
+  EXPECT_EQ(core.sync.failed, 0);
+  EXPECT_EQ(core.sync.eligible, 1);
+  const auto& khr = samples[T::CreateSyncKHR];
+  EXPECT_EQ(khr.calls, 2);
+  EXPECT_EQ(khr.total_ns, 12);
+  EXPECT_EQ(khr.max_ns, 7);
+  EXPECT_EQ(khr.sync.fence_calls, 0);
+  EXPECT_EQ(khr.sync.native_fence_calls, 1);
+  EXPECT_EQ(khr.sync.other_type_calls, 1);
+  EXPECT_EQ(khr.sync.created, 1);
+  EXPECT_EQ(khr.sync.failed, 1);
+  EXPECT_EQ(khr.sync.eligible, 0);
+  EXPECT_EQ(samples[T::ProducerFlush].calls, 1);
+  EXPECT_EQ(samples[T::ProducerFlush].total_ns, 11);
+  EXPECT_TRUE(samples[T::ProducerFlush].sync.empty());
+  EXPECT_TRUE(samples[T::Flush].empty());
+  for (const auto api : T::DawnCreateSyncFields) {
+    EXPECT_EQ(samples[api].bytes, 0);
+    EXPECT_TRUE(samples[api].wait.empty());
+  }
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+}
+
 TEST(H700PresentationTiming, WaitApiFieldsDoNotExtendTheContiguousGlWrapperTable) {
   using T = GLApiWallSummary;
   EXPECT_EQ(T::WrappedGLCount, static_cast<size_t>(T::MakeCurrent));
   EXPECT_EQ(T::WrappedGLCount, static_cast<size_t>(T::BindBufferRange) + 1);
   EXPECT_STREQ(T::Names[T::WrappedGLCount - 1], "glBindBufferRange");
   EXPECT_EQ(T::DawnClientWaitFields, (std::array{T::ClientWaitSync, T::ClientWaitSyncKHR}));
+  EXPECT_EQ(T::DawnCreateSyncFields, (std::array{T::CreateSync, T::CreateSyncKHR}));
   for (const auto field : {T::ProcessEvents, T::ForwardWaitAny, T::ReversePoll, T::DeviceLostPoll,
-                           T::ClientWaitSync, T::ClientWaitSyncKHR, T::PresenterClientWaitSyncKHR}) {
+                           T::ClientWaitSync, T::ClientWaitSyncKHR, T::PresenterClientWaitSyncKHR,
+                           T::CreateSync, T::CreateSyncKHR, T::ProducerFlush}) {
     EXPECT_GT(static_cast<size_t>(field), T::WrappedGLCount);
   }
   EXPECT_STREQ(T::Names[T::ProcessEvents], "ProcessEvents");
@@ -117,6 +289,9 @@ TEST(H700PresentationTiming, WaitApiFieldsDoNotExtendTheContiguousGlWrapperTable
   EXPECT_STREQ(T::Names[T::ClientWaitSync], "eglClientWaitSync");
   EXPECT_STREQ(T::Names[T::ClientWaitSyncKHR], "eglClientWaitSyncKHR");
   EXPECT_STREQ(T::Names[T::PresenterClientWaitSyncKHR], "presenterEglClientWaitSyncKHR");
+  EXPECT_STREQ(T::Names[T::CreateSync], "eglCreateSync");
+  EXPECT_STREQ(T::Names[T::CreateSyncKHR], "eglCreateSyncKHR");
+  EXPECT_STREQ(T::Names[T::ProducerFlush], "producerGlFlush");
 }
 
 TEST(H700PresentationTiming, WaitSummaryKeepsBoundariesFlagsTimeoutsOutcomesAndPresenterSeparate) {
@@ -185,6 +360,15 @@ TEST(H700PresentationTiming, MetadataOnlyWindowEdgesAreNotReportedAsEmpty) {
   EXPECT_FALSE(sample.empty());
   sample = {};
   sample.wait.flags_or = 4;
+  EXPECT_FALSE(sample.empty());
+  sample = {};
+  sample.sync.failed = 1;
+  EXPECT_FALSE(sample.empty());
+  sample = {};
+  sample.sync.eligible = 1;
+  EXPECT_FALSE(sample.empty());
+  sample = {};
+  sample.sync.native_fence_calls = 1;
   EXPECT_FALSE(sample.empty());
 }
 
@@ -273,11 +457,13 @@ TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals)
         summary.record(T::BufferSubData, i, 64);
         summary.record_wait(T::ClientWaitSyncKHR, i, i % 2 ? T::SyncFlushCommandsBit : 0, i % 2,
                              i % 2 ? T::WaitOutcome::Signaled : T::WaitOutcome::TimedOut);
+        summary.record_sync(T::CreateSyncKHR, i, i % 2 ? ProducerFenceSyncType : ProducerNativeFenceSyncType,
+                            i % 2 != 0, i % 2 != 0);
       }
       done.fetch_add(1, std::memory_order_release);
     });
   }
-  T::Sample total, waitTotal;
+  T::Sample total, waitTotal, syncTotal;
   const auto collect = [&] {
     const auto samples = summary.sample_and_reset();
     const auto& sample = samples[T::BufferSubData];
@@ -296,6 +482,16 @@ TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals)
     waitTotal.wait.timed_out += wait.wait.timed_out;
     waitTotal.wait.signaled += wait.wait.signaled;
     waitTotal.wait.other += wait.wait.other;
+    const auto& sync = samples[T::CreateSyncKHR];
+    syncTotal.calls += sync.calls;
+    syncTotal.total_ns += sync.total_ns;
+    syncTotal.max_ns = std::max(syncTotal.max_ns, sync.max_ns);
+    syncTotal.sync.fence_calls += sync.sync.fence_calls;
+    syncTotal.sync.native_fence_calls += sync.sync.native_fence_calls;
+    syncTotal.sync.other_type_calls += sync.sync.other_type_calls;
+    syncTotal.sync.created += sync.sync.created;
+    syncTotal.sync.failed += sync.sync.failed;
+    syncTotal.sync.eligible += sync.sync.eligible;
   };
   start.arrive_and_wait();
   while (done.load(std::memory_order_acquire) != Writers) {
@@ -318,6 +514,15 @@ TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals)
   EXPECT_EQ(waitTotal.wait.timed_out, Writers * CallsPerWriter / 2);
   EXPECT_EQ(waitTotal.wait.signaled, Writers * CallsPerWriter / 2);
   EXPECT_EQ(waitTotal.wait.other, 0);
+  EXPECT_EQ(syncTotal.calls, total.calls);
+  EXPECT_EQ(syncTotal.total_ns, total.total_ns);
+  EXPECT_EQ(syncTotal.max_ns, CallsPerWriter);
+  EXPECT_EQ(syncTotal.sync.fence_calls, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(syncTotal.sync.native_fence_calls, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(syncTotal.sync.other_type_calls, 0);
+  EXPECT_EQ(syncTotal.sync.created, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(syncTotal.sync.failed, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(syncTotal.sync.eligible, Writers * CallsPerWriter / 2);
   for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
 }
 
