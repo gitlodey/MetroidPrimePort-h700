@@ -9,6 +9,7 @@
 #include "pipeline_cache.hpp"
 #include "probe.hpp"
 #include "resource_cache.hpp"
+#include "render_worker.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
 #include "../gx/gx.hpp"
@@ -517,6 +518,22 @@ void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& frame, c
   if constexpr (UseTextureBuffer) {
     for (size_t i = frame.copied.textureUploadCount; i < op.textureUploads.size(); ++i) {
       const auto& item = *op.textureUploads[i];
+      if (item.clientData) {
+        AURORA_ASSERT(render_worker::is_worker_thread(), "Client texture upload must run on the render worker");
+        const auto bytes = item.clientData->size();
+        // Dawn copies client memory before returning, so packet reset need not wait for GPU completion.
+        g_queue.WriteTexture(&item.tex, item.clientData->data(), bytes, &item.layout, &item.size);
+        // Submitted API calls, not completed GPU uploads. The OFF path does not log or read clocks.
+        static uint64_t calls = 0;
+        static uint64_t totalBytes = 0;
+        ++calls;
+        totalBytes += bytes;
+        if (calls == 1 || calls % 60 == 0) {
+          Log.info("H700 movie client upload: calls={} bytes={} width={} height={} row={}", calls, totalBytes,
+                   item.size.width, item.size.height, item.layout.bytesPerRow);
+        }
+        continue;
+      }
       const wgpu::TexelCopyBufferInfo buf{
           .layout =
               wgpu::TexelCopyBufferLayout{

@@ -1,5 +1,6 @@
 #include "resources.hpp"
 #include "recording.hpp"
+#include "frame.hpp"
 
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
@@ -137,7 +138,7 @@ static TextureHandle new_texture_2d(uint32_t width, uint32_t height, uint32_t mi
                                     wgpu::TextureFormat wgpuFormat, const char* label) noexcept;
 
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
-                                    bool tlut, const char* label) noexcept {
+                                    bool tlut, const char* label, bool clientMemory) noexcept {
   ZoneScoped;
 
   ConvertedTexture converted;
@@ -158,7 +159,7 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
     ref.hasArbitraryMips = converted.hasArbitraryMips;
   }
 
-  uint32_t offset = 0;
+  uint64_t offset = 0;
   for (uint32_t mip = 0; mip < mips; ++mip) {
     const wgpu::Extent3D mipSize{
         .width = std::max(ref.size.width >> mip, 1u),
@@ -169,16 +170,37 @@ TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mi
     const auto physicalSize = physical_size(mipSize, info);
     const uint32_t widthBlocks = physicalSize.width / info.blockWidth;
     const uint32_t heightBlocks = physicalSize.height / info.blockHeight;
-    const uint32_t bytesPerRow = widthBlocks * info.blockSize;
-    const uint32_t dataSize = bytesPerRow * heightBlocks * mipSize.depthOrArrayLayers;
-    CHECK(offset + dataSize <= data.size(), "new_static_texture_2d[{}]: expected at least {} bytes, got {}", label,
-          offset + dataSize, data.size());
+    const uint64_t rowBytes = uint64_t(widthBlocks) * info.blockSize;
+    AURORA_ASSERT(rowBytes <= UINT32_MAX, "new_static_texture_2d[{}]: row size overflow {}", label, rowBytes);
+    const uint32_t bytesPerRow = static_cast<uint32_t>(rowBytes);
+    const uint64_t dataSize = uint64_t(bytesPerRow) * heightBlocks * mipSize.depthOrArrayLayers;
+    AURORA_ASSERT(offset <= data.size() && dataSize <= data.size() - offset,
+                  "new_static_texture_2d[{}]: expected at least {} bytes, got {}", label, offset + dataSize,
+                  data.size());
     const wgpu::TexelCopyTextureInfo dstView{
         .texture = ref.texture,
         .mipLevel = mip,
     };
     if constexpr (UseTextureBuffer) {
-      queue_texture_upload_data(data.data() + offset, bytesPerRow, heightBlocks, std::move(dstView), physicalSize);
+      const bool clientSupported = clientMemory && !tlut && mips == 1 && format == GX_TF_I8 &&
+                                   ref.format == wgpu::TextureFormat::RGBA8Unorm &&
+                                   physicalSize.depthOrArrayLayers == 1;
+      const bool queuedClient = clientSupported &&
+          queue_client_texture_upload_data(data.data() + offset, bytesPerRow, heightBlocks, dstView, physicalSize);
+      if (!queuedClient) {
+        // Budget/allocation refusal may use PBO; a rejected or failed recorder may not.
+        if (clientSupported && (!recording_active() || frame_work_failed(current_frame_slot()))) return {};
+        if (clientMemory) {
+          static bool warned = false;
+          if (!warned) {
+            Log.warn("H700 movie client upload fallback: {} width={} height={} row={}; using PBO",
+                     clientSupported ? "owned queue refused (bounds/budget/allocation/admission)" : "unsupported texture",
+                     physicalSize.width, physicalSize.height, bytesPerRow);
+            warned = true;
+          }
+        }
+        queue_texture_upload_data(data.data() + offset, bytesPerRow, heightBlocks, std::move(dstView), physicalSize);
+      }
     } else {
       const wgpu::TexelCopyBufferLayout dataLayout{
           .bytesPerRow = bytesPerRow,

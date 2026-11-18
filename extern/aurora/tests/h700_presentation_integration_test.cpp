@@ -1,4 +1,5 @@
 #include "h700/forward_wait.hpp"
+#include "h700/movie_upload.hpp"
 #include "h700/presentation_state.hpp"
 
 #include <gtest/gtest.h>
@@ -33,6 +34,33 @@ void ordered(const std::string& text, std::initializer_list<std::string_view> pi
     ASSERT_NE(position, std::string::npos) << piece;
     next = position + piece.size();
   }
+}
+
+TEST(H700PresentationIntegration, MovieClientUploadRequiresExactOptInAndBench) {
+  EXPECT_TRUE(movie_client_upload_enabled("1", "menu"));
+  EXPECT_TRUE(movie_client_upload_enabled("1", "1"));
+  for (const char* value : {static_cast<const char*>(nullptr), "", "0", "true", "on", "01", "1x"}) {
+    EXPECT_FALSE(movie_client_upload_enabled(value, "menu"));
+  }
+  for (const char* bench : {static_cast<const char*>(nullptr), "", "0", "world", "menu1"}) {
+    EXPECT_FALSE(movie_client_upload_enabled("1", bench));
+  }
+}
+
+TEST(H700PresentationIntegration, MovieClientUploadIsOnlyTaggedSingleMipIntensity) {
+  EXPECT_TRUE(movie_client_upload_eligible(true, MoviePlaneFlag, true, 1));
+  EXPECT_FALSE(movie_client_upload_eligible(false, MoviePlaneFlag, true, 1));
+  EXPECT_FALSE(movie_client_upload_eligible(true, 0, true, 1));
+  EXPECT_FALSE(movie_client_upload_eligible(true, MoviePlaneFlag, false, 1));
+  EXPECT_FALSE(movie_client_upload_eligible(true, MoviePlaneFlag, true, 0));
+  EXPECT_FALSE(movie_client_upload_eligible(true, MoviePlaneFlag, true, 2));
+}
+
+TEST(H700PresentationIntegration, MovieMetadataPreservesMipsAndClearsStaleTagAndNoCache) {
+  EXPECT_EQ(movie_texture_metadata(0xff), MoviePlaneFlag | 1);
+  EXPECT_EQ(apply_movie_texture_metadata(0xc2, 0), 2);
+  EXPECT_EQ(apply_movie_texture_metadata(0x82, MoviePlaneFlag), MoviePlaneFlag | 2);
+  EXPECT_EQ(apply_movie_texture_metadata(0x42, 1), 3);
 }
 
 TEST(H700PresentationIntegration, ForwardWaitTimeoutLeavesEveryEntryPending) {

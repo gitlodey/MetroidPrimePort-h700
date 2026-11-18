@@ -224,6 +224,7 @@ struct FramePacket {
   std::deque<EncoderTask> encoderTasks;
   std::deque<FrameOp> ops;
   std::deque<TextureUpload> textureUploads;
+  uint64_t clientTextureUploadBytes = 0;
   std::deque<BufferUpload> bufferUploads;
 #ifdef AURORA_GFX_DEBUG_GROUPS
   std::vector<std::string> debugMarkers;

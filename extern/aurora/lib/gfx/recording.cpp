@@ -26,11 +26,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <optional>
 #include <ranges>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -952,6 +955,48 @@ void queue_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32
       .rowsPerImage = rowsPerImage,
   };
   queue_texture_upload(TextureUpload{layout, std::move(tex), size, std::move(buffer)});
+}
+
+bool queue_client_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32_t rowsPerImage,
+                                      wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) {
+  if (!check_recording("queue_client_texture_upload_data") || frame_work_failed(current_frame_slot())) {
+    return false;
+  }
+  if (g_recorder.currentRenderPass != UINT32_MAX) {
+    AURORA_ASSERT(!current_render_passes()[g_recorder.currentRenderPass].sealed,
+                  "Attempted to append client texture upload to sealed render pass {}", g_recorder.currentRenderPass);
+  }
+  // This transport is for uncompressed RGBA8 movie planes, with no PBO row padding.
+  const uint64_t rowBytes = uint64_t(size.width) * 4;
+  if (!UseTextureBuffer || data == nullptr || size.width == 0 || size.height == 0 ||
+      size.depthOrArrayLayers != 1 || bytesPerRow < rowBytes || bytesPerRow % 4 != 0 ||
+      rowsPerImage < size.height) {
+    return false;
+  }
+  const uint64_t uploadSize = uint64_t(bytesPerRow) * rowsPerImage;
+  auto& frame = current_frame_packet();
+  const uint64_t limit = frame_buffer_sizes().textureUpload;
+  if (frame.clientTextureUploadBytes > limit || uploadSize > limit - frame.clientTextureUploadBytes ||
+      uploadSize > std::numeric_limits<size_t>::max() ||
+      uploadSize > static_cast<uint64_t>(std::numeric_limits<std::ptrdiff_t>::max())) {
+    return false;
+  }
+  const wgpu::TexelCopyBufferLayout layout{
+      .offset = 0,
+      .bytesPerRow = bytesPerRow,
+      .rowsPerImage = rowsPerImage,
+  };
+  try {
+    auto clientData = std::make_shared<const std::vector<uint8_t>>(data, data + static_cast<size_t>(uploadSize));
+    frame.textureUploads.emplace_back(layout, std::move(tex), size, std::move(clientData));
+  } catch (const std::bad_alloc&) {
+    return false;
+  } catch (const std::length_error&) {
+    return false;
+  }
+  // Commit accounting only after both the owned copy and deque append succeeded.
+  frame.clientTextureUploadBytes += uploadSize;
+  return true;
 }
 
 bool queue_resident_upload(ResidentBuffer kind, uint32_t offset, const uint8_t* data, size_t size) {

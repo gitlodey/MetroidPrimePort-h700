@@ -7,6 +7,8 @@
 #include "gx_test_common.hpp"
 #include "__gx.h"
 #include <dolphin/gx/GXExtra.h>
+#include "aurora/movie_texture.hpp"
+#include "h700/movie_upload.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -2208,6 +2210,48 @@ TEST_F(GXFifoTest, LoadTexObj_EncodesSdkBpBurstAndAuroraMetadata) {
   EXPECT_EQ(slot.image3 >> 24, 0x96u);
   EXPECT_NE(slot.texObjId, 0u);
   EXPECT_EQ(slot.texDataVersion, 1u);
+}
+
+TEST_F(GXFifoTest, MoviePlaneTagRoundTripsWithoutMipmapsOrLargerMetadata) {
+  alignas(32) u8 image[64]{};
+  GXTexObj obj{};
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+  GXLoadTexObj(&obj, GX_TEXMAP0);
+  const auto plain = capture_fifo();
+  aurora::h700::mark_movie_plane(&obj);
+  GXLoadTexObj(&obj, GX_TEXMAP0);
+  const auto tagged = capture_fifo();
+  EXPECT_EQ(tagged.size(), plain.size());
+  reset_gx_state();
+  decode_fifo(tagged);
+  const auto& slot = gxState().loadedTextures[GX_TEXMAP0];
+  EXPECT_NE(slot.flags & aurora::h700::MoviePlaneFlag, 0);
+  EXPECT_FALSE(slot.has_mips());
+  EXPECT_EQ(slot.format(), GX_TF_I8);
+  EXPECT_EQ(slot.data, image);
+  // An ordinary object loaded into the same slot must not inherit the movie tag.
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+  GXLoadTexObj(&obj, GX_TEXMAP0);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(slot.flags & aurora::h700::MoviePlaneFlag, 0);
+  EXPECT_FALSE(slot.has_mips());
+}
+
+TEST_F(GXFifoTest, MoviePlaneTagRejectsMipsAndNonIntensityTextures) {
+  alignas(32) u8 image[256]{};
+  GXTexObj obj{};
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_RGBA8, GX_CLAMP, GX_CLAMP, GX_FALSE);
+  aurora::h700::mark_movie_plane(&obj);
+  GXLoadTexObj(&obj, GX_TEXMAP0);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(gxState().loadedTextures[GX_TEXMAP0].flags & aurora::h700::MoviePlaneFlag, 0);
+  GXInitTexObj(&obj, image, 8, 8, GX_TF_I8, GX_CLAMP, GX_CLAMP, GX_TRUE);
+  aurora::h700::mark_movie_plane(&obj);
+  GXLoadTexObj(&obj, GX_TEXMAP0);
+  decode_fifo(capture_fifo());
+  const auto& slot = gxState().loadedTextures[GX_TEXMAP0];
+  EXPECT_EQ(slot.flags & aurora::h700::MoviePlaneFlag, 0);
+  EXPECT_TRUE(slot.has_mips());
 }
 
 TEST_F(GXFifoTest, TextureMinFiltersRoundTrip) {

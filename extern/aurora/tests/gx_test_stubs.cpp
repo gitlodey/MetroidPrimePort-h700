@@ -297,7 +297,7 @@ wgpu::SamplerDescriptor TextureBind::get_descriptor() const noexcept { return wg
 // --- Texture creation/write/replacement stubs ---
 namespace aurora::gfx {
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                    ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept {
+                                    ArrayRef<uint8_t> data, bool tlut, const char* label, bool clientMemory) noexcept {
   return {};
 }
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,

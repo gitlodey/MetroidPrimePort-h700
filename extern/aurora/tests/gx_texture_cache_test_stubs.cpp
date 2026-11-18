@@ -80,7 +80,7 @@ uint64_t calc_texture_size(wgpu::TextureFormat format, uint32_t width, uint32_t 
 }
 
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                    ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept {
+                                    ArrayRef<uint8_t> data, bool tlut, const char* label, bool clientMemory) noexcept {
   ++s_textureAllocations;
   auto handle = gx::testing::make_texture_handle(width, height, gxFormat);
   handle->mipCount = mips;

@@ -13,16 +13,25 @@ struct TextureUpload {
   wgpu::TexelCopyTextureInfo tex;
   wgpu::Extent3D size;
   wgpu::Buffer buffer;
+  std::shared_ptr<const std::vector<uint8_t>> clientData;
 
   TextureUpload(wgpu::TexelCopyBufferLayout layout, wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) noexcept
   : layout(layout), tex(std::move(tex)), size(size) {}
   TextureUpload(wgpu::TexelCopyBufferLayout layout, wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size,
                 wgpu::Buffer buffer) noexcept
   : layout(layout), tex(std::move(tex)), size(size), buffer(std::move(buffer)) {}
+  TextureUpload(wgpu::TexelCopyBufferLayout layout, wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size,
+                std::shared_ptr<const std::vector<uint8_t>> clientData) noexcept
+  : layout(layout), tex(std::move(tex)), size(size), clientData(std::move(clientData)) {}
 };
 void queue_texture_upload(TextureUpload upload);
 void queue_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32_t rowsPerImage,
                                wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size);
+// New RGBA8 textures only: the worker's queue write can precede earlier encoded draws at EOF Submit.
+// Copies a depth-one source into packet-owned memory within the frame's texture upload budget.
+// The caller must provide bytesPerRow * rowsPerImage readable bytes (checked by new_static_texture_2d).
+bool queue_client_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32_t rowsPerImage,
+                                      wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size);
 
 struct TextureFormatInfo {
   uint8_t blockWidth;
@@ -76,7 +85,8 @@ private:
 };
 
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
-                                    ArrayRef<uint8_t> data, bool tlut, const char* label) noexcept;
+                                    ArrayRef<uint8_t> data, bool tlut, const char* label,
+                                    bool clientMemory = false) noexcept;
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                      const char* label) noexcept;
 // mips > 1: the sample view spans every level; the attachment view is level 0 only.

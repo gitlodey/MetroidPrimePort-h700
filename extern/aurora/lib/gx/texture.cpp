@@ -5,6 +5,9 @@
 #include "../gfx/texture_convert.hpp"
 #include "../gfx/texture_replacement.hpp"
 #include "shader_info.hpp"
+#ifdef AURORA_H700
+#include "../h700/movie_upload.hpp"
+#endif
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -860,8 +863,17 @@ gfx::TextureHandle resolve_static_texture(const GXTexObj_& obj) {
       const auto nameStr = "GX Static Texture";
 #endif
       const size_t sourceBytes = texture_source_size(obj.format(), obj.width(), obj.height(), obj.mip_count());
+      bool clientMemory = false;
+#ifdef AURORA_H700
+      static const bool clientEnabled = h700::movie_client_upload_enabled(
+          std::getenv("MP_H700_MOVIE_CLIENT_UPLOAD"), std::getenv("MP_H700_BENCH"));
+      clientMemory = h700::movie_client_upload_eligible(clientEnabled, obj.flags,
+                                                       obj.format() == GX_TF_I8, obj.mip_count());
+#endif
       handle = gfx::new_static_texture_2d(obj.width(), obj.height(), obj.mip_count(), obj.format(),
-                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr);
+                                          {static_cast<const uint8_t*>(obj.data), sourceBytes}, false, nameStr,
+                                          clientMemory);
+      if (!handle) return {}; // rejected/failed recording must not become a cached upload
       ++s_stats.misses;
       s_stats.uploadBytes += texture_handle_size(handle);
       cache_content_texture(std::move(keys->contentKey), handle);

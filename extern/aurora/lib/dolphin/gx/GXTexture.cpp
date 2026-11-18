@@ -3,6 +3,8 @@
 
 #include "../../gfx/texture.hpp"
 #include "dolphin/gx/GXAurora.h"
+#include "aurora/movie_texture.hpp"
+#include "../../h700/movie_upload.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -104,7 +106,7 @@ void emit_loaded_texobj_metadata(const GXTexObj_& obj, GXTexMapID id) {
   GX_WRITE_U32(obj.height());
   GX_WRITE_U32(obj.format());
   GX_WRITE_U32(static_cast<u32>(obj.tlut));
-  GX_WRITE_U8(static_cast<u8>(obj.has_mips()));
+  GX_WRITE_U8(aurora::h700::movie_texture_metadata(obj.flags));
   GX_WRITE_U32(obj.texObjId);
   GX_WRITE_U32(obj.texDataVersion);
 }
@@ -119,6 +121,14 @@ void emit_loaded_tlut_metadata(const GXTlutObj_& obj, u32 idx) {
   GX_WRITE_U32(obj.tlutDataVersion);
 }
 } // namespace
+
+namespace aurora::h700 {
+void mark_movie_plane(GXTexObj* object) noexcept {
+  if (!object) return;
+  auto& obj = *reinterpret_cast<GXTexObj_*>(object);
+  if (obj.format() == GX_TF_I8 && !obj.has_mips()) obj.flags |= MoviePlaneFlag;
+}
+} // namespace aurora::h700
 
 extern "C" {
 void GXInitTexObj(GXTexObj* obj_, const void* data, u16 width, u16 height, GXTexFmt format, GXTexWrapMode wrapS,

@@ -19,6 +19,9 @@
 #ifdef TARGET_PC
 #include "port_debug.h"
 #include "port_disc.h"
+#ifdef AURORA_H700
+#include "aurora/movie_texture.hpp"
+#endif
 #endif
 
 #include "dolphin/gx/GXGeometry.h"
@@ -142,17 +145,26 @@ static void MyTHPYuv2RgbTextureSetup(void* y, void* u, void* v, ushort width, us
   GXTexObj yTex;
   GXInitTexObj(&yTex, y, width, height, GX_TF_I8, GX_CLAMP, GX_CLAMP, FALSE);
   GXInitTexObjLOD(&yTex, GX_NEAR, GX_NEAR, 0.f, 0.f, 0.f, FALSE, FALSE, GX_ANISO_1);
+#ifdef AURORA_H700
+  aurora::h700::mark_movie_plane(&yTex);
+#endif
   GXLoadTexObj(&yTex, GX_TEXMAP0);
 
   GXTexObj uTex;
   GXInitTexObj(&uTex, u, width / 2, height / 2, GX_TF_I8, GX_CLAMP, GX_CLAMP, FALSE);
   GXInitTexObjLOD(&uTex, GX_NEAR, GX_NEAR, 0.f, 0.f, 0.f, FALSE, FALSE, GX_ANISO_1);
+#ifdef AURORA_H700
+  aurora::h700::mark_movie_plane(&uTex);
+#endif
   GXLoadTexObj(&uTex, GX_TEXMAP1);
 
   GXTexObj vTex;
   GXInitTexObj(&vTex, v, static_cast< s16 >(width / 2), height / 2, GX_TF_I8, GX_CLAMP, GX_CLAMP,
                FALSE);
   GXInitTexObjLOD(&vTex, GX_NEAR, GX_NEAR, 0.f, 0.f, 0.f, FALSE, FALSE, GX_ANISO_1);
+#ifdef AURORA_H700
+  aurora::h700::mark_movie_plane(&vTex);
+#endif
   GXLoadTexObj(&vTex, GX_TEXMAP2);
 
   // Each draw makes new objects for a new frame: destroyed now, the draw still samples them, but

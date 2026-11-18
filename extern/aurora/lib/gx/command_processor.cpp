@@ -1,4 +1,5 @@
 #include "command_processor.hpp"
+#include "../h700/movie_upload.hpp"
 
 #include "../gfx/bloom.hpp"
 #include "../gfx/volfog.hpp"
@@ -1289,12 +1290,8 @@ void handle_aurora(ByteReader& reader) noexcept {
     const u32 newHeight = reader.read<u32>();
     const auto newFormat = static_cast<GXTexFmt>(reader.read<u32>());
     const auto newTlut = static_cast<GXTlut>(reader.read<u32>());
-    u8 newFlags = slot.flags & ~0x80u; // Reset no-cache flag
-    if (reader.read<u8>() != 0) {
-      newFlags |= 1u;
-    } else {
-      newFlags &= ~1u;
-    }
+    // Keep the existing one-byte metadata field; movie tagging must not imply mipmaps.
+    const u8 newFlags = h700::apply_movie_texture_metadata(slot.flags, reader.read<u8>());
     const u32 newTexObjId = reader.read<u32>();
     const u32 newTexDataVersion = reader.read<u32>();
     if (slot.data != newData || slot.userData != newUserData || slot.mWidth != newWidth || slot.mHeight != newHeight ||
