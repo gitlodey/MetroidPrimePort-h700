@@ -30,7 +30,7 @@ Pinned Dawn zero-timeout completion poll действительно захват
 
 Добавлен exact `MP_H700_PROGRAM_CACHE=1` + `MP_H700_BENCH=1|menu`; default OFF. Используется существующий checksummed Dawn cache и закреплённый GL program-binary loader с fallback, не собственный новый cache format. Linux Mesa/non-H700 policy не меняется. Existing `MP_H700_GL_TIMING=1` теперь отдельно считает ProcessEvents/forwardWaitAny/deviceLostPoll/reversePoll и core/KHR EGL waits с timeout/flags/outcomes; вложенные суммы не складывать.
 
-### Artifact / установка — PASS, runtime pending
+### PERF06 artifact / установка — PASS (история до live-проверки)
 
 - Код: `4d1c9595feb5b782a581aa049b9326be49298432`, ветка `h700/perf-recovery`, commit/push выполнены. Финальный incremental recheck также86/86CTest +269/269FIFO PASS. `--version` в изолированном builder печатает `source-snapshot`; точная ревизия/bytes привязаны через `source.json` и manifest, не выдуманный embedded revision.
 - `build/h700-perf06-recovery/package`:18staged source/ELF/ABI/providers/notices/content/hash/no-init/syntax gates PASS; source-before/after совпал, dirty build-relevant sources0. SDL/dependencies byte-identical RC6 и не пересобирались.
@@ -38,16 +38,16 @@ Pinned Dawn zero-timeout completion poll действительно захват
 - Stripped executable62,860,928bytes, SHA256 `5d6b0b6f61c918e0079cee01bf7ac1b25edbdbcab773d4fe29ac7d7e66f25034`. Unstripped229,466,696bytes сохранён в existing build; transform/hashes записаны в manifest.
 - Архив `build/h700-perf06-recovery/h700-perf06.tar.gz`:21,203,501bytes, SHA256 `1327155fa356d03fc39267a70d7c7f6fd46b33bde6e3a8f475aac4cf18d2e41e`;133members, без user/cache/disc/save/symlink payload. Это private incremental test package, не fresh RC и не разрешение public distribution.
 - На устройстве отдельный пункт **Metroid Prime Unbound PERF06**,101payload checksum PASS. Физическая копия30user/cache files из неактивного NATIVE verified; source до/после совпал. Отдельный benchmark entry задаёт прежние DRAW_UBO/GATHER/NATIVE1 плюс PROGRAM_CACHE1/GL_TIMING1 и FastBoot menu,1×/640×480/dynamicOff/cap30 сохранены. Existing warm data copy не означает уже прогретый новый Dawn program cache.
-- Game starts0/signals0. Device preflight обнаружил другую активную игру; она не прерывалась и fullscreen нагрузка поверх неё не запускалась. Runtime FPS/картинка/physical chord/normal Exit **не проверены**.
-- Следующий шаг: после освобождения приставки ручной Ports launch, проверить FileSelect/звук/картинку и фактический Select+Start exit; в отдельном run собрать simultaneous power/process/progress и новые wait counters, различить cold/warm cache. Ошибки, удержанный lock или отсутствие exit не скрывать и не лечить reboot как штатным завершением.
+- На момент подготовки game starts0/signals0. Device preflight обнаружил другую активную игру; она не прерывалась и fullscreen нагрузка поверх неё не запускалась. Runtime FPS/картинка/physical chord/normal Exit тогда **ещё не проверялись**; последующие live-результаты приведены ниже.
+- Тогда следующий шаг — ручной Ports launch после освобождения приставки, проверка FileSelect/звука/картинки/Select+Start и simultaneous power/process/progress/wait capture с различением cold/warm cache. Ошибки, удержанный lock или отсутствие exit не скрывать и не лечить reboot как штатным завершением.
 
-## Следующий live шаг: PERF07 / producer flush A/B
+## PERF07: проверенная гипотеза producer flush
 
 Пользователь подтвердил Select+Start exit и разрешил активные tests на свободной приставке. Первый PERF06 capture разделён по одновременно записанному power state; steady active tail138frames/12,1286s=11,378FPS. Submit12,45ms, completion-observed152,89ms; actual EGL waits~0,186ms/frame и множество timeout0/Pending. Значит, steady153ms не объясняются временем внутри измеренных poll/API envelopes. Возврат меню и Released/Done stage11 после физического Select+Start записаны в логе, но следом обнаружен поздний SIGSEGV: чистый process exit НЕ подтверждён.
 
-Проверяем только гипотезу задержанной producer dispatch: exact opt-in `MP_H700_PRODUCER_FLUSH=1` + bench1/menu добавляет один реальный glFlush после успешного создания нового Dawn FENCE/NATIVE_FENCE, пока известный live producer context current. Presenter/imported FD fences исключены; arguments/results/real completion/reverse/swap guards неизменны. Default OFF; glFinish не добавляется. Считать фактические типы sync и число flush. Если FPS не растёт или ожидание просто переезжает в Submit — кандидат не включать.
+Проверялась только гипотеза задержанной producer dispatch: exact opt-in `MP_H700_PRODUCER_FLUSH=1` + bench1/menu добавляет один реальный glFlush после успешного создания нового Dawn FENCE/NATIVE_FENCE, пока известный live producer context current. Presenter/imported FD fences исключены; arguments/results/real completion/reverse/swap guards неизменны. Default OFF; glFinish не добавляется. Условие выбора — фактические типы sync/число flush и рост FPS, а не перенос ожидания в Submit. ON capture состоялся, нужного ускорения не показал; default остаётся OFF.
 
-Проверка: узкие CPU/source tests + existing incremental ARM64 build/package gates; один и тот же binary/меню/settings/cache, OFF→ON и при необходимости обратный контроль; simultaneous process/power/progress, без смешивания idle/transitions. Штатный muOS content-loader route с существующими configured flags, не bare SDL поверх меню. Не менять firmware, governors или services; остановка только identity-bound own game и один TERM с последующим actual release/lock drain. Исходные установки/сохранения не трогать.
+План проверки предусматривал узкие CPU/source tests + existing incremental ARM64 build/package gates, один и тот же binary/меню/settings/cache, OFF→ON и при необходимости обратный контроль; simultaneous process/power/progress, без смешивания idle/transitions. **Строгий same-binary OFF→ON A/B не получен**; фактический ON capture ниже не заменяет его. Штатный muOS content-loader route с существующими configured flags, не bare SDL поверх меню. Firmware/governors/services и исходные установки/сохранения не менять; разрешённую остановку ограничивать identity-bound own game и одним TERM с последующим actual release/lock drain. Launch framework ради A/B не переоткрывать.
 
 ## Live результаты: прирост steady FPS не подтверждён
 
@@ -62,21 +62,60 @@ PERF06: один user-launched process,21samples/~61,2s, simultaneous process id
 | GATHER /FPS OFF |4,095|244,18ms|71 /17,3368s|Диагностика, не контролируемый FPS A/B|
 | NATIVE /FPS ON |11,300|88,50ms|207 /18,319s|Активный ondemand, прежний capture|
 | **PERF06 /cache ON /steady active** |**11,378**|**87,89ms**|**138 /12,1286s**|6последних полных report groups, после переходного участка|
+| **PERF07 /producer flush ON /steady active** |**11,33647**|**88,21087ms**|**92 /8,1154s**|4полных steady reports; simultaneous active ondemand|
 
-Разница PERF06 к NATIVE численно+0,69%, в пределах наблюдаемых колебаний; подтверждённого acceleration нет. Прежний лучший GATHER не превзойдён, но старые runs не matched A/B. Для30FPS всё ещё нужно~2,64×. Весь активный фрагмент дал13,073FPS/240frames/18,3582s, однако содержит переходную нестабильность (2s reports11,24–19,29FPS), поэтому не объявлен steady gain. Idle-фрагмент12,223FPS/351frames/28,7174s также не используется как доказательство ускорения.
+Разница PERF06 к NATIVE численно+0,69%, в пределах наблюдаемых колебаний; подтверждённого acceleration нет. PERF07 11,33647FPS также практически совпадает с PERF06 11,378/NATIVE 11,300: эти малые различия **не являются доказательством ни gain, ни regression**, строгого same-binary A/B нет. Producer flush не дал нужного ускорения и остаётся default OFF. Прежний лучший GATHER не превзойдён, но старые runs не matched A/B. Для30FPS по PERF06 всё ещё нужно~2,64×. Весь активный фрагмент PERF06 дал13,073FPS/240frames/18,3582s, однако содержит переходную нестабильность (2s reports11,24–19,29FPS), поэтому не объявлен steady gain. Idle-фрагмент12,223FPS/351frames/28,7174s также не используется как доказательство ускорения.
 
 Steady frame-weighted means: prepare7,53ms, Queue::Submit12,42ms, completion-observed152,89ms, presenter0,572ms/swap0,040ms. Перекрывающиеся интервалы НЕ складывать.97indexed draws/frame:7,045ms API wall;4BufferSubData/frame:0,045ms; map/unmap~0,084/0,012ms. ProcessEvents2,826ms/frame, forwardWaitAny1,610ms/~83,8calls/frame; actual EGL waits0,186ms/~175,6calls/frame. Из24,239EGL polls23,906TimedOut, всеtimeout0/FLUSH, other0. Следовательно, нужно объяснить позднюю готовность fence/serial, не убрать реальный completion guard. GPU util в steady samples6–7%, minimum available в активной фазе381,5MiB; errors/slow-compile warnings в capture0. CPU window samples16→20: всего46,60% четырёхъядерной capacity; один Mali utility24,88% capacity≈одно ядро, роль compiler не установлена. Нет per-frame p95/p99:2s means ими не заменяются.
 
-### Выход: usability PASS, clean process exit FAIL
+### Выход PERF06: usability PASS, clean process exit FAIL
 
-Пользователь подтвердил физический chord и возврат меню. Final log после него: `H700 normal exit released: status=1 stage=11` (Released/Done, НЕ exit code), затем SIGSEGV. PC не атрибутирован библиотеке: maps не сохранены, stack offset соответствует signal handler. Game roots/Dawn/window retirement уже вернулись; первый прямой caller после release marker — `aurora_dvd_close`, затем return из platform main. Это точка следующей проверки, НЕ установленная причина crash. Нужны узкие before/after DVD close/return markers и maps до shutdown, без перестановки owner destruction наугад.
+Пользователь подтвердил физический chord и возврат меню. Final log после него: `H700 normal exit released: status=1 stage=11` (Released/Done, **НЕ exit code**), затем SIGSEGV. В этом PERF06 capture maps не сохранились, PC тогда не был атрибутирован библиотеке; stack offset соответствует signal handler. Game roots/Dawn/window retirement уже вернулись. Отмеченный тогда следующий caller `aurora_dvd_close` перед return из platform main был лишь гипотезой, не установленной причиной crash. Последующее PERF07 evidence ниже DVD-гипотезу не подтверждает; эту ветку не продолжаем.
 
-### PERF07: LOCAL/package/upload PASS, runtime A/B НЕ выполнен
+### PERF07: LOCAL/package/upload PASS; runtime выполнен, ускорение не подтверждено
 
 Код `f285275cf307140a28f653023e5180e2e44a7998`. Incremental game build19,704s;94/94scoped CTest +269/269FIFO +16/16launcher tests и18staged gates PASS. Executable62,861,920bytes, SHA256 `abbf8b75eb2dd4e93631df37f55882dde600d2a927a4dc5a6e62382db9b22854`; source SHA256 `2fb1d4d05e99375ee0d8eca996979e6d8e1fccab5a43193b500c9ad63b87bfec`. Архив `build/h700-perf07-producer-flush/h700-perf07.tar.gz`, SHA256 `d05c142b55a3a15fe6f5c8af917ec8c3ac1af014bfc72369273c0677bde45f06`. Отдельный Ports пункт **Metroid Prime Unbound PERF07**,101payload checksum PASS, verified own warm PERF06 data copy; прежние установки не изменены.
 
 Штатный9-line content request +safe_quit не был подхвачен уже работающим muOS menu даже после одного поддерживаемого нейтрального BTN_C press/release. Два bounded observation windows не увидели нового game process; это не два game runs. Frontend не остановлен/не перезапущен, process signals0. Только собственный неиспользованный request/четыре runtime flags/marker отменены после проверки identity/bytes/no-child. Final proof: no game/lock/pending request,5route hashes unchanged. Не углубляться в launch framework ради своего A/B.
 
-Manual PERF07 entry теперь явно включает эксперимент `MP_H700_PRODUCER_FLUSH=1`; кодовый default остаётся OFF. Реального создания/типа sync/числа eager flush/FPS на Mali этим запуском ещё НЕ проверяли; прирост не заявлен. Следующий минимальный шаг — ручной PERF07 launch пользователем; затем actual capture и адресный разбор позднего quit. Разрешение уже дано, препятствие — неподхваченный automatic route, не approval.
+После этой неудачной automatic preparation состоялся **реальный ручной PERF07 runtime** с `MP_H700_PRODUCER_FLUSH=1`; это не ещё один pending launch. Кодовый default остаётся OFF. Capture:11samples за21,189s (~20s), во всех живой процесс, governor ondemand/idle=false, CPU1,104–1,320GHz; валидные GPU util readings6–8%. Сцена FileSelect `phase4/screen3/next3/movie_ready1`. Minimum available RAM382,34MiB; errors/slow-compile warnings0.
 
-Прежний пользовательский diff progress и `.DS_Store` не включены в commits. Private scripts/evidence/results сохранены в ignored `build/h700-perf06-recovery/` и `build/h700-perf07-producer-flush/`.
+**Steady tail:**4полных reports,92presented frames/8,1154s = **11,3364714FPS**, interval **88,2108696ms**. Frame-weighted means: prepare8,0000ms, Queue::Submit13,5875ms, completion-observed152,0075ms, presenter0,5625ms, swap0,0400ms.97indexed draws/frame занимают7,3188ms API wall. Это перекрывающиеся wall/API intervals, **их нельзя складывать или называть GPU duration**; per-frame p95/p99 не получены.
+
+Producer flush **реально исполнялся**, а не только был включён флагом:
+
+- 252eligible успешных `eglCreateSyncKHR`, все `EGL_SYNC_FENCE_KHR`; native-fence0, failed/other0. Соответствующих `producerGlFlush`252, стоимость0,0025ms/frame.
+- 16242`eglClientWaitSyncKHR` polls =15990TimedOut +252Signaled; все timeout0/FLUSH, other0. Actual EGL wait всего0,1825ms/frame. FLUSH-флаг этих polls не следует путать с252отдельными producer glFlush.
+
+Ускорения до нужной производительности нет; producer flush не включать по умолчанию. Сравнение с PERF06/NATIVE выше — историческое, не matched same-binary OFF/ON; tiny delta не объявляется regression/gain.
+
+### PERF07: поздний SIGSEGV и установленный SDL2 AUDIO lifecycle defect
+
+После capture выход состоялся отдельно: сохранены Select+Start marker и `H700 normal exit released: status=1 stage=11` — **Released/Done, НЕ process exit code**. Поздний SIGSEGV повторился; clean process exit **FAIL**. `analysis.json` завершён ещё при живой игре и потому содержит quit not observed; последующий выход подтверждают отдельные exit evidence/final state, а не этот ранний статус.
+
+Теперь сохранены maps до shutdown. Crash PC `0x7fa5f64f80` попадает в executable mapping exact firmware SDL2 с базой `0x7fa5e7f000`; offset **`0xe5f80`**, установленная атрибуция — **`SDL_Delay_REAL`**. Это локализация PC, **не доказательство идентичности crashed thread** и не полная causal chain SIGSEGV. Firmware binary остаётся private ignored input, не публикуется.
+
+Установленный source finding в pinned `build/h700-game-gm03/inputs/sdl/src/audio/sdl2/SDL_sdl2audio.c`: shim вызывает native `SDL2_Init(AUDIO)`, но его `Deinitialize` пуст. Video teardown выгружает native SDL2; native ALSA имеет hotplug thread, который штатная native ALSA deinitialization завершает через join. Неснятый native AUDIO lifetime перед unload — конкретный применимый defect; что именно этот hotplug thread упал в сохранённом SIGSEGV, **не доказано**. DVD-гипотеза не подтверждается и больше не является направлением проверки.
+
+## PERF08 — native AUDIO release; runtime quit-test pending
+
+H700-only patch в `platform/main.cpp` и его direct wiring test `tests/port_h700_terminal_wiring.py` добавляют native AUDIO retirement. Scope helper: **после game/audio owners, `AIPortShutdown` и services, до `PollGenerationShutdown`**; guard требует SDL3 audio0. Через `RTLD_NOLOAD` берётся только уже загруженный native SDL2, оставшиеся AUDIO refs снимаются через native AUDIO quit до доказанного0. Если это доказать нельзя — fail-stop. **Никакого полного SDL_Quit, video quit или обхода release/free guards.** Это pending исправление конкретного lifetime, не runtime fix PASS.
+
+Выполнен совместимый existing incremental PERF08 game build с относящимися meaningful tests, новыми hashes/честным source manifest и сохранёнными ABI/provider/notices/content/package checks. Установка отдельная, исходные installs/user/cache/saves не перезаписываются. **Producer flush OFF**, прежние1×/640×480/dynamicOff/cap30 и correctness guards сохранены; нового renderer experiment нет.
+
+Runtime quit-test **pending**: ручной menu run → Select+Start, native AUDIO0 до generation shutdown, Released/Done и затем фактическое завершение процесса без позднего SIGSEGV/удержанного lock. Один release marker не заменяет process exit. Первичная incremental ARM64 compile/link PASS за13,627s,11/11узких CTest PASS; пересобран только `platform/main.cpp`, dependencies не пересобирались. Прямые host wiring tests: terminal7/7, DVD5/5, quit4/4 PASS. Final committed-source incremental recheck0,589s и те же11/11CTest PASS. **Package/deploy PASS, runtime fix пока не заявлен**; новая profiling/launch matrix и продолжение DVD-ветки в этот шаг не входят.
+
+- Код `7a8804a08e657ce8c5a4fd4c903957c34eb047ff`;18staged source/ELF/ABI/providers/notices/content/hash/no-init/syntax gates PASS, build-relevant dirty files0, source-before/after совпал. Новые native `SDL_WasInit`/`SDL_QuitSubSystem` exports также найдены в exact сохранённой firmware SDL2; сама библиотека не менялась.
+- Stage `build/h700-perf08-audio-exit/package`, stripped executable62,861,992bytes, SHA256 `3b1fa5a42acfb8409ea2f33d9068001c04e83ec67c117e6e402e16163bc3de8e`; source SHA256 `a9395427d8e362c11572d31faf91362f7c362b53e36271ef9703aa80265713c8`. Reused SDL/notices byte-identical RC6; embedded version остаётся `source-snapshot`, не выдуманный revision.
+- Архив `build/h700-perf08-audio-exit/h700-perf08.tar.gz`,21,058,922bytes, SHA256 `0359e3d25579d0fa65f1a80699ca5b7f88c6c4ba9786cbb6433ddc96620cb2b1`; archive inventory/hashes проверены. Это private incremental test package, не fresh RC и не public distribution clearance.
+- Отдельный пункт **Metroid Prime Unbound PERF08** установлен:101payload checksum PASS,28own user/cache files физически скопированы с неактивного PERF07, copy/source-before/source-after hashes совпали. Pre/post no-game/launcher/copier и новый lock absent проверены; agent game starts/signals0. Native audio release, картинка/звук и actual process exit этим deploy не проверены.
+- Нужен ручной PERF08 launch; затем короткая live identity/flags/progress проверка и Select+Start → verified AUDIO0/release/actual child exit/copier drain/lock absent без SIGSEGV. Повтор automatic route/frontend restart не нужен.
+
+### Evidence
+
+- PERF07: `build/h700-perf07-producer-flush/live-capture/analysis.json` и `capture-complete.json` — steady means/counters и simultaneous live/power capture.
+- Историческое сравнение: `build/h700-perf05-native-vertex/comparison.json` и `build/h700-perf06-recovery/comparison.json`; отдельного PERF07 `comparison.json` в сохранённом каталоге нет.
+- Выход: PERF07 `live-capture/exit-evidence.json`, `maps-before-shutdown-private.log` и `post-capture-state-private.log` — marker, late crash, PC и mapping. В документ перенесены только обезличенные существенные факты; raw logs, IP/private device paths и firmware binary не публикуются.
+
+
+Private scripts/evidence/results остаются в ignored `build/h700-perf06-recovery/`, `build/h700-perf07-producer-flush/` и `build/h700-perf08-audio-exit/`. Чужой local diff progress и `.DS_Store` сохранены, в commits не включаются.
