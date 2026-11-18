@@ -6,6 +6,24 @@
 
 Инварианты: 1×/640×480, dynamic resolution Off, cap30, исходная simulation, retail effects, validation/robustness и все bounds/lifetime/release guards. Не менять firmware/services/clocks/swap и реальные данные. Сторонний local diff `H700_PROGRESS.md` и `.DS_Store` сохраняются.
 
+## PERF12 — immutable retail MREA → decoded native VB/IB
+
+Новый подход после PERF11: не перенос OLD renderer и не ещё один флаг качества, а однократная подготовка полного GX vertex tuple обычной статической MREA-геометрии. Исходный путь владения — `CGameArea`; CPU snapshots и непереиспользуемые source IDs передаются через checked FIFO. Cache admission выполняется до per-vertex bounds scan и кадровых Vertex/Storage uploads. Попадание использует persistent native VB/IB, сохраняя исходные TEV/material/lighting/indirect/fog/shadow bodies; динамические, неподдерживаемые и не поместившиеся данные используют legacy fallback.
+
+Ограничения: 32 MiB CPU snapshots, 64 MiB retained GPU allocations, 16 MiB decode workspace, до8192 cache entries. Eviction/unregister не освобождают бюджет allocation, удерживаемой записанным кадром; pins переходят из CPU packet в native presentation slot и живут до его следующей guarded reservation. `DrawData` остаётся128bytes, старый resident budget0 и PERF11 destination ring не меняются. CMDL/CPU-skinned geometry в эту первую реализацию не включены.
+
+Exact opt-in: `MP_H700_RETAIL_GEOMETRY=1` вместе с `MP_H700_BENCH=1|menu`, binary defaultOFF; launcher allowlist обновлён. 1×/640×480, cap30, simulation, effects, validation/robustness и все completion/release guards неизменны. Локальное завершение — actual FIFO/decoder/layout/lifetime checks, совместимая incremental ARM64 build и отдельный пакет. Runtime завершение — пользовательский запуск реальной игровой сцены, native admissions/cache hits/upload deltas и matched active FPS; меню и Null shader compiler не заменяют эту проверку. До неё прирост FPS не заявляется.
+
+### PERF12: LOCAL/package PASS, установка заблокирована SSH
+
+- Код: `294dac18555e9b6503391e15fc6a6dfca9628112`, ветка `h700/perf-recovery`. Совместимая incremental ARM64 compile/link PASS, без fresh/dependency rebuild; committed-source recheck0,849s, все tested source bytes совпали, build-relevant dirty files0.
+- PASS:85/85selected CTest,290/290actual GX/FIFO,38/38shader-generator,55/55worker/lifetime,21/21recording/ownership,30/30mixed/ring. Decoder/source/budget и exact launcher flag включены. Host source/FIFO fixtures отдельно прошли ASan/UBSan; pinned game builder не содержит sanitizer compiler-rt, поэтому обычный CTest fixture не требует его наличия.
+- Dawn/Tint Null:9WGSL modules/12pipelines PASS; production cache на Null:191assertions,5mesh uploads/10actual buffers, mapped bytes/IB/padding, miss→hit, source/layout/base invalidation, pinned lifetime/generation и actual binding, validation errors0. Native-like fixture pins не заменяют реальную проверку presentation/completion/Mali-картинки.
+- `build/h700-perf12-retail-native/package`,18package gates PASS. Source SHA256 `fba7409268945cb1e2aa0cd9f878873f5ba38ae9f874ee86a3497e5e79b34d3a`. Debug-stripped executable63,020,008bytes, SHA256 `75f1926041bfb036158b757b4f530c18febc912693a56f59d94afc8a063f217b`.
+- Архив `build/h700-perf12-retail-native/h700-perf12.tar.gz`:21,100,448bytes, SHA256 `343a207b5edcc048bf26387296a42170ff2e2b85776791fb23ea01b3e823fd01`. Private incremental test package, без disc/user/save payload; не разрешение public distribution.
+- **Не установлен:** первая read-only SSH preflight завершилась `Operation timed out`, до копирования/публикации entry. Game starts0/signals0; данные устройства не менялись. Prepared installer: `python3 build/h700-perf12-retail-native/upload.py` — отдельные PERF12/PERF12 OFF entries на одном payload, только retail flag1/0, ring1 в обоих; перед mutable copy свежий no-game/launcher/copier guard, source/copy/source-after hashes. Сам installer игру не запускает.
+- Следующий шаг после восстановления связи: установка отдельно от PERF11, затем пользовательский manual launch реальной игровой сцены. Проверять actual cache admissions/hits/upload deltas и active FPS при штатных power state; runtime прирост/30FPS пока **не подтверждены**. Полный unrelated HDR suite не запускался.
+
 ## Исходное evidence и выбор
 
 NATIVE уже уменьшил Queue::Submit до ~12,49 ms, но показанный кадр занимает ~88,50 ms (11,300 FPS), completion-observed ~153,37 ms. Последний simultaneous capture: активный ondemand/CPU1,2–1,416 GHz, GPU utilisation6–7%, ошибок/compile warnings0. Поэтому не начинать ещё один vertex/layout rewrite и не выдавать этот capture за GPU frametime.
@@ -216,7 +234,7 @@ Client bytes получают immutable owned payload в существующе�
 - **Metroid Prime Unbound PERF11** и **PERF11 OFF** установлены отдельно,101payload hashes PASS;28own user/cache files физически скопированы с неактивного PERF10, copy/source-before/source-after hashes совпали. Исходные installs/settings/saves и PERF10 не переписывались. Один новый payload/binary/user-cache, entries побайтово отличаются только `MP_H700_FRAME_DEST_RING=1`/`0`, `MP_H700_MOVIE_CLIENT_UPLOAD=1` в обоих. Actual launcher forwarding покрыт tests и staged source hash; game starts/signals0.
 - Capture готов на **100s/21samples**, с fresh PID/starttime/executable/flag и immediate enabled/selection proof gate. Итоговое окно80–100s, не первые30FPS. FPS parser сохраняет финальный полный frame-wall report; API denominators/means считаются отдельно без potentially incomplete группы. Эта correction офлайн проверена на обоих сохранённых PERF10 captures: последние11,393/11,289FPS удержаны, прежние API means/denominators не изменены. Никакого нового launch/profiler framework. Последующий ON capture приведён ниже; physical graphics/gameplay acceptance и matched OFF пока pending.
 
-### Runtime ON:100s без прежнего провала; matched OFF pending
+### Runtime ON/OFF: эффект destination ring подтверждён в FileSelect
 
 После manual launch пользователя выполнен100s/21sample capture с fresh PID/starttime/executable SHA256 и обоими exported opt-ins1; actual enabled/selection proof проверен уже в первом sample. За весь capture **2947presented frames/98,7849s/49полных non-straddling FPS windows=29,8325FPS**, range27,951–30,442. Это report-window means, не per-frame p95/p99; прежнего падения к11FPS в этом100s run не наблюдалось, не обещается бессрочная стабильность.
 
@@ -226,6 +244,30 @@ Client bytes получают immutable owned payload в существующе�
 - Все21power samples active/ondemand, idlefalse;20осмысленных GPU readings18%. Late-window CPU1,008–1,200GHz, min available371,9766MiB. Никаких изменений clocks/governor/services/resolution не выполнялось.
 - Отдельный2s CPU profile после FPS, identity сохранена,119samples/lost0, helper удалён. Метод выбрал **Main thread**,15,7606% всей4-core CPU capacity вsample19→20;100samples в executable,9libc,6libmali,3SDL3,1vdso. Это другой sampled thread, нельзя выдавать распределение за исчезновение всех Mali copies. По отдельным proc deltas максимальный mali-utility thread~1,4464% всейcapacity (остальные~1,1471/~0,5985), в PERF10 hottest такой thread был~24,85%; сравнение разных runs, не matched CPU attribution.
 
-**Следующий шаг — matched same-binary PERF11 OFF**, только ring flag0 вместо1, movie client path остаётся1;100s/те же late80–100s и отдельный2s CPU profile. Scripts `capture_control.py`, `analyze_control.py`, `sample_control_regs.py` готовы и офлайн проверены; OFF ещё не запускался. Полная graphics/gameplay/physical pad/save/load/normal-exit acceptance не заявлена; это измеренный FileSelect run. Пользователю сразу после сбора сообщено, что можно выйти, до локального анализа. Новых builds/настроек/game starts/signals0. Evidence: `build/h700-perf11-dest-ring/runtime-on-summary.json`, `live-capture/{analysis.json,cpu-selection-summary.json,cpu-profile-private.json,capture-complete.json}` и private raw records.
+**Matched same-binary PERF11 OFF выполнен** после явного запуска пользователя: только ring flag0 вместо1, movie client path остаётся1;100s/те же late80–100s и отдельный2s CPU profile. Результат сравнения ниже. Полная graphics/gameplay/physical pad/save/load/normal-exit acceptance не заявлена; это измеренный FileSelect run. Пользователю сразу после сбора сообщено, что можно выйти, до локального анализа. Новых builds/настроек/game starts/signals0. Evidence: `build/h700-perf11-dest-ring/runtime-on-summary.json`, `live-capture/{analysis.json,cpu-selection-summary.json,cpu-profile-private.json,capture-complete.json}` и private raw records.
+
+### Контроль OFF и matched результат
+
+Сохранённые binary/flags proofs обоих actual processes сравнены: один executable SHA256 `669792ce404e1b6ad555a96df35a7c1d1d2352bd97c1c5a33c5aab051d70ba4d`, одинаковые exported flags, **единственная разница `MP_H700_FRAME_DEST_RING=1`/`0`**. В обоих сохраняется movie client-upload1 с fresh actual-call progression. OFF ring enabled=false/selections0, no fallback; ON enabled=true/две разные native-slot пары/no fallback.
+
+| Позднее окно samples16..20 (~80–100s) | ON | OFF |
+| --- | ---: | ---: |
+| Presented frames /report seconds | 545 /18,1616 | 208 /18,2631 |
+| Полные FPS reports | 9 | 9 |
+| Frame-weighted FPS | **30,0084** | **11,3891** |
+| Диапазон report-window FPS | 29,9476–30,1175 | 11,1683–11,5064 |
+| Средний frame interval | 33,3240ms | 87,8034ms |
+| Осмысленные late GPU readings | 18% | 7% |
+| CPU frequency range | 1,008–1,200GHz | 1,104–1,416GHz |
+| Min available RAM | 371,9766MiB | 381,2773MiB |
+| Errors/compile warnings/fallback | 0 | 0 |
+
+**Эффект для этих FileSelect runs:2,63484× FPS (+163,4836%), frame interval −62,0470%.** Оба100s/21sample captures active/ondemand, idlefalse; OFF не был медленным powersave-контролем и не имел более низкой late CPU frequency. Весь OFF capture:1110frames/97,5313s=11,3810FPS, report range11,0747–11,5836, без возврата к30FPS. Последний полный FPS report включён, API counters отдельно по185frames/8complete groups; completion-observed153,452ms не GPU time.
+
+Отдельный OFF profile2s: `mali-utility-wo`~25,05% всей4-core CPU capacity впоследнем proc interval, **194/194samples в libc vector-copy loop**, lost/invalid0. Все LR=`libmali+0x513a90`, preceding BL memcpy@plt+0x513a8c; sampled lengthx5−x0=8,387,679B, обе полные ranges внутриshared Mali mappings. Это восстановление прежнего sampled hot-copy пути при ringOFF, не194вызова и неbytes/frame. ON helper выбирал другой hottest thread; сравнивать их процентное распределение PC как одинаковый sampled population нельзя. Exact originating GL API и то, какой изUniform/Storage даёт основной вклад, ещё не установлены; дополнительная per-kind матрица ради этой атрибуции сейчас не нужна для следующего gameplay шага.
+
+Граница результата: **один последовательный same-binary ON/OFF pair**, не randomized repeated trials; прошёл конкретный menu100s сценарий, не обещана бессрочная стабильность/30FPS всей игры/per-frame p95/p99/полная graphics или save/load acceptance. Native reuse/completion, validation/robustness,1×/640×480/dynamicOff/cap30/effects не менялись. После сбора пользователю сразу разрешено выйти, до анализа. Новых builds/изменения settings/game starts/signals0, оба helpers удалены. Evidence: `build/h700-perf11-dest-ring/same-binary-comparison.json`, `control-capture/{analysis.json,copy-attribution-summary.json,cpu-profile-private.json,capture-complete.json}` и private raw records.
+
+**Следующий проверяемый шаг — первая управляемая игровая сцена, PERF11 без OFF.** По `CFrontEndUI::Update` benchmark menu блокирует только auto-start изFileSelect; обычный `ProcessUserInput` сохранён, новый launcher/flags не требуются. Пользователь вручную выбирает New Game и подтверждает сцену с доступным управлением. `capture_gameplay.py` сохраняет отдельные100s/21samples с прежними identity/power/memory/error gates; `analyze_gameplay.py` использует user-confirmed gameplay, не ложный FileSelect label, и отмечает frontend transition/fallback. Actual room/camera не инструментированы, movie-client calls в gameplay не обязательны. Separate2s `sample_gameplay_regs.py` готов. Wrappers/transformed sources офлайн проверены; не запускались, новых production edits/builds/device starts не выполнялось.
 
 Private scripts/evidence/results остаются в ignored `build/h700-perf06-recovery/`, `build/h700-perf07-producer-flush/`, `build/h700-perf08-audio-exit/`, `build/h700-perf09-batched-forward/`, `build/h700-perf10-client-movie/` и `build/h700-perf11-dest-ring/`. Чужие local diffs AGENTS/progress и `.DS_Store` сохранены, в commits не включаются.
