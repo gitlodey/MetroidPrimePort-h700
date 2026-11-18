@@ -741,7 +741,11 @@ bool begin_frame() noexcept {
   g_nativeFrame.emplace(*nativeFrame);
 #endif
   phase::set(phase::Main, "begin_frame (waiting for a frame slot)");
+#ifdef AURORA_H700
+  if (!gfx::begin_frame(nativeFrame)) {
+#else
   if (!gfx::begin_frame()) {
+#endif
     (void)gx::fifo::end_frame();
 #ifdef AURORA_H700
     if (!h700::abort_frame(*g_nativeFrame)) {

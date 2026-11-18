@@ -33,12 +33,14 @@
 #ifdef AURORA_H700
 #include "../h700/presentation.hpp"
 #include "../h700/diagnostics.hpp"
+#include "../h700/frame_dest_ring.hpp"
 #endif
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -64,6 +66,11 @@ namespace {
 constexpr Module Log{"aurora::gfx"};
 
 Resources g_resources;
+#ifdef AURORA_H700
+using FrameDestBindings = h700::FrameDestRingBindings<wgpu::Buffer, wgpu::BindGroup>;
+std::array<FrameDestBindings, h700::FrameDestRingSlots> g_frameDestRing;
+h700::FrameDestRingState g_frameDestRingState;
+#endif
 
 enum class BufferMapState {
   Unmapped,
@@ -238,6 +245,117 @@ void create_uniform_bind_group() {
     g_resources.drawUniformBindGroup = g_device.CreateBindGroup(&drawDescriptor);
   }
 }
+
+#ifdef AURORA_H700
+void log_frame_dest_ring_fallback(h700::FrameDestRingFallback reason) {
+  Log.info("H700 frame destination ring fallback: reason={} canonical_uniform={} canonical_storage={} "
+           "(owners retained until guarded release)", h700::frame_dest_ring_reason(reason),
+           static_cast<const void*>(g_resources.uniformBuffer.Get()),
+           static_cast<const void*>(g_resources.storageBuffer.Get()));
+}
+
+void fallback_frame_dest_ring(h700::FrameDestRingFallback reason) {
+  AURORA_ASSERT(render_worker::is_worker_thread(), "Frame destination fallback must run on render worker");
+  // Current aliases already are canonical. Restoring slot 0 would lose the active frame's data.
+  if (g_frameDestRingState.fallback(reason)) log_frame_dest_ring_fallback(reason);
+}
+
+void create_frame_dest_ring_bind_groups(FrameDestBindings& slot) {
+  const auto staticEntries = h700::frame_dest_ring_static_entries(
+      g_resources.vertexFetchTextureView.Get(), g_resources.storageFetchTextureView.Get(),
+      slot.storageBuffer.Get(), g_resources.fetchSampler.Get());
+  constexpr char StaticLabel[] = "Native destination static bind group";
+  const WGPUBindGroupDescriptor staticDescriptor{
+      .label = {StaticLabel, sizeof(StaticLabel) - 1},
+      .layout = g_resources.staticBindGroupLayout.Get(),
+      .entryCount = staticEntries.size(),
+      .entries = staticEntries.data(),
+  };
+  slot.staticBindGroup = wgpu::BindGroup::Acquire(wgpuDeviceCreateBindGroup(g_device.Get(), &staticDescriptor));
+  const auto uniformEntries = h700::frame_dest_ring_uniform_entries(slot.uniformBuffer.Get(), gx::MaxUniformSize);
+  constexpr char UniformLabel[] = "Native destination uniform bind group";
+  const WGPUBindGroupDescriptor uniformDescriptor{
+      .label = {UniformLabel, sizeof(UniformLabel) - 1},
+      .layout = g_resources.uniformBindGroupLayout.Get(),
+      .entryCount = uniformEntries.size(),
+      .entries = uniformEntries.data(),
+  };
+  slot.uniformBindGroup = wgpu::BindGroup::Acquire(wgpuDeviceCreateBindGroup(g_device.Get(), &uniformDescriptor));
+  const auto drawEntries = h700::frame_dest_ring_uniform_entries<true>(
+      slot.uniformBuffer.Get(), gx::MaxUniformSize, sizeof(gx::DrawImmediateData));
+  constexpr char DrawLabel[] = "Native destination draw uniform bind group";
+  const WGPUBindGroupDescriptor drawDescriptor{
+      .label = {DrawLabel, sizeof(DrawLabel) - 1},
+      .layout = g_resources.drawUniformBindGroupLayout.Get(),
+      .entryCount = drawEntries.size(),
+      .entries = drawEntries.data(),
+  };
+  slot.drawUniformBindGroup = wgpu::BindGroup::Acquire(wgpuDeviceCreateBindGroup(g_device.Get(), &drawDescriptor));
+}
+
+bool initialize_frame_dest_ring() {
+  if (!h700::frame_dest_ring_requested(std::getenv("MP_H700_FRAME_DEST_RING"), std::getenv("MP_H700_BENCH")))
+    return true;
+  const auto reason = h700::frame_dest_ring_eligibility(
+      g_mixedFetch && g_vertexFetchTexture && h700::imports_ready(), g_config.residentGeometryMiB, g_bufferSizes,
+      g_resources.uniformBuffer.GetSize(), g_resources.storageBuffer.GetSize(), g_resources.limits);
+  if (reason != h700::FrameDestRingFallback::None) {
+    log_frame_dest_ring_fallback(reason);
+    return true;
+  }
+  g_frameDestRing[0] = {g_resources.uniformBuffer, g_resources.storageBuffer, g_resources.staticBindGroup,
+                       g_resources.uniformBindGroup, g_resources.drawUniformBindGroup};
+  const auto descriptors = h700::frame_dest_ring_buffer_descriptors();
+  for (const auto& descriptor : descriptors) {
+    validate_mixed_buffer_size(descriptor.size,
+        (descriptor.usage & wgpu::BufferUsage::Storage) != wgpu::BufferUsage::None, "native destination");
+  }
+  auto& second = g_frameDestRing[1];
+  second.uniformBuffer = g_device.CreateBuffer(&descriptors[0]);
+  second.storageBuffer = g_device.CreateBuffer(&descriptors[1]);
+  if (second.uniformBuffer && second.storageBuffer) create_frame_dest_ring_bind_groups(second);
+  if (!second.uniformBuffer || !second.storageBuffer || !second.staticBindGroup || !second.uniformBindGroup ||
+      !second.drawUniformBindGroup || !render_worker::wait_healthy()) {
+    Log.error("H700 frame destination ring resource creation failed; retaining holders for guarded release");
+    if (auto state = h700::presentation_state()) state->fail("H700 frame destination ring resource creation failed");
+    render_worker::notify_failure();
+    return false;
+  }
+  // Both storage buffers start zeroed; the original full mirror initialization remains in place.
+  // Only destinations/groups are duplicated, never staging memory or texture mirrors.
+  g_frameDestRingState = h700::FrameDestRingState{true};
+  Log.info("H700 frame destination ring enabled: native_slots={} uniform_bytes={} storage_bytes={} extra_bytes={}",
+           h700::FrameDestRingSlots, h700::FrameDestRingBufferBytes, h700::FrameDestRingBufferBytes,
+           2 * h700::FrameDestRingBufferBytes);
+  return true;
+}
+
+bool select_frame_dest_ring(const std::optional<h700::FrameDescriptor>& nativeFrame, size_t frameSlot) {
+  AURORA_ASSERT(render_worker::is_worker_thread(), "Frame destination selection must run on render worker");
+  const auto decision = g_frameDestRingState.select(nativeFrame);
+  if (decision.route == h700::FrameDestRingRoute::Legacy) return true;
+  if (decision.route == h700::FrameDestRingRoute::Fallback) {
+    log_frame_dest_ring_fallback(g_frameDestRingState.fallback_reason());
+    return true;
+  }
+  if (decision.route == h700::FrameDestRingRoute::ContractError || !h700::native_slot(*nativeFrame)) {
+    Log.error("H700 frame destination ring contract failed: {} generation={} frame={} native_slot={} cpu_slot={}",
+              decision.error ? decision.error : "native reservation is not current",
+              nativeFrame ? nativeFrame->generation : 0, nativeFrame ? nativeFrame->frame : 0,
+              nativeFrame ? int(nativeFrame->slot) : -1, frameSlot);
+    fail_frame_work(frameSlot);
+    return false;
+  }
+  h700::apply_frame_dest_ring_bindings(g_resources, g_frameDestRing[decision.slot]);
+  if (decision.logSelection) {
+    Log.info("H700 frame destination ring select: generation={} frame={} native_slot={} cpu_slot={} uniform={} storage={}",
+             nativeFrame->generation, nativeFrame->frame, decision.slot, frameSlot,
+             static_cast<const void*>(g_resources.uniformBuffer.Get()),
+             static_cast<const void*>(g_resources.storageBuffer.Get()));
+  }
+  return true;
+}
+#endif
 
 struct RuntimeDrawType {
   std::string label;
@@ -640,6 +758,12 @@ void initialize() {
     return;
   }
 #ifdef AURORA_H700
+  if (g_frameDestRing[0].uniformBuffer || g_frameDestRing[0].storageBuffer ||
+      g_frameDestRing[1].uniformBuffer || g_frameDestRing[1].storageBuffer) {
+    Log.error("Frame initialization refused: native destination owners require guarded release");
+    render_worker::notify_failure();
+    return;
+  }
   g_frameInitialized = true;
 #endif
   g_frameOwner = std::this_thread::get_id();
@@ -954,6 +1078,9 @@ void initialize() {
     }
     create_uniform_bind_group();
   }
+#ifdef AURORA_H700
+  if (!initialize_frame_dest_ring()) return;
+#endif
 
   gx::initialize();
 #ifdef AURORA_ENABLE_RMLUI
@@ -1053,6 +1180,10 @@ bool release_frame_holders_after_quiescence() {
   g_resources.uniformBindGroupLayout = {};
   g_resources.drawUniformBindGroup = {};
   g_resources.drawUniformBindGroupLayout = {};
+#ifdef AURORA_H700
+  g_frameDestRing.fill({});
+  g_frameDestRingState = h700::FrameDestRingState{};
+#endif
   g_frameIndex = UINT32_MAX;
   g_frameSlots.reset();
   g_stagingSlots.reset();
@@ -1142,6 +1273,9 @@ bool grow_frame_buffer(StagingKind kind, uint64_t need, size_t frameSlot) {
     if (need <= device) {
       return;
     }
+#ifdef AURORA_H700
+    fallback_frame_dest_ring(h700::frame_dest_ring_growth_reason(kind));
+#endif
     const uint64_t base = g_bufferSizes.base(kind);
     const uint64_t grown = std::min(std::bit_ceil(need), g_bufferSizes.limit(kind));
     const wgpu::BufferDescriptor descriptor{
@@ -1252,6 +1386,9 @@ bool reserve_held_frame_buffers() {
   s.heldVertex = s.heldUniform = s.heldIndex = s.heldStorage = 0;
   g_heldFrameBuffersTaken = true;
   const auto accepted = render_worker::enqueue_work([] {
+#ifdef AURORA_H700
+    fallback_frame_dest_ring(h700::FrameDestRingFallback::DeferredReplacement);
+#endif
     for (const auto& buffer : SharedBuffers) {
       const wgpu::BufferDescriptor descriptor{
           .label = buffer.label,
@@ -1288,7 +1425,11 @@ bool reserve_held_frame_buffers() {
 }
 } // namespace
 
+#ifdef AURORA_H700
+bool begin_frame(std::optional<h700::FrameDescriptor> nativeFrame) {
+#else
 bool begin_frame() {
+#endif
   ZoneScoped;
   if (!render_worker::root_admission_open()) return false;
   {
@@ -1339,7 +1480,14 @@ bool begin_frame() {
 
   g_frameFailed[frameSlot].store(false, std::memory_order_release);
   g_frameOwned[frameSlot].store(true, std::memory_order_release);
-  const auto accepted = render_worker::enqueue_begin_frame(frame.frameId, [frameSlot] {
+  const auto accepted = render_worker::enqueue_begin_frame(frame.frameId, [frameSlot
+#ifdef AURORA_H700
+      , nativeFrame
+#endif
+  ] {
+#ifdef AURORA_H700
+    if (!select_frame_dest_ring(nativeFrame, frameSlot)) return;
+#endif
     constexpr wgpu::CommandEncoderDescriptor EncoderDescriptor{.label = "Redraw encoder"};
 #ifdef AURORA_H700
     g_framePackets[frameSlot].encoder = h700::diagnostic::dawn_call(h700::diagnostic::Kind::RenderEncoder,

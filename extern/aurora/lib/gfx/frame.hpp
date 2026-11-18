@@ -5,6 +5,10 @@
 
 #include <optional>
 
+#ifdef AURORA_H700
+#include "../h700/presentation_state.hpp"
+#endif
+
 namespace aurora::gfx::detail {
 
 inline constexpr size_t FrameSlotCount = 2;
@@ -34,7 +38,12 @@ RenderTargetLayout display_render_target_layout() noexcept;
 void initialize();
 bool shutdown(); // blocking compatibility wrapper
 bool release_frame_holders_after_quiescence(); // no worker waits; false retains holders
+#ifdef AURORA_H700
+// Immutable native reservation; its completion/reuse is independent of the CPU packet slot.
+bool begin_frame(std::optional<h700::FrameDescriptor> nativeFrame = std::nullopt);
+#else
 bool begin_frame();
+#endif
 bool end_frame(EndFrameCallback callback, std::function<void()> preSubmitAbort = {});
 // Accepted packets are never cleared while queued/running work can still reference them.
 bool frame_work_failed(size_t slot) noexcept;
