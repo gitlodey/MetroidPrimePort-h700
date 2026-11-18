@@ -177,5 +177,73 @@ TEST(H700PresentationIntegration, ActualMainProgressAndReverseOrderingNeverFakeC
   EXPECT_EQ(transport.find("glReadPixels("), transport.rfind("glReadPixels(")); // single opt-in observation site only
   EXPECT_NE(presentation.find("pending native ownership/futures/reverse fences (IG-11 retirement required)"), std::string::npos);
 }
+
+TEST(H700PresentationIntegration, ProbeOffGateAndTypedEglResolverKeepRawCapabilitiesAndCaches) {
+  const auto timing = source("h700/presentation_timing.hpp");
+  const auto probe = section(timing, "auto probe_wall_call(", "struct GLApiWallSummary");
+  ordered(probe, {"if (!enabled) return call();", "Clock::now()", "call();", "Clock::now()", "record("});
+  for (const auto forbidden : {"std::function", "mutex", "new ", "Log."}) {
+    EXPECT_EQ(probe.find(forbidden), std::string::npos) << forbidden;
+  }
+  const auto presentation = source("h700/presentation.cpp");
+  const auto progress = section(presentation, "auto timed_progress_call(", "GLWall::WaitOutcome egl_wait_outcome(");
+  EXPECT_NE(progress.find("probe_wall_call(backend->gl_timing_enabled"), std::string::npos);
+  const auto egl = section(presentation, "EGLint timed_egl_wait_call(", "template <GLWall::Field Api, typename Proc, typename... Args>\nauto timed_gl_call");
+  ordered(egl, {"probe_wall_call(backend->gl_timing_enabled", "proc(display, sync, flags, timeout)",
+                 "record_wait(Api, wall_ns", "static_cast<uint32_t>(flags)", "static_cast<uint64_t>(timeout)",
+                 "egl_wait_outcome(result)",
+                 "timed_client_wait_sync(EGLDisplay display, EGLSync sync, EGLint flags, EGLTime timeout)",
+                 "PFNEGLCLIENTWAITSYNCPROC>(backend->egl_wait_procs[0].original)",
+                 "timed_client_wait_sync_khr(EGLDisplay display, EGLSyncKHR sync, EGLint flags, EGLTimeKHR timeout)",
+                 "PFNEGLCLIENTWAITSYNCKHRPROC>(backend->egl_wait_procs[1].original)"});
+  for (const auto forbidden : {"raw_proc(", "eglGetError(", "GetProcAddress(", "Log."}) {
+    EXPECT_EQ(egl.find(forbidden), std::string::npos) << forbidden;
+  }
+  const auto wrappers = section(presentation, "GLWall::WrappedGLCount> TimedGLWrappers{", "void observation_failure(");
+  ordered(wrappers, {"checked_gl_wrapper<PFNGLMAPBUFFERRANGEPROC>",
+                     "checked_gl_wrapper<PFNGLBINDBUFFERRANGEPROC>",
+                     "static_assert(TimedGLWrappers.size() == GLWall::MakeCurrent)",
+                     "GLWall::DawnClientWaitFields.size()> TimedEGLWaitWrappers{",
+                     "checked_gl_wrapper<PFNEGLCLIENTWAITSYNCPROC>(timed_client_wait_sync)",
+                     "checked_gl_wrapper<PFNEGLCLIENTWAITSYNCKHRPROC>(timed_client_wait_sync_khr)"});
+  const auto resolver = section(presentation, "dawn::native::opengl::EGLFunctionPointerType resolve(", "bool begin_dawn()");
+  ordered(resolver, {"if (backend->gl_timing_enabled)", "TimedGLWrappers.size()", "backend->gl_procs[i]",
+                     "std::call_once(cached.once", "cached.original = raw_proc(name)",
+                     "cached.original ? TimedGLWrappers[i] : nullptr",
+                     "TimedEGLWaitWrappers.size()", "GLWall::Names[GLWall::DawnClientWaitFields[i]]",
+                     "backend->egl_wait_procs[i]", "std::call_once(cached.once", "cached.original = raw_proc(name)",
+                     "cached.original ? TimedEGLWaitWrappers[i] : nullptr", "return reinterpret_cast<Proc>(raw_proc(name))"});
+  const auto bootstrap = section(presentation, "bool initialize_presenter(", "std::shared_ptr<PresentationState> presentation_state()");
+  EXPECT_NE(bootstrap.find("backend->client_wait_sync = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(raw_proc(\"eglClientWaitSyncKHR\"))"),
+            std::string::npos);
+  EXPECT_EQ(bootstrap.find("resolve(\"eglClientWaitSyncKHR\")"), std::string::npos);
+}
+
+TEST(H700PresentationIntegration, ProbeKeepsActualWaitArgumentsGuardsAndProgressOrder) {
+  const auto presentation = source("h700/presentation.cpp");
+  const auto forward = section(presentation, "void poll_forward(", "bool poll_diagnostic_pixels(");
+  ordered(forward, {"if (!flight->published", "probe_wall_call(backend->gl_timing_enabled",
+                    "WaitAny(1, &info, 0)", "record_wait(GLWall::ForwardWaitAny, wall_ns, 0, 0, outcome)",
+                    "if (wait == wgpu::WaitStatus::TimedOut) return", "!info.completed",
+                    "flight->callback_called.load", "wgpu::QueueWorkDoneStatus::Success", "complete_forward("});
+  const auto reverse = section(presentation, "void poll_reverse(", "void report_frame_wall(");
+  ordered(reverse, {"flight_for(flight->descriptor)", "*owned.reverse != reinterpret_cast<uintptr_t>(flight->reverse)",
+                    "probe_wall_call(backend->gl_timing_enabled",
+                    "backend->client_wait_sync(backend->display, flight->reverse, 0, 0)",
+                    "record_wait(GLWall::PresenterClientWaitSyncKHR", "if (result == EGL_TIMEOUT_EXPIRED_KHR) return",
+                    "EGL_CONDITION_SATISFIED_KHR", "destroy_sync(", "complete_reverse(", "recycle_safe(flight)"});
+  EXPECT_EQ(reverse.find("timed_client_wait_sync_khr("), std::string::npos);
+  const auto progress = section(presentation, "bool main_progress_once()", "std::array<std::optional<NativePending>");
+  ordered(progress, {"backend->progressing", "timed_progress_call<GLWall::ProcessEvents>",
+                     "webgpu::g_instance.ProcessEvents()", "timed_progress_call<GLWall::DeviceLostPoll>",
+                     "webgpu::poll_h700_device_events()", "poll_forward(flight)", "poll_diagnostic_pixels(flight)",
+                     "timed_progress_call<GLWall::ReversePoll>", "poll_reverse(flight)", "present_ready()",
+                     "timed_progress_call<GLWall::ReversePoll>", "poll_reverse(flight)"});
+  const auto report = section(presentation, "void report_frame_wall(", "void present_ready()");
+  ordered(report, {"std::chrono::seconds(2)", "backend->gl_timing_enabled ? backend->gl_wall.sample_and_reset()",
+                   "if (backend->gl_timing_enabled)", "if (!sample.wait.empty())", "H700 wait outcomes",
+                   "timeout0={}", "timeout_nonzero={}", "flags_or={:#x}", "flush_calls={}",
+                   "timed_out={}", "success_or_signaled={}", "other={}"});
+}
 } // namespace
 } // namespace aurora::h700

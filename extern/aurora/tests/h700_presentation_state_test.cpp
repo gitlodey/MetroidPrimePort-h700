@@ -54,6 +54,140 @@ TEST(H700PresentationTiming, GLApiTimingRequiresExactOptInAndNonnegativeByteRang
   EXPECT_EQ(requested_gl_buffer_bytes(4096), 4096);
 }
 
+struct ProbeClock {
+  using duration = std::chrono::nanoseconds;
+  using time_point = std::chrono::time_point<ProbeClock, duration>;
+  inline static duration elapsed{};
+  inline static size_t reads = 0;
+  static time_point now() { ++reads; return time_point(elapsed); }
+};
+
+TEST(H700PresentationTiming, ProbeOffCallsOnceWithoutClockOrRecording) {
+  ProbeClock::elapsed = {};
+  ProbeClock::reads = 0;
+  size_t calls = 0, records = 0;
+  EXPECT_EQ(probe_wall_call<ProbeClock>(false, [&] { ++calls; return 53; },
+      [&](uint64_t, int) { ++records; }), 53);
+  probe_wall_call<ProbeClock>(false, [&] { ++calls; }, [&](uint64_t) { ++records; });
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(records, 0);
+  EXPECT_EQ(ProbeClock::reads, 0);
+}
+
+TEST(H700PresentationTiming, ProbeOnMeasuresOnlyCallAndPreservesVoidAndValueResults) {
+  using namespace std::chrono_literals;
+  ProbeClock::elapsed = {};
+  ProbeClock::reads = 0;
+  size_t calls = 0, records = 0;
+  const auto result = probe_wall_call<ProbeClock>(true, [&] {
+    ++calls;
+    ProbeClock::elapsed += 150ms;
+    return 73;
+  }, [&](uint64_t wall_ns, int returned) {
+    ++records;
+    EXPECT_EQ(wall_ns, 150'000'000);
+    EXPECT_EQ(returned, 73);
+    EXPECT_EQ(ProbeClock::reads, 2);
+    ProbeClock::elapsed += 100ms; // aggregation is outside the measured call
+  });
+  EXPECT_EQ(result, 73);
+  probe_wall_call<ProbeClock>(true, [&] { ++calls; ProbeClock::elapsed += 7ms; }, [&](uint64_t wall_ns) {
+    ++records;
+    EXPECT_EQ(wall_ns, 7'000'000);
+  });
+  EXPECT_EQ(calls, 2);
+  EXPECT_EQ(records, 2);
+  EXPECT_EQ(ProbeClock::reads, 4);
+}
+
+TEST(H700PresentationTiming, WaitApiFieldsDoNotExtendTheContiguousGlWrapperTable) {
+  using T = GLApiWallSummary;
+  EXPECT_EQ(T::WrappedGLCount, static_cast<size_t>(T::MakeCurrent));
+  EXPECT_EQ(T::WrappedGLCount, static_cast<size_t>(T::BindBufferRange) + 1);
+  EXPECT_STREQ(T::Names[T::WrappedGLCount - 1], "glBindBufferRange");
+  EXPECT_EQ(T::DawnClientWaitFields, (std::array{T::ClientWaitSync, T::ClientWaitSyncKHR}));
+  for (const auto field : {T::ProcessEvents, T::ForwardWaitAny, T::ReversePoll, T::DeviceLostPoll,
+                           T::ClientWaitSync, T::ClientWaitSyncKHR, T::PresenterClientWaitSyncKHR}) {
+    EXPECT_GT(static_cast<size_t>(field), T::WrappedGLCount);
+  }
+  EXPECT_STREQ(T::Names[T::ProcessEvents], "ProcessEvents");
+  EXPECT_STREQ(T::Names[T::ForwardWaitAny], "forwardWaitAny");
+  EXPECT_STREQ(T::Names[T::ReversePoll], "reversePoll");
+  EXPECT_STREQ(T::Names[T::DeviceLostPoll], "deviceLostPoll");
+  EXPECT_STREQ(T::Names[T::ClientWaitSync], "eglClientWaitSync");
+  EXPECT_STREQ(T::Names[T::ClientWaitSyncKHR], "eglClientWaitSyncKHR");
+  EXPECT_STREQ(T::Names[T::PresenterClientWaitSyncKHR], "presenterEglClientWaitSyncKHR");
+}
+
+TEST(H700PresentationTiming, WaitSummaryKeepsBoundariesFlagsTimeoutsOutcomesAndPresenterSeparate) {
+  using T = GLApiWallSummary;
+  using O = T::WaitOutcome;
+  T summary;
+  summary.record(T::ProcessEvents, 83'000'000);
+  summary.record_wait(T::ForwardWaitAny, 150'000'000, 0, 0, O::TimedOut);
+  summary.record_wait(T::ForwardWaitAny, 7, 0, 0, O::Signaled);
+  summary.record(T::ReversePoll, 30);
+  summary.record(T::DeviceLostPoll, 40);
+  summary.record_wait(T::ClientWaitSync, 11, T::SyncFlushCommandsBit, 0, O::TimedOut);
+  summary.record_wait(T::ClientWaitSyncKHR, 17, 0, UINT64_MAX, O::Signaled);
+  summary.record_wait(T::ClientWaitSyncKHR, 3, T::SyncFlushCommandsBit | 4, 1, O::Other);
+  summary.record_wait(T::PresenterClientWaitSyncKHR, 19, 0, 0, O::Signaled);
+  const auto samples = summary.sample_and_reset();
+  EXPECT_EQ(samples[T::ProcessEvents].calls, 1);
+  EXPECT_EQ(samples[T::ProcessEvents].total_ns, 83'000'000);
+  EXPECT_TRUE(samples[T::ProcessEvents].wait.empty());
+  EXPECT_EQ(samples[T::ReversePoll].total_ns, 30);
+  EXPECT_EQ(samples[T::DeviceLostPoll].total_ns, 40);
+  const auto& forward = samples[T::ForwardWaitAny];
+  EXPECT_EQ(forward.calls, 2);
+  EXPECT_EQ(forward.total_ns, 150'000'007);
+  EXPECT_EQ(forward.max_ns, 150'000'000);
+  EXPECT_EQ(forward.wait.timeout_zero, 2);
+  EXPECT_EQ(forward.wait.timeout_nonzero, 0);
+  EXPECT_EQ(forward.wait.timed_out, 1);
+  EXPECT_EQ(forward.wait.signaled, 1);
+  EXPECT_EQ(forward.wait.other, 0);
+  EXPECT_EQ(forward.wait.flags_or, 0);
+  EXPECT_EQ(forward.wait.flush_calls, 0);
+  const auto& core = samples[T::ClientWaitSync];
+  EXPECT_EQ(core.calls, 1);
+  EXPECT_EQ(core.total_ns, 11);
+  EXPECT_EQ(core.wait.timeout_zero, 1);
+  EXPECT_EQ(core.wait.flush_calls, 1);
+  EXPECT_EQ(core.wait.flags_or, T::SyncFlushCommandsBit);
+  EXPECT_EQ(core.wait.timed_out, 1);
+  const auto& khr = samples[T::ClientWaitSyncKHR];
+  EXPECT_EQ(khr.calls, 2);
+  EXPECT_EQ(khr.total_ns, 20);
+  EXPECT_EQ(khr.max_ns, 17);
+  EXPECT_EQ(khr.wait.timeout_zero, 0);
+  EXPECT_EQ(khr.wait.timeout_nonzero, 2);
+  EXPECT_EQ(khr.wait.flags_or, T::SyncFlushCommandsBit | 4);
+  EXPECT_EQ(khr.wait.flush_calls, 1);
+  EXPECT_EQ(khr.wait.timed_out, 0);
+  EXPECT_EQ(khr.wait.signaled, 1);
+  EXPECT_EQ(khr.wait.other, 1);
+  const auto& presenter = samples[T::PresenterClientWaitSyncKHR];
+  EXPECT_EQ(presenter.calls, 1);
+  EXPECT_EQ(presenter.total_ns, 19);
+  EXPECT_EQ(presenter.wait.timeout_zero, 1);
+  EXPECT_EQ(presenter.wait.flush_calls, 0);
+  EXPECT_EQ(presenter.wait.signaled, 1);
+  for (const auto field : T::DawnClientWaitFields) EXPECT_EQ(samples[field].bytes, 0);
+  EXPECT_TRUE(samples[T::MakeCurrent].empty());
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+}
+
+TEST(H700PresentationTiming, MetadataOnlyWindowEdgesAreNotReportedAsEmpty) {
+  GLApiWallSummary::Sample sample;
+  EXPECT_TRUE(sample.empty());
+  sample.wait.timed_out = 1;
+  EXPECT_FALSE(sample.empty());
+  sample = {};
+  sample.wait.flags_or = 4;
+  EXPECT_FALSE(sample.empty());
+}
+
 TEST(H700PresentationTiming, GLApiSummaryKeepsIndependentCountsBytesMaximaAndResets) {
   using T = GLApiWallSummary;
   T summary;
@@ -135,17 +269,33 @@ TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals)
   for (auto& worker : workers) {
     worker = std::thread([&] {
       start.arrive_and_wait();
-      for (uint64_t i = 1; i <= CallsPerWriter; ++i) summary.record(T::BufferSubData, i, 64);
+      for (uint64_t i = 1; i <= CallsPerWriter; ++i) {
+        summary.record(T::BufferSubData, i, 64);
+        summary.record_wait(T::ClientWaitSyncKHR, i, i % 2 ? T::SyncFlushCommandsBit : 0, i % 2,
+                             i % 2 ? T::WaitOutcome::Signaled : T::WaitOutcome::TimedOut);
+      }
       done.fetch_add(1, std::memory_order_release);
     });
   }
-  T::Sample total;
+  T::Sample total, waitTotal;
   const auto collect = [&] {
-    const auto sample = summary.sample_and_reset()[T::BufferSubData];
+    const auto samples = summary.sample_and_reset();
+    const auto& sample = samples[T::BufferSubData];
     total.calls += sample.calls;
     total.total_ns += sample.total_ns;
     total.max_ns = std::max(total.max_ns, sample.max_ns);
     total.bytes += sample.bytes;
+    const auto& wait = samples[T::ClientWaitSyncKHR];
+    waitTotal.calls += wait.calls;
+    waitTotal.total_ns += wait.total_ns;
+    waitTotal.max_ns = std::max(waitTotal.max_ns, wait.max_ns);
+    waitTotal.wait.timeout_zero += wait.wait.timeout_zero;
+    waitTotal.wait.timeout_nonzero += wait.wait.timeout_nonzero;
+    waitTotal.wait.flags_or |= wait.wait.flags_or;
+    waitTotal.wait.flush_calls += wait.wait.flush_calls;
+    waitTotal.wait.timed_out += wait.wait.timed_out;
+    waitTotal.wait.signaled += wait.wait.signaled;
+    waitTotal.wait.other += wait.wait.other;
   };
   start.arrive_and_wait();
   while (done.load(std::memory_order_acquire) != Writers) {
@@ -158,6 +308,16 @@ TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals)
   EXPECT_EQ(total.total_ns, Writers * CallsPerWriter * (CallsPerWriter + 1) / 2);
   EXPECT_EQ(total.max_ns, CallsPerWriter);
   EXPECT_EQ(total.bytes, Writers * CallsPerWriter * 64);
+  EXPECT_EQ(waitTotal.calls, total.calls);
+  EXPECT_EQ(waitTotal.total_ns, total.total_ns);
+  EXPECT_EQ(waitTotal.max_ns, CallsPerWriter);
+  EXPECT_EQ(waitTotal.wait.timeout_zero, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(waitTotal.wait.timeout_nonzero, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(waitTotal.wait.flags_or, T::SyncFlushCommandsBit);
+  EXPECT_EQ(waitTotal.wait.flush_calls, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(waitTotal.wait.timed_out, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(waitTotal.wait.signaled, Writers * CallsPerWriter / 2);
+  EXPECT_EQ(waitTotal.wait.other, 0);
   for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
 }
 

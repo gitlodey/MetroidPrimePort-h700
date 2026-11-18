@@ -76,7 +76,8 @@ struct Backend {
   FrameWallTimings::Clock::time_point last_wall_report = FrameWallTimings::Clock::now();
   const bool gl_timing_enabled = gl_api_timing_enabled(std::getenv("MP_H700_GL_TIMING"));
   GLApiWallSummary gl_wall;
-  std::array<GLProcCache, GLApiWallSummary::MakeCurrent> gl_procs;
+  std::array<GLProcCache, GLApiWallSummary::WrappedGLCount> gl_procs;
+  std::array<GLProcCache, GLApiWallSummary::DawnClientWaitFields.size()> egl_wait_procs;
   PFNEGLMAKECURRENTPROC make_current = nullptr;
   bool progressing = false;
   bool presenter_ready = false;
@@ -143,6 +144,40 @@ auto timed_driver_call(Proc proc, uint64_t bytes, Args... args) -> std::invoke_r
         std::chrono::duration_cast<std::chrono::nanoseconds>(returned - begin).count()), bytes);
     return result;
   }
+}
+
+template <GLWall::Field Api, typename Call>
+auto timed_progress_call(Call call) -> std::invoke_result_t<Call> {
+  return probe_wall_call(backend->gl_timing_enabled, call,
+      [](uint64_t wall_ns, const auto&...) { backend->gl_wall.record(Api, wall_ns); });
+}
+
+GLWall::WaitOutcome egl_wait_outcome(EGLint result) {
+  static_assert(EGL_TIMEOUT_EXPIRED == EGL_TIMEOUT_EXPIRED_KHR &&
+                EGL_CONDITION_SATISFIED == EGL_CONDITION_SATISFIED_KHR &&
+                EGL_SYNC_FLUSH_COMMANDS_BIT == GLWall::SyncFlushCommandsBit &&
+                EGL_SYNC_FLUSH_COMMANDS_BIT_KHR == GLWall::SyncFlushCommandsBit);
+  if (result == EGL_TIMEOUT_EXPIRED_KHR) return GLWall::WaitOutcome::TimedOut;
+  if (result == EGL_CONDITION_SATISFIED_KHR) return GLWall::WaitOutcome::Signaled;
+  return GLWall::WaitOutcome::Other;
+}
+
+template <GLWall::Field Api, typename Proc, typename Sync, typename Time>
+EGLint timed_egl_wait_call(Proc proc, EGLDisplay display, Sync sync, EGLint flags, Time timeout) {
+  return probe_wall_call(backend->gl_timing_enabled, [=] { return proc(display, sync, flags, timeout); },
+      [=](uint64_t wall_ns, EGLint result) {
+        backend->gl_wall.record_wait(Api, wall_ns, static_cast<uint32_t>(flags), static_cast<uint64_t>(timeout),
+                                     egl_wait_outcome(result));
+      });
+}
+
+EGLint EGLAPIENTRY timed_client_wait_sync(EGLDisplay display, EGLSync sync, EGLint flags, EGLTime timeout) {
+  const auto proc = reinterpret_cast<PFNEGLCLIENTWAITSYNCPROC>(backend->egl_wait_procs[0].original);
+  return timed_egl_wait_call<GLWall::ClientWaitSync>(proc, display, sync, flags, timeout);
+}
+EGLint EGLAPIENTRY timed_client_wait_sync_khr(EGLDisplay display, EGLSyncKHR sync, EGLint flags, EGLTimeKHR timeout) {
+  const auto proc = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(backend->egl_wait_procs[1].original);
+  return timed_egl_wait_call<GLWall::ClientWaitSyncKHR>(proc, display, sync, flags, timeout);
 }
 
 template <GLWall::Field Api, typename Proc, typename... Args>
@@ -238,7 +273,7 @@ dawn::native::opengl::EGLFunctionPointerType checked_gl_wrapper(GLProc wrapper) 
   return reinterpret_cast<dawn::native::opengl::EGLFunctionPointerType>(wrapper);
 }
 // Explicit parameter types also check every wrapper's GL calling ABI at compile time.
-const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::MakeCurrent> TimedGLWrappers{
+const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::WrappedGLCount> TimedGLWrappers{
     checked_gl_wrapper<PFNGLMAPBUFFERRANGEPROC>(timed_map_buffer_range),
     checked_gl_wrapper<PFNGLUNMAPBUFFERPROC>(timed_unmap_buffer),
     checked_gl_wrapper<PFNGLBUFFERDATAPROC>(timed_buffer_data),
@@ -258,6 +293,11 @@ const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::MakeCurre
     checked_gl_wrapper<PFNGLUNIFORM1UIVPROC>(timed_uniform_1uiv),
     checked_gl_wrapper<PFNGLUSEPROGRAMPROC>(timed_use_program),
     checked_gl_wrapper<PFNGLBINDBUFFERRANGEPROC>(timed_bind_buffer_range)};
+static_assert(TimedGLWrappers.size() == GLWall::MakeCurrent);
+// EGL 1.5 and KHR have distinct typed entry points; never resolve one through the other's name.
+const std::array<dawn::native::opengl::EGLFunctionPointerType, GLWall::DawnClientWaitFields.size()> TimedEGLWaitWrappers{
+    checked_gl_wrapper<PFNEGLCLIENTWAITSYNCPROC>(timed_client_wait_sync),
+    checked_gl_wrapper<PFNEGLCLIENTWAITSYNCKHRPROC>(timed_client_wait_sync_khr)};
 
 void observation_failure(const char* reason) {
   if (backend->trustworthy) {
@@ -425,7 +465,8 @@ bool initialize_presenter(SDL_Window* window) {
     return fail("H700 EGLImage entrypoints missing");
   }
   backend->create_sync = reinterpret_cast<PFNEGLCREATESYNCKHRPROC>(resolve("eglCreateSyncKHR"));
-  backend->client_wait_sync = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(resolve("eglClientWaitSyncKHR"));
+  // Keep the presenter raw: its separately labelled probe must not also enter the Dawn wrapper.
+  backend->client_wait_sync = reinterpret_cast<PFNEGLCLIENTWAITSYNCKHRPROC>(raw_proc("eglClientWaitSyncKHR"));
   backend->destroy_sync = reinterpret_cast<PFNEGLDESTROYSYNCKHRPROC>(resolve("eglDestroySyncKHR"));
   if (!backend->create_sync || !backend->client_wait_sync || !backend->destroy_sync) {
     return fail("H700 reverse fence entrypoints missing");
@@ -457,7 +498,9 @@ bool initialize_presenter(SDL_Window* window) {
   backend->presenter_ready = true;
   Log.info("H700 generation {}: {} / {}, two permanent 640x480 RGBA8 exports", backend->generation, renderer, version);
   if (backend->gl_timing_enabled) {
-    Log.info("H700 GL API wall enabled gen={} (MP_H700_GL_TIMING=1): Dawn-resolved GL + observed eglMakeCurrent; "
+    Log.info("H700 GL API wall enabled gen={} (MP_H700_GL_TIMING=1): Dawn-resolved GL/EGL ClientWait + "
+             "observed eglMakeCurrent + progress/poll envelopes; presenter ClientWait counted separately; "
+             "wait outcomes/timeout classes/flags are call subsets, envelopes overlap API wall; "
              "requested_buffer_bytes counts buffer range/allocation arguments only "
              "(BindBufferRange is not upload traffic), zero for other APIs; "
              "CPU wall, not GPU time", backend->generation);
@@ -489,6 +532,12 @@ dawn::native::opengl::EGLFunctionPointerType resolve(const char* name) {
       std::call_once(cached.once, [&] { cached.original = raw_proc(name); });
       // A missing real function stays missing; never advertise a synthetic GL capability.
       return cached.original ? TimedGLWrappers[i] : nullptr;
+    }
+    for (size_t i = 0; i < TimedEGLWaitWrappers.size(); ++i) {
+      if (std::strcmp(name, GLWall::Names[GLWall::DawnClientWaitFields[i]]) != 0) continue;
+      auto& cached = backend->egl_wait_procs[i];
+      std::call_once(cached.once, [&] { cached.original = raw_proc(name); });
+      return cached.original ? TimedEGLWaitWrappers[i] : nullptr;
     }
   }
   return reinterpret_cast<Proc>(raw_proc(name));
@@ -573,7 +622,13 @@ std::array<std::shared_ptr<NativeFlight>, 2> flights_snapshot() {
 void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
   if (!flight->published.load(std::memory_order_acquire) || flight->forward_observed || !flight->forward.id) return;
   wgpu::FutureWaitInfo info{.future = flight->forward};
-  const auto wait = webgpu::g_instance.WaitAny(1, &info, 0);
+  const auto wait = probe_wall_call(backend->gl_timing_enabled,
+      [&] { return webgpu::g_instance.WaitAny(1, &info, 0); },
+      [](uint64_t wall_ns, wgpu::WaitStatus result) {
+        const auto outcome = result == wgpu::WaitStatus::TimedOut ? GLWall::WaitOutcome::TimedOut
+            : result == wgpu::WaitStatus::Success ? GLWall::WaitOutcome::Signaled : GLWall::WaitOutcome::Other;
+        backend->gl_wall.record_wait(GLWall::ForwardWaitAny, wall_ns, 0, 0, outcome);
+      });
   if (wait == wgpu::WaitStatus::TimedOut) return;
   if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire)) {
     quarantine_frame(flight->descriptor, "H700 forward wait unresolved; future/callback retained");
@@ -662,7 +717,11 @@ void poll_reverse(const std::shared_ptr<NativeFlight>& flight) {
     quarantine_frame(flight->descriptor, "H700 reverse fence identity mismatch");
     return;
   }
-  const auto result = backend->client_wait_sync(backend->display, flight->reverse, 0, 0);
+  const auto result = probe_wall_call(backend->gl_timing_enabled,
+      [&] { return backend->client_wait_sync(backend->display, flight->reverse, 0, 0); },
+      [](uint64_t wall_ns, EGLint result) {
+        backend->gl_wall.record_wait(GLWall::PresenterClientWaitSyncKHR, wall_ns, 0, 0, egl_wait_outcome(result));
+      });
   if (result == EGL_TIMEOUT_EXPIRED_KHR) return;
   if (result != EGL_CONDITION_SATISFIED_KHR ||
       backend->destroy_sync(backend->display, flight->reverse) != EGL_TRUE) {
@@ -708,6 +767,13 @@ void report_frame_wall(const NativeFlight& flight, FrameWallTimings::Clock::time
       Log.info("H700 GL API wall gen={} last={} api={} calls={} total_ns={} max_ns={} requested_buffer_bytes={}",
                flight.descriptor.generation, flight.descriptor.frame, GLWall::Names[i], sample.calls,
                sample.total_ns, sample.max_ns, sample.bytes);
+      if (!sample.wait.empty()) {
+        const auto& wait = sample.wait;
+        Log.info("H700 wait outcomes gen={} last={} api={} timeout0={} timeout_nonzero={} flags_or={:#x} "
+                 "flush_calls={} timed_out={} success_or_signaled={} other={}; subsets of API calls, not extra work",
+                 flight.descriptor.generation, flight.descriptor.frame, GLWall::Names[i], wait.timeout_zero,
+                 wait.timeout_nonzero, wait.flags_or, wait.flush_calls, wait.timed_out, wait.signaled, wait.other);
+      }
     }
   }
   backend->frame_wall = {};
@@ -896,17 +962,20 @@ bool main_progress_once() {
     observation->progress();
     if (observation->failed.load()) backend->state->fail("IG12 diagnostic failure/deadline; own gates released");
   }
-  webgpu::g_instance.ProcessEvents(); // direct: never enqueue behind the worker we may be waiting for
-  webgpu::poll_h700_device_events(); // only the internal WaitAnyOnly device-lost callback
+  // Direct calls, in the same order: never enqueue behind the worker we may be waiting for.
+  timed_progress_call<GLWall::ProcessEvents>([] { webgpu::g_instance.ProcessEvents(); });
+  timed_progress_call<GLWall::DeviceLostPoll>([] { webgpu::poll_h700_device_events(); });
   if (backend->state->snapshot().phase == PresentationPhase::Failed)
     if (const auto observation = diagnostic::current()) observation->cancel(); // release own gates on real Dawn failure too
   const auto flights = flights_snapshot();
   for (const auto& flight : flights) if (flight) poll_forward(flight);
   if (backend->state->snapshot().phase != PresentationPhase::Failed)
     for (const auto& flight : flights) if (flight) (void)poll_diagnostic_pixels(flight);
-  for (const auto& flight : flights) if (flight) poll_reverse(flight);
+  for (const auto& flight : flights) if (flight)
+    timed_progress_call<GLWall::ReversePoll>([&] { poll_reverse(flight); });
   present_ready(); // PresentationState forbids new reads in Failed, but retirement above continues
-  for (const auto& flight : flights_snapshot()) if (flight) poll_reverse(flight);
+  for (const auto& flight : flights_snapshot()) if (flight)
+    timed_progress_call<GLWall::ReversePoll>([&] { poll_reverse(flight); });
   const auto phase = backend->state->snapshot().phase;
   return phase == PresentationPhase::Running || phase == PresentationPhase::Draining;
 }

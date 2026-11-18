@@ -1,5 +1,9 @@
 #include "port_input_devices.h"
 
+#ifdef AURORA_H700
+#include "port_h700_quit_chord.h"
+#endif
+
 #include "port_controls.h"
 #include "port_debug.h"
 #include "port_custom_actions.h"
@@ -45,6 +49,10 @@ using PortInput::Input;
 using PortInput::Profile;
 
 constexpr u32 kPort = 0;
+
+#ifdef AURORA_H700
+PortH700::QuitChord sH700QuitChord;
+#endif
 
 // The user's bindings (controls.toml), loaded on first use and reloaded when the file
 // changes (checked once a second), so hand edits apply without a restart. The game
@@ -398,9 +406,10 @@ void BindPortControls(Profile& p) {
     Bind(p, Action::PadA, NativeInput(PortDebug::TurboBinding(PAD_KEY_SLOT_COUNT)), turboHz);
   }
 
-  // The port's own keys and the pad's overlay chord. Back + Start is ordered both
-  // ways, so either can be held first; the chord also keeps Start from pausing.
   Bind(p, Action::PortMenu, Make(Device::Key, SDL_SCANCODE_F1));
+#ifndef AURORA_H700
+  // Back + Start opens the overlay in either order and keeps Start from pausing.
+  // H700 reserves this physical chord for normal quit, ahead of the bindings.
   const Input back = NativeInput(SDL_GAMEPAD_BUTTON_BACK);
   const Input start = NativeInput(SDL_GAMEPAD_BUTTON_START);
   if (back.Valid() && start.Valid()) {
@@ -413,6 +422,7 @@ void BindPortControls(Profile& p) {
       p.bindings.push_back(b);
     }
   }
+#endif
   Bind(p, Action::SaveState, Make(Device::Key, SDL_SCANCODE_F5));
   Bind(p, Action::LoadState, Make(Device::Key, SDL_SCANCODE_F9));
   Bind(p, Action::Screenshot, Make(Device::Key, SDL_SCANCODE_F12));
@@ -1365,7 +1375,34 @@ SPoll Poll(unsigned mouseHeld, bool focused) {
   return r;
 }
 
+#ifdef AURORA_H700
+void HandleH700QuitEvent(const SDL_Event& event) {
+  if (event.type == SDL_EVENT_GAMEPAD_REMOVED) {
+    sH700QuitChord.Remove(event.gdevice.which);
+    return;
+  }
+  if (event.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.type != SDL_EVENT_GAMEPAD_BUTTON_UP) return;
+  PortH700::QuitChord::Button button;
+  if (event.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
+    button = PortH700::QuitChord::Button::Select;
+  } else if (event.gbutton.button == SDL_GAMEPAD_BUTTON_START) {
+    button = PortH700::QuitChord::Button::Start;
+  } else {
+    return;
+  }
+  if (sH700QuitChord.Update(event.gbutton.which, button, event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)) {
+    PortLog::Write("port: H700 Select+Start: requesting normal quit\n");
+    PortDebug::RequestQuit();
+  }
+}
+#endif
+
 void PollPortActions() {
+#ifdef AURORA_H700
+  // The SDL quit is consumed by the next event pump. Do not also toggle the menu
+  // (including controls.toml overrides) or run another port action in this frame.
+  if (sH700QuitChord.Requested()) return;
+#endif
   static Profile sFull;
   static Profile sProfile;
   static PortInput::Runtime sRuntime;

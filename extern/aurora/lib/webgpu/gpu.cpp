@@ -32,6 +32,7 @@
 #ifdef AURORA_H700
 #include "../h700/presentation.hpp"
 #include "../h700/diagnostics.hpp"
+#include "../h700/cache_policy.hpp"
 #endif
 
 #ifdef WEBGPU_DAWN
@@ -1545,7 +1546,13 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
     // GL runs without Dawn's blob cache where Mesa drives it: cached program binaries crashed
     // Mesa in glProgramBinary. Windows desktop GL (vendor drivers) keeps it, or every launch
     // recompiles every pipeline (about 40 ms each there).
-#if _WIN32
+#if defined(AURORA_H700)
+    // The H700 adapter gate above has already required hardware Mali/OpenGLES.
+    const bool glWithoutCache = !h700::program_cache_enabled(std::getenv("MP_H700_PROGRAM_CACHE"),
+                                                           std::getenv("MP_H700_BENCH"));
+    Log.info("H700 Dawn persistent shader/program cache {} (benchmark opt-in)",
+             glWithoutCache ? "disabled" : "enabled");
+#elif _WIN32
     const bool glWithoutCache = g_backendType == wgpu::BackendType::OpenGLES;
 #else
     const bool glWithoutCache =

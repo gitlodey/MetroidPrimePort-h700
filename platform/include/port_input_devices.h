@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+#ifdef AURORA_H700
+union SDL_Event;
+#endif
+
 namespace PortInputDevices {
 
 // Mouse button codes (Device::MouseButton): each run holds SDL's five buttons
@@ -59,6 +63,12 @@ SPoll Poll(unsigned mouseHeld, bool focused);
 // Runs the port's own actions (port menu, save/load state, screenshot, Original
 // experience) from their bindings; called once a frame from the overlay update.
 void PollPortActions();
+
+#ifdef AURORA_H700
+// Called on the game thread for each raw SDL event, before any UI visibility or
+// remap checks. Select + Start requests the normal quit once, on the same pad.
+void HandleH700QuitEvent(const SDL_Event& event);
+#endif
 
 // The user's bindings from <user>/controls.toml (port_input_bindings.h), loaded on
 // first use and reloaded when the file changes (checked at most once a second). A

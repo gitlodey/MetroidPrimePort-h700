@@ -112,7 +112,7 @@ projects/
 6. Успешный compile/link с no-op shim не означает поддержку feature. Не прячь отсутствие rendering/screenshot/card API за пустыми функциями.
 7. Размеры upload buffers, caches и textures должны иметь проверяемые пределы и failure paths. Не переносить silent truncation или nominal texture cache 4 GiB на устройство с 1 GB.
 8. `Original Experience` не является готовым low-cost/30-FPS preset: он задаёт cap60 и не выключает все дополнительные эффекты. Output FPS и simulation TPS — разные величины.
-9. Back+Start в новой базе открывает PortMenu. Не заменяй его немедленным exit без согласованного решения.
+9. На H700 пользователь явно запросил Select/Back+Start → штатный выход без подтверждения (`h700/perf-recovery`); используется normal quit, не process kill. На других платформах прежний Back+Start → PortMenu сохраняется. F1 по-прежнему открывает PortMenu.
 10. Штатные visors, EFB copies, прозрачность и другие retail effects входят в correctness; их отключение не выдавай за безусловно допустимую оптимизацию.
 11. **Разрешение не менять ни при каких условиях:** сохранять базовые 1×/640×480, dynamic resolution Off. Запрещены и временные изменения ради диагностики/A/B. Прежний опыт 0.5× отменён пользователем; оптимизация не должна достигаться снижением разрешения.
 

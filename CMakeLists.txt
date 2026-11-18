@@ -808,6 +808,8 @@ if(MP_BUILD_TESTS)
             INCLUDES platform/include extern/aurora/include)
         mp_port_test(port_h700_game_boundary_tests SOURCES tests/port_h700_game_boundary.cpp
             INCLUDES platform/include)
+        mp_port_test(port_h700_quit_chord_tests SOURCES tests/port_h700_quit_chord.cpp
+            INCLUDES platform/include CXX_STANDARD 20)
         mp_port_test(port_h700_terminal_tests SOURCES tests/port_h700_terminal.cpp
             INCLUDES platform/include extern/aurora/include)
         mp_port_test(port_h700_game_failure_tests SOURCES tests/port_h700_game_failure.cpp
@@ -837,6 +839,9 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_room_cleanup COMMAND metroid_prime_port --h700-room-cleanup-selftest)
         set_tests_properties(port_h700_room_cleanup PROPERTIES TIMEOUT 15 LABELS port)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME port_h700_quit_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_quit_wiring.py")
+        set_tests_properties(port_h700_quit_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_launcher COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tools/h700_game/test_launcher.py")
         set_tests_properties(port_h700_launcher PROPERTIES TIMEOUT 45 LABELS port)

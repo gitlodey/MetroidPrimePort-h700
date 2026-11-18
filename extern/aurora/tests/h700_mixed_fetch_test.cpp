@@ -1,5 +1,6 @@
 #include "gfx/resources.hpp"
 #include "gx/pipeline.hpp"
+#include "h700/cache_policy.hpp"
 
 #include <gtest/gtest.h>
 
@@ -17,6 +18,19 @@
 namespace aurora::gfx {
 namespace {
 using namespace detail;
+
+TEST(H700MixedFetch, ProgramCacheRequiresExactBenchmarkOptIn) {
+  using h700::program_cache_enabled;
+  for (const char* value : std::array<const char*, 6>{nullptr, "", "0", "true", "01", "1 "}) {
+    EXPECT_FALSE(program_cache_enabled(value, "1"));
+    EXPECT_FALSE(program_cache_enabled(value, "menu"));
+  }
+  for (const char* bench : std::array<const char*, 6>{nullptr, "", "0", "true", "01", "menu "}) {
+    EXPECT_FALSE(program_cache_enabled("1", bench));
+  }
+  EXPECT_TRUE(program_cache_enabled("1", "1"));
+  EXPECT_TRUE(program_cache_enabled("1", "menu"));
+}
 
 TEST(H700MixedFetch, ActualGroupZeroDescriptors) {
   static_assert(g_mixedFetch);
@@ -247,6 +261,23 @@ std::string section(const std::string& text, const char* begin, const char* end)
 
 void contains(const std::string& text, const char* expected) {
   EXPECT_NE(text.find(expected), std::string::npos) << expected;
+}
+
+TEST(H700MixedFetch, ProgramCacheOptInPreservesAdapterAndDescriptorGuards) {
+  const auto gpu = source("/webgpu/gpu.cpp");
+  const auto gate = gpu.find("H700 requires a hardware OpenGLES Compatibility adapter");
+  const auto policy = gpu.find("const bool glWithoutCache = !h700::program_cache_enabled");
+  ASSERT_NE(gate, std::string::npos);
+  ASSERT_NE(policy, std::string::npos);
+  EXPECT_LT(gate, policy);
+  const auto cache = section(gpu, "#if defined(AURORA_H700)", "wgpu::DeviceDescriptor deviceDescriptor");
+  contains(cache, "std::getenv(\"MP_H700_PROGRAM_CACHE\")");
+  contains(cache, "std::getenv(\"MP_H700_BENCH\")");
+  contains(cache, "#elif _WIN32");
+  contains(cache, "g_backendType == wgpu::BackendType::OpenGLES || g_backendType == wgpu::BackendType::OpenGL");
+  contains(cache, ".nextInChain = glWithoutCache ? nullptr : &cacheDescriptor");
+  contains(gpu, "cacheDescriptor.SetDawnLoadCacheDataCallback");
+  contains(gpu, "cacheDescriptor.SetDawnStoreCacheDataCallback");
 }
 
 TEST(H700MixedFetch, SourceCurrentBufferAndMirrorLifecycle) {

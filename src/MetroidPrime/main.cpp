@@ -27,6 +27,7 @@
 #include "port_crash.h"
 #include "port_watchdog.h"
 #ifdef AURORA_H700
+#include "port_input_devices.h"
 #include "port_h700_game_boundary.h"
 #include "port_h700_game_failure.h"
 #include "port_h700_terminal.h"
@@ -856,6 +857,9 @@ void CGameGlobalObjects::AddPaksAndFactories() {
 #endif
     const AuroraEvent* event = aurora_update();
     for (; event != nullptr && event->type != AURORA_NONE; ++event) {
+#ifdef AURORA_H700
+      if (event->type == AURORA_SDL_EVENT) PortInputDevices::HandleH700QuitEvent(event->sdl);
+#endif
       if (event->type == AURORA_EXIT) {
         // Finish pending reads so their callback owners remain alive. The main
         // loop observes the exit flag immediately after initialization.
@@ -1186,6 +1190,9 @@ int CMain::RsMain(int argc, const char* const* argv) {
 #endif
         PortPointer::BeginFrame();
         while (event != nullptr && event->type != AURORA_NONE) {
+#ifdef AURORA_H700
+          if (event->type == AURORA_SDL_EVENT) PortInputDevices::HandleH700QuitEvent(event->sdl);
+#endif
           // Menu pointer gestures; ImGui keeps the events it wants itself.
           if (event->type == AURORA_SDL_EVENT && !PortDebug::Visible()) {
             PortPointer::HandleEvent(event->sdl);
