@@ -264,22 +264,22 @@ class LauncherTests(unittest.TestCase):
                                       'MP_FAST_BOOT': '1'})['env']
             self.assertEqual(observed['MP_FAST_BOOT'], '1')
 
-    def test_draw_ubo_is_forwarded_only_for_explicit_bench_route(self):
-        for mode in (None, '', '0', 'invalid'):
-            env = {**self.env, 'MP_H700_DRAW_UBO': '1'}
-            if mode is not None:
-                env['MP_H700_BENCH'] = mode
-            with self.subTest(mode=mode):
-                self.assertNotIn('MP_H700_DRAW_UBO', self.run_game(env)['env'])
-        for mode in ('1', 'menu'):
-            self.assertNotIn('MP_H700_DRAW_UBO',
-                             self.run_game({**self.env, 'MP_H700_BENCH': mode})['env'])
-            for value in ('1', '0', '', "1 ; $(touch INJECTED) '"):
-                with self.subTest(mode=mode, value=value):
-                    observed = self.run_game({**self.env, 'MP_H700_BENCH': mode,
-                                              'MP_H700_DRAW_UBO': value})['env']
-                    self.assertEqual(observed['MP_H700_DRAW_UBO'], value)
-                    self.assertFalse((self.old / 'INJECTED').exists())
+    def test_experimental_render_flags_are_forwarded_only_for_explicit_bench_route(self):
+        for name in ('MP_H700_DRAW_UBO', 'MP_H700_FETCH_GATHER'):
+            for mode in (None, '', '0', 'invalid'):
+                env = {**self.env, name: '1'}
+                if mode is not None:
+                    env['MP_H700_BENCH'] = mode
+                with self.subTest(name=name, mode=mode):
+                    self.assertNotIn(name, self.run_game(env)['env'])
+            for mode in ('1', 'menu'):
+                self.assertNotIn(name, self.run_game({**self.env, 'MP_H700_BENCH': mode})['env'])
+                for value in ('1', '0', '', "1 ; $(touch INJECTED) '"):
+                    with self.subTest(name=name, mode=mode, value=value):
+                        observed = self.run_game({**self.env, 'MP_H700_BENCH': mode,
+                                                  name: value})['env']
+                        self.assertEqual(observed[name], value)
+                        self.assertFalse((self.old / 'INJECTED').exists())
 
     def test_frontend_and_audio_keep_values_including_explicit_empty(self):
         for value in ('', "route with spaces ; $(touch INJECTED) ' = 2"):

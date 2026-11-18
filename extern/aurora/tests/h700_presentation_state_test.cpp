@@ -100,6 +100,30 @@ TEST(H700PresentationTiming, GLApiSummaryKeepsIndependentCountsBytesMaximaAndRes
   EXPECT_EQ(next[T::MapBufferRange].bytes, 8);
 }
 
+TEST(H700PresentationTiming, BufferSubDataTargetCountersAreIndependentSubsets) {
+  using T = GLApiWallSummary;
+  T summary;
+  summary.record_buffer_sub_data(T::UniformBufferTarget, 7, 64);
+  summary.record_buffer_sub_data(T::UniformBufferTarget, 11, 4);
+  summary.record_buffer_sub_data(T::ArrayBufferTarget, 23, 256);
+  summary.record_buffer_sub_data(0, 5, 0);
+  const auto samples = summary.sample_and_reset();
+  EXPECT_EQ(samples[T::BufferSubData].calls, 4);
+  EXPECT_EQ(samples[T::BufferSubData].total_ns, 46);
+  EXPECT_EQ(samples[T::BufferSubData].max_ns, 23);
+  EXPECT_EQ(samples[T::BufferSubData].bytes, 324);
+  EXPECT_EQ(samples[T::BufferSubDataUniform].calls, 2);
+  EXPECT_EQ(samples[T::BufferSubDataUniform].total_ns, 18);
+  EXPECT_EQ(samples[T::BufferSubDataUniform].max_ns, 11);
+  EXPECT_EQ(samples[T::BufferSubDataUniform].bytes, 68);
+  EXPECT_EQ(samples[T::BufferSubDataArray].calls, 1);
+  EXPECT_EQ(samples[T::BufferSubDataArray].total_ns, 23);
+  EXPECT_EQ(samples[T::BufferSubDataArray].bytes, 256);
+  EXPECT_STREQ(T::Names[T::BufferSubDataUniform], "glBufferSubData_uniform");
+  EXPECT_STREQ(T::Names[T::BufferSubDataArray], "glBufferSubData_array");
+  for (const auto& sample : summary.sample_and_reset()) EXPECT_TRUE(sample.empty());
+}
+
 TEST(H700PresentationTiming, GLApiConcurrentRecordingAndSamplingDoNotLoseTotals) {
   using T = GLApiWallSummary;
   constexpr size_t Writers = 3;

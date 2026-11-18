@@ -3,7 +3,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
 #include <fstream>
+#include <optional>
+#include <vector>
 #include <iterator>
 #include <string>
 
@@ -16,7 +23,7 @@ TEST(H700MixedFetch, ActualGroupZeroDescriptors) {
   // H700 cannot accidentally revert to SSBO vertex fetch, even if a caller passes false.
   for (const bool textureFetch : {false, true}) {
     const auto entries = static_bind_group_layout_entries(textureFetch);
-    ASSERT_EQ(entries.size(), 3);
+    ASSERT_EQ(entries.size(), 4);
     for (uint32_t i = 0; i < 2; ++i) {
       EXPECT_EQ(entries[i].binding, i);
       EXPECT_EQ(entries[i].visibility, wgpu::ShaderStage::Vertex);
@@ -29,8 +36,90 @@ TEST(H700MixedFetch, ActualGroupZeroDescriptors) {
     EXPECT_EQ(entries[2].buffer.type, wgpu::BufferBindingType::ReadOnlyStorage);
     EXPECT_FALSE(entries[2].buffer.hasDynamicOffset);
     EXPECT_EQ(entries[2].texture.sampleType, wgpu::TextureSampleType::BindingNotUsed);
+    EXPECT_EQ(entries[3].binding, MixedFetchSamplerBinding);
+    EXPECT_EQ(entries[3].visibility, wgpu::ShaderStage::Vertex);
+    EXPECT_EQ(entries[3].sampler.type, wgpu::SamplerBindingType::NonFiltering);
+    EXPECT_EQ(entries[3].texture.sampleType, wgpu::TextureSampleType::BindingNotUsed);
+    EXPECT_EQ(entries[3].buffer.type, wgpu::BufferBindingType::BindingNotUsed);
+    for (const auto stage : {wgpu::ShaderStage::Vertex, wgpu::ShaderStage::Fragment}) {
+      uint32_t samplerCount = 0;
+      for (const auto& entry : entries) {
+        if ((entry.visibility & stage) != wgpu::ShaderStage::None &&
+            entry.sampler.type != wgpu::SamplerBindingType::BindingNotUsed) ++samplerCount;
+      }
+      EXPECT_EQ(samplerCount, stage == wgpu::ShaderStage::Vertex ? 1u : 0u);
+    }
     EXPECT_EQ(sampled_texture_count(entries, wgpu::ShaderStage::Vertex), 2);
     EXPECT_EQ(sampled_texture_count(entries, wgpu::ShaderStage::Fragment), 0);
+  }
+}
+
+TEST(H700MixedFetch, GatherSamplerIsNearestNonComparisonClampAtMipZero) {
+  const auto desc = fetch_sampler_descriptor();
+  EXPECT_EQ(desc.addressModeU, wgpu::AddressMode::ClampToEdge);
+  EXPECT_EQ(desc.addressModeV, wgpu::AddressMode::ClampToEdge);
+  EXPECT_EQ(desc.addressModeW, wgpu::AddressMode::ClampToEdge);
+  EXPECT_EQ(desc.magFilter, wgpu::FilterMode::Nearest);
+  EXPECT_EQ(desc.minFilter, wgpu::FilterMode::Nearest);
+  EXPECT_EQ(desc.mipmapFilter, wgpu::MipmapFilterMode::Nearest);
+  EXPECT_EQ(desc.lodMinClamp, 0.f);
+  EXPECT_EQ(desc.lodMaxClamp, 0.f);
+  EXPECT_EQ(desc.compare, wgpu::CompareFunction::Undefined);
+  EXPECT_EQ(desc.maxAnisotropy, 1);
+}
+
+// CPU model of the WGSL gather footprint, not of textureLoad's integer addressing.
+// .w selects floor(uv * dimensions - 0.5), with the sampler's edge clamp.
+std::optional<std::array<uint32_t, 2>> gather_coordinates(uint32_t word, uint32_t height) {
+  constexpr uint32_t width = 4096;
+  if (word >= width * height) return std::nullopt;
+  const float u = (static_cast<float>(word & 4095u) + 1.f) / static_cast<float>(width);
+  const float v = (static_cast<float>(word >> 12u) + 1.f) / static_cast<float>(height);
+  const auto x = static_cast<int32_t>(std::floor(u * static_cast<float>(width) - 0.5f));
+  const auto y = static_cast<int32_t>(std::floor(v * static_cast<float>(height) - 0.5f));
+  return std::array{static_cast<uint32_t>(std::clamp(x, 0, static_cast<int32_t>(width - 1))),
+                    static_cast<uint32_t>(std::clamp(y, 0, static_cast<int32_t>(height - 1)))};
+}
+
+TEST(H700MixedFetch, GatherCoordinatesAndU32ValuesMatchPointReadsIncludingBounds) {
+  constexpr uint32_t width = 4096;
+  std::vector<uint32_t> patterns{0u, 1u, 0x7f800000u, 0x7f800001u, 0x7fc00000u, 0x80000000u,
+                                 0xffffffffu, 0xaaaaaaaau, 0x55555555u, 0xdeadbeefu};
+  for (uint32_t bit = 0; bit < 32; ++bit) {
+    patterns.push_back(1u << bit);
+    patterns.push_back(~(1u << bit));
+  }
+  const auto texel = [](uint32_t x, uint32_t y, uint32_t pattern) {
+    return pattern ^ std::rotl(x * 0x9e3779b9u, 7) ^ std::rotl(y * 0x85ebca6bu, 19);
+  };
+  for (const uint32_t height : {1u, 2u, 3u, 7u, 255u, 256u, 257u, 511u, 512u, 513u, 4095u, 4096u}) {
+    SCOPED_TRACE(height);
+    const uint32_t count = width * height;
+    // Inspect every row, at both edges and in the middle; odd heights exercise the FP division.
+    for (uint32_t y = 0; y < height; ++y) {
+      for (const uint32_t x : {0u, 1u, 2047u, 4094u, 4095u}) {
+        const auto coordinates = gather_coordinates(y * width + x, height);
+        ASSERT_TRUE(coordinates.has_value());
+        EXPECT_EQ((*coordinates)[0], x);
+        EXPECT_EQ((*coordinates)[1], y);
+      }
+    }
+    for (const uint32_t word : {0u, 4095u, 4096u, count - 1, count, count + 1, UINT32_MAX}) {
+      SCOPED_TRACE(word);
+      const auto coordinates = gather_coordinates(word, height);
+      EXPECT_EQ(coordinates.has_value(), word < count);
+      for (const uint32_t pattern : patterns) {
+        const uint32_t gathered = coordinates ? texel((*coordinates)[0], (*coordinates)[1], pattern) : 0u;
+        const uint32_t point = word < count ? texel(word % width, word / width, pattern) : 0u;
+        EXPECT_EQ(gathered, point) << pattern;
+      }
+    }
+    // At (0,0) the address salt is zero, including patterns that would be NaNs if reinterpreted as f32.
+    for (const uint32_t pattern : patterns) {
+      const auto coordinates = gather_coordinates(0, height);
+      ASSERT_TRUE(coordinates.has_value());
+      EXPECT_EQ(texel((*coordinates)[0], (*coordinates)[1], pattern), pattern);
+    }
   }
 }
 
@@ -188,6 +277,45 @@ TEST(H700MixedFetch, SourceCurrentBufferAndMirrorLifecycle) {
   contains(encoding, "storageWritten.add(item.dstOffset, item.size)");
   contains(encoding, "upload_fetch_texture_rows(cmd, StagingKind::Storage, storageWritten.lo, storageWritten.hi)");
   contains(encoding, "upload_fetch_texture_rows(cmd, StagingKind::Vertex, vertexWritten.lo, vertexWritten.hi)");
+}
+
+TEST(H700MixedFetch, SourceGatherSamplerFollowsCurrentAliasesAndKnownRelease) {
+  const auto frame = source("/gfx/frame.cpp");
+  const auto binding = section(frame, "void create_static_bind_group()", "void create_uniform_bind_group()");
+  contains(binding, "std::array<wgpu::BindGroupEntry, g_mixedFetch ? 4 : 2>");
+  contains(binding, "entries[MixedFetchSamplerBinding].sampler = g_resources.fetchSampler;");
+  EXPECT_EQ(binding.find("CreateSampler"), std::string::npos);
+  const auto init = section(frame, "void initialize()", "bool shutdown()");
+  contains(init, "const auto fetchSamplerDescriptor = fetch_sampler_descriptor();");
+  contains(init, "g_resources.fetchSampler = g_device.CreateSampler(&fetchSamplerDescriptor);");
+  EXPECT_LT(init.find("g_resources.fetchSampler ="), init.find("create_static_bind_group()"));
+  EXPECT_LT(init.find("create_static_bind_group()"), init.find("initialize_pipeline_cache()"));
+  EXPECT_EQ(init.find("fetch_gather_enabled"), std::string::npos);
+  for (const auto& block : {section(frame, "bool grow_frame_buffer(", "bool grow_staging("),
+                           section(frame, "bool reserve_held_frame_buffers()", "bool begin_frame()")}) {
+    contains(block, "create_static_bind_group()");
+    EXPECT_EQ(block.find("fetchSampler ="), std::string::npos);
+    EXPECT_EQ(block.find("CreateSampler"), std::string::npos);
+  }
+  const auto retirement = section(frame, "bool release_frame_holders_after_quiescence() {", "bool wait_for_staging_buffer(");
+  contains(retirement, "!gx::fifo::is_quiescent()");
+  contains(retirement, "!render_worker::is_quiescent()");
+  contains(retirement, "!pipeline_cache_threads_joined()");
+  contains(retirement, "pending_internal_maps() != 0) return false;");
+  contains(retirement, "g_resources.fetchSampler = {};");
+  EXPECT_LT(retirement.find("if (!release_pipeline_cache_holders()) return false;"),
+            retirement.find("g_resources.fetchSampler = {}"));
+  EXPECT_LT(retirement.find("gx::shutdown()"), retirement.find("g_resources.fetchSampler = {}"));
+  EXPECT_LT(retirement.find("g_resources.staticBindGroup = {}"), retirement.find("g_resources.fetchSampler = {}"));
+  const auto gx = source("/gx/gx.cpp");
+  const auto gate = section(gx, "bool fetch_gather_enabled() noexcept {", "#endif");
+  contains(gate, "static const bool enabled = fetch_gather_requested(std::getenv(\"MP_H700_FETCH_GATHER\"), std::getenv(\"MP_H700_BENCH\"))");
+  contains(gx, "config.shaderConfig.fetchGather = fetch_gather_enabled()");
+  const auto processor = source("/gx/command_processor.cpp");
+  const auto producer = section(processor, "static void push_gx_draw(", "static void handle_draw_unmerged(");
+  contains(producer, "cache.config.shaderConfig.fetchGather == fetch_gather_enabled()");
+  const auto merge = section(processor, "const bool canMerge =", "handle_draw_unmerged(prim, fmt, vtxCount, vertRange);");
+  contains(merge, "sDrawCache.config.shaderConfig.fetchGather == fetch_gather_enabled()");
 }
 
 TEST(H700MixedFetch, SourceDrawUniformAliasesFollowExistingBufferLifetime) {

@@ -264,6 +264,11 @@ bool draw_uniform_enabled() noexcept {
   static const bool enabled = draw_uniform_requested(std::getenv("MP_H700_DRAW_UBO"), std::getenv("MP_H700_BENCH"));
   return enabled;
 }
+
+bool fetch_gather_enabled() noexcept {
+  static const bool enabled = fetch_gather_requested(std::getenv("MP_H700_FETCH_GATHER"), std::getenv("MP_H700_BENCH"));
+  return enabled;
+}
 #endif
 
 void set_viewport_policy(AuroraViewportPolicy policy) noexcept {
@@ -716,6 +721,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.colorMatrix = g_gxState.colorMatrixOn && !drawId && config.shaderConfig.depthOnly == 0 &&
                                     shell == 0 && config.shaderConfig.actorDecal == 0;
   config.shaderConfig.drawUniform = draw_uniform_for_state(config.shaderConfig);
+  config.shaderConfig.fetchGather = fetch_gather_enabled();
   // Field by field: an aggregate assignment would copy the 2.7 KB shader config twice more on
   // every pipeline switch. Every field outside shaderConfig is written here.
   config.version = GXPipelineConfigVersion;
@@ -1109,6 +1115,9 @@ void initialize() noexcept {
     sDrawUniformPipelineLayout = g_device.CreatePipelineLayout(&desc);
     if (draw_uniform_enabled()) {
       Log.info("H700 draw constants UBO candidate enabled (bench only)");
+    }
+    if (fetch_gather_enabled()) {
+      Log.info("H700 vertex mirror integer gather candidate enabled (bench only)");
     }
   }
   {

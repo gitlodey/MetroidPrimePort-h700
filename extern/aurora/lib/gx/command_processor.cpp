@@ -735,6 +735,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
                              // an offscreen pass or a colour pass must not keep an HDR pipeline, or back.
                              cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
                              cache.config.shaderConfig.drawUniform == draw_uniform_for_state(cache.config.shaderConfig) &&
+                             cache.config.shaderConfig.fetchGather == fetch_gather_enabled() &&
                              // A lit config made before aurora_set_per_pixel_lighting changed.
                              cache.config.shaderConfig.perPixelLight ==
                                  config_per_pixel_light(cache.config.shaderConfig) &&
@@ -1011,6 +1012,7 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
   const bool canMerge = lastDraw != nullptr && lastDraw->instanceCount == 1 &&
                         sDrawCache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
+                        sDrawCache.config.shaderConfig.fetchGather == fetch_gather_enabled() &&
                         lastDraw->drawUniform == uses_draw_uniform(sDrawCache.config.shaderConfig) &&
                         lastDraw->drawUniform == draw_uniform_for_state(sDrawCache.config.shaderConfig);
 

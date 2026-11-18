@@ -95,6 +95,109 @@ TEST_F(H700ShaderGenerator, DrawUniformRequiresExactBenchOptIn) {
 #endif
 }
 
+TEST_F(H700ShaderGenerator, FetchGatherRequiresExactBenchOptIn) {
+  for (const char* value : std::array<const char*, 9>{nullptr, "", "0", "true", "01", "1 ", " 1", "menu", "ON"}) {
+    EXPECT_FALSE(fetch_gather_requested(value, "1"));
+    EXPECT_FALSE(fetch_gather_requested(value, "menu"));
+  }
+  for (const char* bench : std::array<const char*, 8>{nullptr, "", "0", "true", "01", "MENU", "menu ", " 1"}) {
+    EXPECT_FALSE(fetch_gather_requested("1", bench));
+  }
+  EXPECT_TRUE(fetch_gather_requested("1", "1"));
+  EXPECT_TRUE(fetch_gather_requested("1", "menu"));
+#ifndef AURORA_H700
+  EXPECT_FALSE(fetch_gather_enabled());
+#endif
+}
+
+TEST_F(H700ShaderGenerator, FetchGatherIsAnIndependentSpareBitInExistingCacheKeys) {
+  static_assert(offsetof(ShaderConfig, attrs) == 12);
+  static_assert(std::has_unique_object_representations_v<ShaderConfig>);
+  for (const bool drawUniform : {false, true}) {
+    auto legacy = normal_config();
+    legacy.drawUniform = drawUniform;
+    auto candidate = legacy;
+    candidate.fetchGather = 1;
+    const auto before = std::bit_cast<std::array<u8, sizeof(ShaderConfig)>>(legacy);
+    const auto after = std::bit_cast<std::array<u8, sizeof(ShaderConfig)>>(candidate);
+    for (size_t i = 0; i < before.size(); ++i) {
+      EXPECT_EQ(before[i] ^ after[i], i == 11 ? 8 : 0) << i;
+    }
+    EXPECT_EQ(uses_fetch_gather(legacy), false);
+    EXPECT_EQ(uses_fetch_gather(candidate), gfx::g_mixedFetch);
+    EXPECT_NE(xxh3_hash(legacy), xxh3_hash(candidate));
+    PipelineConfig legacyPipeline{};
+    legacyPipeline.shaderConfig = legacy;
+    auto candidatePipeline = legacyPipeline;
+    candidatePipeline.shaderConfig = candidate;
+    EXPECT_EQ(candidatePipeline.version, legacyPipeline.version);
+    EXPECT_NE(xxh3_hash(legacyPipeline), xxh3_hash(candidatePipeline));
+    candidate.fetchGather = 0;
+    candidatePipeline.shaderConfig = candidate;
+    EXPECT_EQ(candidate, legacy);
+    EXPECT_EQ(xxh3_hash(candidate), xxh3_hash(legacy));
+    EXPECT_EQ(xxh3_hash(candidatePipeline), xxh3_hash(legacyPipeline));
+  }
+}
+
+TEST_F(H700ShaderGenerator, FetchGatherChangesOnlyVertexWordLoadAndSamplerDeclaration) {
+#ifdef AURORA_H700
+  constexpr std::string_view samplerDecl = "\n@group(0) @binding(3)\nvar fetch_sampler: sampler;";
+  constexpr std::string_view pointLoad =
+      "    return textureLoad(p, vec2u(word_idx & 4095u, word_idx >> 12u), 0).x;";
+  constexpr std::string_view gatherLoad =
+      "    let xy = vec2u(word_idx & 4095u, word_idx >> 12u);\n"
+      "    let uv = (vec2f(xy) + vec2f(1.0)) / vec2f(dims);\n"
+      "    return textureGather(0, p, fetch_sampler, uv).w;";
+#endif
+  auto line = normal_config();
+  line.lineMode = 1;
+  auto hdr = normal_config();
+  hdr.sceneHdr = true;
+  auto depth = normal_config();
+  depth.depthOnly = 1;
+  for (const bool drawUniform : {false, true}) {
+    for (auto config : {normal_config(), fog_config(), shadow_config(), line, hdr, depth}) {
+      config.drawUniform = drawUniform;
+      const auto legacy = build_shader_source(config);
+      EXPECT_EQ(legacy.find("fetch_sampler"), std::string::npos);
+      EXPECT_EQ(legacy.find("textureGather("), std::string::npos);
+      config.fetchGather = 1;
+      auto candidate = build_shader_source(config);
+#ifdef AURORA_H700
+      const auto declaration = candidate.find(samplerDecl);
+      ASSERT_NE(declaration, std::string::npos);
+      EXPECT_EQ(candidate.find(samplerDecl, declaration + samplerDecl.size()), std::string::npos);
+      const auto load = candidate.find(gatherLoad);
+      ASSERT_NE(load, std::string::npos);
+      EXPECT_EQ(candidate.find(gatherLoad, load + gatherLoad.size()), std::string::npos);
+      EXPECT_EQ(candidate.find(pointLoad), std::string::npos);
+      EXPECT_NE(candidate.find("let dims = textureDimensions(p);\n  if (word_idx < dims.x * dims.y) {"),
+                std::string::npos);
+      EXPECT_EQ(candidate.find("textureDimensions(p,"), std::string::npos);
+      EXPECT_EQ(candidate.find("textureNumLevels("), std::string::npos);
+      EXPECT_EQ(candidate.find("textureNumSamples("), std::string::npos);
+      const auto fragmentBegin = candidate.find("fn fs_load_word(");
+      const auto fragmentEnd = candidate.find("fn tev_overflow_f32(");
+      ASSERT_NE(fragmentBegin, std::string::npos);
+      ASSERT_NE(fragmentEnd, std::string::npos);
+      const auto fragmentHelpers = candidate.substr(fragmentBegin, fragmentEnd - fragmentBegin);
+      EXPECT_NE(fragmentHelpers.find("if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;"),
+                std::string::npos);
+      EXPECT_EQ(fragmentHelpers.find("texture"), std::string::npos);
+      // Reverse precisely the two permitted edits; all other shader bytes, including retail
+      // fragment effects, must remain identical to the pre-candidate generator path.
+      candidate.erase(declaration, samplerDecl.size());
+      candidate.replace(candidate.find(gatherLoad), gatherLoad.size(), pointLoad);
+#endif
+      EXPECT_EQ(candidate, legacy);
+      EXPECT_EQ(xxh3_hash_s(candidate.data(), candidate.size()), xxh3_hash_s(legacy.data(), legacy.size()));
+      config.fetchGather = 0;
+      EXPECT_EQ(build_shader_source(config), legacy);
+    }
+  }
+}
+
 TEST_F(H700ShaderGenerator, DrawUniformPreservesImmediateAndInlinePayloadLayouts) {
   static_assert(sizeof(DrawImmediateData) == 64);
   static_assert(offsetof(DrawImmediateData, vtxStart) == 0);
@@ -375,6 +478,11 @@ TEST_F(H700ShaderGenerator, NonH700GeneratedContract) {
     for (const auto& config : configs) {
       const auto source = build_shader_source(config);
       EXPECT_EQ(xxh3_hash_s(source.data(), source.size()), expected[i]) << "baseline " << i;
+      auto candidate = config;
+      candidate.fetchGather = 1; // an H700 cache bit cannot enable this path on another platform
+      const auto ignored = build_shader_source(candidate);
+      EXPECT_EQ(ignored, source);
+      EXPECT_EQ(xxh3_hash_s(ignored.data(), ignored.size()), expected[i]) << "candidate ignored " << i;
       ++i;
     }
   }

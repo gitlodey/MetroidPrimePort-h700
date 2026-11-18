@@ -3893,13 +3893,24 @@ bool shader_has_cut_caster(const ShaderConfig& config) noexcept {
 namespace {
 // Instantiate only the fetch template, never rewrite a completed mixed module. The default
 // family is vertex-only in mixed mode; fs_ keeps storage pointers out of its call graph.
-std::string build_fetch_helpers(bool texture, std::string_view prefix) {
+std::string build_fetch_helpers(bool texture, std::string_view prefix, bool gather = false) {
+  // Gather's .w is the lower/lower texel of the linear footprint. Integer+1 coordinates
+  // put it half a texel away from either footprint boundary, including for non-power-of-two heights.
+  // Unlike textureLoad, this does not ask Dawn to upload textureNumLevels metadata for the mirrors.
   const std::string_view wordLoad = texture
-      ? "  let dims = textureDimensions(p);\n"
-        "  if (word_idx < dims.x * dims.y) {\n"
-        "    return textureLoad(p, vec2u(word_idx & 4095u, word_idx >> 12u), 0).x;\n"
-        "  }\n"
-        "  return 0u;\n"
+      ? (gather
+             ? "  let dims = textureDimensions(p);\n"
+               "  if (word_idx < dims.x * dims.y) {\n"
+               "    let xy = vec2u(word_idx & 4095u, word_idx >> 12u);\n"
+               "    let uv = (vec2f(xy) + vec2f(1.0)) / vec2f(dims);\n"
+               "    return textureGather(0, p, fetch_sampler, uv).w;\n"
+               "  }\n"
+               "  return 0u;\n"
+             : "  let dims = textureDimensions(p);\n"
+               "  if (word_idx < dims.x * dims.y) {\n"
+               "    return textureLoad(p, vec2u(word_idx & 4095u, word_idx >> 12u), 0).x;\n"
+               "  }\n"
+               "  return 0u;\n")
       : "  if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;\n";
   return fmt::format(R"""(fn {0}load_word(p: {1}, word_idx: u32) -> u32 {{
   // This guard is not expected to handle routine out-of-bounds accesses.
@@ -5712,9 +5723,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre, shadowVs,
-                                        build_fetch_helpers(gfx::g_mixedFetch, "") +
+                                        build_fetch_helpers(gfx::g_mixedFetch, "", uses_fetch_gather(config)) +
                                             (gfx::g_mixedFetch ? build_fetch_helpers(false, "fs_") : ""),
-                                        gfx::g_mixedFetch
+                                        uses_fetch_gather(config)
+                                            ? "@group(0) @binding(0)\nvar vbuf: texture_2d<u32>;\n"
+                                              "@group(0) @binding(1)\nvar abuf: texture_2d<u32>;\n"
+                                              "@group(0) @binding(2)\nvar<storage, read> fs_abuf: array<u32>;\n"
+                                              "@group(0) @binding(3)\nvar fetch_sampler: sampler;"
+                                        : gfx::g_mixedFetch
                                             ? "@group(0) @binding(0)\nvar vbuf: texture_2d<u32>;\n"
                                               "@group(0) @binding(1)\nvar abuf: texture_2d<u32>;\n"
                                               "@group(0) @binding(2)\nvar<storage, read> fs_abuf: array<u32>;"

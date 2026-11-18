@@ -179,7 +179,7 @@ void create_fetch_texture(StagingKind kind, uint64_t bytes) {
 }
 
 void create_static_bind_group() {
-  std::array<wgpu::BindGroupEntry, g_mixedFetch ? 3 : 2> entries{};
+  std::array<wgpu::BindGroupEntry, g_mixedFetch ? 4 : 2> entries{};
   for (size_t i = 0; i < entries.size(); ++i) {
     entries[i].binding = static_cast<uint32_t>(i);
   }
@@ -193,6 +193,9 @@ void create_static_bind_group() {
   if constexpr (g_mixedFetch) {
     entries[MixedFragmentStorageBinding].buffer = g_resources.storageBuffer;
   }
+#ifdef AURORA_H700
+  entries[MixedFetchSamplerBinding].sampler = g_resources.fetchSampler;
+#endif
   const wgpu::BindGroupDescriptor bindGroupDescriptor{
       .label = "Static bind group",
       .layout = g_resources.staticBindGroupLayout,
@@ -917,6 +920,10 @@ void initialize() {
     map_staging_buffer(slot);
   }
 
+#ifdef AURORA_H700
+  const auto fetchSamplerDescriptor = fetch_sampler_descriptor();
+  g_resources.fetchSampler = g_device.CreateSampler(&fetchSamplerDescriptor);
+#endif
   {
     const auto layoutEntries = static_bind_group_layout_entries(g_vertexFetchTexture);
     const wgpu::BindGroupLayoutDescriptor layoutDesc{
@@ -1039,6 +1046,9 @@ bool release_frame_holders_after_quiescence() {
   shutdown_recording();
   g_resources.staticBindGroup = {};
   g_resources.staticBindGroupLayout = {};
+#ifdef AURORA_H700
+  g_resources.fetchSampler = {};
+#endif
   g_resources.uniformBindGroup = {};
   g_resources.uniformBindGroupLayout = {};
   g_resources.drawUniformBindGroup = {};

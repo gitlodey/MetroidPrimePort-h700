@@ -57,14 +57,17 @@ struct GLApiWallSummary {
     MapBufferRange, UnmapBuffer, BufferData, BufferSubData, CopyBufferSubData,
     TexSubImage2D, TexImage2D, TexStorage2D, DrawArrays, DrawElements,
     DrawArraysInstanced, DrawElementsInstanced, DrawElementsInstancedBaseVertex,
-    BlitFramebuffer, Flush, GetError, Uniform1uiv, UseProgram, BindBufferRange, MakeCurrent, Count
+    BlitFramebuffer, Flush, GetError, Uniform1uiv, UseProgram, BindBufferRange, MakeCurrent,
+    BufferSubDataUniform, BufferSubDataArray, Count
   };
   static constexpr std::array<const char*, Count> Names{
       "glMapBufferRange", "glUnmapBuffer", "glBufferData", "glBufferSubData", "glCopyBufferSubData",
       "glTexSubImage2D", "glTexImage2D", "glTexStorage2D", "glDrawArrays", "glDrawElements",
       "glDrawArraysInstanced", "glDrawElementsInstanced", "glDrawElementsInstancedBaseVertex",
       "glBlitFramebuffer", "glFlush", "glGetError", "glUniform1uiv", "glUseProgram", "glBindBufferRange",
-      "eglMakeCurrent"};
+      "eglMakeCurrent", "glBufferSubData_uniform", "glBufferSubData_array"};
+  static constexpr uint32_t UniformBufferTarget = 0x8a11;
+  static constexpr uint32_t ArrayBufferTarget = 0x8892;
   struct Sample {
     uint64_t calls = 0, total_ns = 0, max_ns = 0, bytes = 0;
     bool empty() const { return calls == 0 && total_ns == 0 && max_ns == 0 && bytes == 0; }
@@ -79,6 +82,13 @@ struct GLApiWallSummary {
     auto maximum = counter.max_ns.load(std::memory_order_relaxed);
     while (maximum < wall_ns &&
            !counter.max_ns.compare_exchange_weak(maximum, wall_ns, std::memory_order_relaxed)) {}
+  }
+
+  void record_buffer_sub_data(uint32_t target, uint64_t wall_ns, uint64_t bytes) {
+    record(BufferSubData, wall_ns, bytes);
+    // Target counters are subsets of BufferSubData, not additional driver calls.
+    if (target == UniformBufferTarget) record(BufferSubDataUniform, wall_ns, bytes);
+    else if (target == ArrayBufferTarget) record(BufferSubDataArray, wall_ns, bytes);
   }
 
   Samples sample_and_reset() {

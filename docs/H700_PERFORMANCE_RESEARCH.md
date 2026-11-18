@@ -1,6 +1,6 @@
 # H700 — исследование производительности и настроек графики
 
-Исследование по запросу пользователя, 2026-11-17; продолжение PERF-03 — 2026-11-18. Цель — сделать Metroid Prime Unbound v0.46.0 играбельной на RG40XX H / H700 / muOS 2601.0, а не выбрать оптимизацию по одному подозрительному участку. **Разделы1–7 описывают исходное read-only исследование. Актуальная реализация/проверки/блокер PERF-03 — в разделе8; первоначальные ограничения approval заменены разрешением автономной работы.**
+Исследование по запросу пользователя, 2026-11-17; продолжение PERF-03 — 2026-11-18. Цель — сделать Metroid Prime Unbound v0.46.0 играбельной на RG40XX H / H700 / muOS 2601.0, а не выбрать оптимизацию по одному подозрительному участку. **Разделы1–7 описывают исходное read-only исследование, раздел8 — подготовку UBO candidate, раздел9 — threading audit. Актуальные device measurements и следующий gather candidate — в разделе10; первоначальные ограничения approval заменены разрешением автономной работы.**
 
 **Жёсткое уточнение пользователя:** разрешение не менять ни при каких условиях, включая диагностику. Сохранять 1×/640×480, dynamic resolution Off. Предложение scale A/B отменено. Пользователь сообщил о 60 FPS меню в старом порте; следующий research — сравнение целого активного OLD/NEW пути того же меню, не урезание картинки.
 
@@ -174,7 +174,7 @@ Opt-in `MP_H700_GL_TIMING=1` измеряет wall реальных GL driver ca
 - Отдельный incremental benchmark stage `build/h700-perf03-ubo/package`, текущий launcher включён.17source/ELF/ABI/provider/notices/content/hash/no-init/syntax gates PASS; SDL/dependencies переиспользованы без пересборки. Fresh build/RC-архив не создавались; реальные user/cache/cards не менялись.
 - Executable229350184bytes, SHA256 `026d1241dcbb3a578c91f1f225ede3207ab3b696ca2e97c8fd833d9f8a6847eb`; source3345files, SHA256 `661acf5e68eab74a70a0aba1bdde720192595339147849d3eca028c3c4fa3bb7`. Before/after source snapshots совпали; manifest честно содержит dirty source inputs родительской ревизии. Private commands/results — `build/h700-perf03-ubo/`.
 
-### Физический blocker и условие продолжения
+### Исходный физический blocker — история до восстановления SSH
 
 SSH после пользовательского reboot остаётся timeout. Bounded LAN discovery не нашёл узел с pinned SSH key приставки; USB network отсутствует. Host identity не ослаблялась, к соседним устройствам не выполнялась аутентификация. Изменять router/firmware/services/clocks либо бесконечно сканировать сеть не требуется.
 
@@ -212,4 +212,50 @@ Main, FIFO, render и каждый из четырёх utility threads набл�
 - Следующий решающий runtime check прежний: готовый GL API probe/UBO OFF–ON при1×/640×480. Если длинный Submit не объясняется измеренными GL calls — адресно проверить context/device-lock waits. Не снимать FIFO/map/native completion/lifetime guards ради «загрузки CPU».
 - AArch64 game build уже использует `-mcpu=cortex-a53` и `-O2`. Это разрешает подходящую генерацию CPU-кода, но не доказывает NEON-векторизацию каждой горячей функции и не является поводом слепо добавлять `-Ofast`/unsafe math.
 
-Источники: `extern/aurora/lib/gx/fifo.cpp:96–168,299–326`, `gfx/render_worker.cpp:46–67`, `aurora.cpp:784–797,929–938`, `gfx/pipeline_cache.cpp:1442–1531,1980–1992`, `thread.cpp:105–165,237–249`; `src/MetroidPrime/CMFGame.cpp:116–159`, `src/Kyoto/Graphics/CCubeMoviePlayer.cpp:396–478`, `src/Kyoto/CResFactory.cpp:236–266,306–354`, `extern/aurora/lib/dolphin/dvd/dvd.cpp:533–584`, `extern/musyx/src/musyx/runtime/hw_pc.c:1002–1103`, `platform/ai_dma.cpp:109–134`, `cmake/h700/InitialCache.cmake:5–7`. Pinned Dawn context locking: сохранённые `DeviceGL.h:90–112,186–232`, `ContextEGL.cpp:372–417`, `QueueGL.cpp:81–90` в ignored contract review. OLD active per-pass execution: `gfx/common.cpp:1641–1677,1720–1740`, `gl/pass.cpp:296–343`; его отдельного FIFO worker нет. Production threading changes/build/device runs в этом audit не выполнялись; новый read-only SSH снова timeout.
+Источники: `extern/aurora/lib/gx/fifo.cpp:96–168,299–326`, `gfx/render_worker.cpp:46–67`, `aurora.cpp:784–797,929–938`, `gfx/pipeline_cache.cpp:1442–1531,1980–1992`, `thread.cpp:105–165,237–249`; `src/MetroidPrime/CMFGame.cpp:116–159`, `src/Kyoto/Graphics/CCubeMoviePlayer.cpp:396–478`, `src/Kyoto/CResFactory.cpp:236–266,306–354`, `extern/aurora/lib/dolphin/dvd/dvd.cpp:533–584`, `extern/musyx/src/musyx/runtime/hw_pc.c:1002–1103`, `platform/ai_dma.cpp:109–134`, `cmake/h700/InitialCache.cmake:5–7`. Pinned Dawn context locking: сохранённые `DeviceGL.h:90–112,186–232`, `ContextEGL.cpp:372–417`, `QueueGL.cpp:81–90` в ignored contract review. OLD active per-pass execution: `gfx/common.cpp:1641–1677,1720–1740`, `gl/pass.cpp:296–343`; его отдельного FIFO worker нет. Production threading changes/build/device runs в этом audit не выполнялись; на момент этого audit новый read-only SSH снова timeout.
+
+## 10. Live PERF-03: UBO не помог; выбран integer gather candidate
+
+### Восстановление доступа и ручной запуск
+
+Пользователь включил приставку; SSH восстановился. Пользователь потребовал простой upload и ручной Ports launch вместо сложного automatic handoff. Подготовленный автоматический route **не запускался**. При подготовке потеряно лишнее время на protocol/двойной clone и неподдерживаемый firmware `tar -z`; это ошибка выбора процедуры, не необходимая стоимость игрового теста. Дальше использована прямая `scp -C -O` передача файлов, byte-identical libraries/notices переиспользованы на устройстве, отдельные user/cache скопированы без связи с реальными данными. Original installation не менялась, game starts/signals агента0.
+
+Пользователь вручную запустил `Metroid Prime Unbound PERF03 ON` с UBO1 и сообщил прежние~10FPS, normal Exit недоступен. UBO enabled marker и phase4/screen3/next3/movie_ready1 подтверждены логом. Пассивные6samples/~21s дали123presented frames/16,6635s полных report windows = **7,381FPS**, Queue::Submit81,199ms, presenter0,609ms, min available311,8MiB; новых compile-warning/error lines в capture0. Это не matched OFF/ON и не доказательство замедления относительно PERF-02, но нужного ускорения **нет**. UBO не включать как проверенный default.
+
+После пользовательского reboot остался empty test `run.lock`: launcher корректно отказал в повторном запуске. Агент удалил только этот каталог через `rmdir`, после changed-boot и fresh all-process no-game/copier/launcher proof; data/settings/binary не менялись. Это восстановление после принудительного прерывания, не normal Exit PASS. Для следующего ручного запуска изменён только278-byte entry, включив существующий GL profiler/pass/high-water logs. Пользователь запустил его сам; env и probe-enabled marker проверены.
+
+### Первый фактический GL API профиль
+
+FileSelect сохранялся по scene markers.6samples/~21s; исключены первый straddling и последний потенциально незаконченный report: **8окон/131presented frames/16,715s =7,837FPS**. Mean prepare43,059ms, Queue::Submit75,210ms, completion-observed129,280ms, presenter0,610ms/swap0,047ms. Новых compile-warning/errors0, min available~309,3MiB. Профилирование не превращает wall в GPU time; интервалы и thread sums не складывать.
+
+| API | Calls / presented frame | Requested bytes / frame | API wall / frame |
+| --- | ---: | ---: | ---: |
+| `glDrawElementsInstanced` | 97 | — | 69,542ms |
+| `glBufferSubData` | 12 | 2712 | 32,964ms |
+| `glCopyBufferSubData` | 4 | 122820 | 0,907ms |
+| `glTexSubImage2D` | ~3,03 | не учитываются | 0,574ms |
+| Actual `eglMakeCurrent` | ~68,98 | — | 0,520ms |
+| `glBindBufferRange` | 199 | ~67,9MiB диапазонов, **не traffic** | 0,113ms |
+| `glMapBufferRange` | 1 | 30MiB mapped range | 0,024ms |
+| `glUnmapBuffer` | 1 | — | 0,024ms |
+| `glUniform1uiv` | 9 | — | 0,012ms |
+
+Максимумы отдельного `SubData`~94ms, indexed draw~147ms. Малые затраты observed map/unmap не обосновывают прежний предполагаемый source-owner rewrite как следующий шаг. Это не доказывает бесплатность всех связанных waits вне API. Захваченные вершины/индексы/данные малы: high-water~27KiB vertices/~339KiB uniforms/~4,2KiB indices/~1KiB storage. Быстрый native presenter снова не объясняет low FPS.
+
+### Установленные источники малых BufferSubData
+
+Exact pinned Dawn `118436b3f8f68583eb86e811ca605dc41637e8cc`: `CommandBufferGL.cpp:571–600` обновляет texture builtins metadata в **одном device-wide UBO**; `ApplyBindGroup` берёт mip-level count, а смена pipeline повторно помечает metadata dirty, без сравнения прежних values (`:663–674`). Даже literal-mip0 `textureLoad` из R32Uint mirrors требует отражённого `textureNumLevels` (`inspector.cc:667–674`, `ShaderModuleGL.cpp:223–270`). Все mirrors mip1/sample1; metadata обычно повторяет1. Такой `BufferSubData` может синхронизироваться с предыдущим draw, но aggregate пока **не атрибутирует ему все33ms**.
+
+Отдельные прикладные queue writes идут через `QueueGL.cpp:93–107`/`GL_ARRAY_BUFFER`. В активном ImGui WebGPU backend обычный непустой UI frame делает4writes: V/I в3-slot buffers, плюс64-byte MVP и4-byte gamma в **один общий80-byte UBO**. FPS overlay использует ImGui; RmlUI в этом build OFF. Остальные8/12calls могут соответствовать internal metadata, но это пока не доказанное разложение. Поэтому добавлены ровно2fixed subset counters: `glBufferSubData_uniform` и `glBufferSubData_array`, без GL state queries/history/новых threads. Они включены в основной aggregate, **не суммировать повторно**.
+
+### Gather candidate — LOCAL PASS, actual Mali результат ещё не получен
+
+Вместо переписывания Dawn выбран opt-in H700-only vertex mirror read: `textureGather(0,p,fetch_sampler,(vec2f(xy)+1)/dims).w`. Exact pinned WGSL/Tint разрешает integer gather в vertex stage и не добавляет `textureNumLevels` metadata для этого builtin; `textureDimensions` без LOD её также не требует. Новый sampler — nearest/non-comparison/non-filtering, clamp-to-edge, mip0; group0 binding3 только vertex-visible. `.w` соответствует исходному integer texel, явный full-index OOB→0 сохранён. Формат R32Uint, full-u32 values, fragment SSBO, retail effects, разрешение1×/640×480, validation/robustness и lifetime/release guards не меняются. Gather читает4texels вместо1; выигрыша нельзя обещать заранее.
+
+Exact gate: `MP_H700_FETCH_GATHER=1` + `MP_H700_BENCH=1|menu`; defaultOFF. Serialized spare bit0x08 участвует в cache identity; zero-bit legacy shader bytes/keys сохраняются. Layout/sampler доступны также при OFF для загрузки cached candidate pipelines. Existing alias growth/held reservation и guarded release покрывают sampler; new threads нет.
+
+**LOCAL:** independent static review без blockers; incremental ARM64 game/affected targets100s, **64/64scoped CTest +269/269FIFO +16/16host launcher tests PASS**. Shader/cache/env/descriptor/lifecycle и CPU coordinate oracle покрывают0/4095/4096, every row заданных power/non-power heights, last/OOB/UINT32_MAX и full-u32 patterns. Это не GPU oracle. Stage `build/h700-perf04-gather/package`:18source/ELF/ABI/provider/notices/content/hash/no-init/syntax gates PASS, source-before/after совпал. Без fresh/dependency rebuild.
+
+Для следующего upload из staged executable удалены только debug sections штатным ARM64 `/usr/bin/strip --strip-debug`; исходный229358032-byte executable retained локально, SHA256 `87606cd91aa1364d735d879da2653763f4f0d2235b3e774d165f68f487d039fb`. Stage62858128bytes, SHA256 **`9b956375429d904c28eeec1f6877de3fb3c8c4f7ae1f7285ccad960ea4cb54e4`**; source SHA256 **`9f27a7f0e0af45ed8b75041a1f7fa73baef0c8c0de9de16b44093f0c742fd32e`**. Transform/input/output hashes честно записаны в manifest, ABI/no-init проверены именно на stripped output. Source3345files. Это benchmark candidate, **не измеренное ускорение и не game acceptance**.
+
+Raw evidence остаётся только в ignored `build/h700-perf03-autonomous/manual-{ubo,gl}-capture/`; новый stage/results — `build/h700-perf04-gather/`. Следующая проверка — тот же manual FileSelect при Gather1/UBO1/GL timing1: actual shader/picture/errors, target-specific SubData и FPS после warm-up. При ошибке WGSL/картинки или отсутствии пользы default не менять. Не возобновлять automatic handoff/таймеры вопреки выбору пользователя. **Новый отдельный пункт `Metroid Prime Unbound GATHER` уже выложен для ручного запуска:**101payload checksum проверен, original/data и текущий UBO run не затронуты. Прямая передача stripped binary заняла11s. Gather1/UBO1/GL timing1 заданы в entry; fast boot/таймеров/автозапуска нет. На момент upload gather runtime/FPS/picture ещё не проверены.

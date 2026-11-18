@@ -109,10 +109,16 @@ constexpr bool draw_uniform_requested(const char* value, const char* bench) noex
   return value != nullptr && bench != nullptr && std::string_view{value} == "1" &&
          (std::string_view{bench} == "1" || std::string_view{bench} == "menu");
 }
+constexpr bool fetch_gather_requested(const char* value, const char* bench) noexcept {
+  return value != nullptr && bench != nullptr && std::string_view{value} == "1" &&
+         (std::string_view{bench} == "1" || std::string_view{bench} == "menu");
+}
 #ifdef AURORA_H700
 bool draw_uniform_enabled() noexcept;
+bool fetch_gather_enabled() noexcept;
 #else
 inline constexpr bool draw_uniform_enabled() noexcept { return false; }
+inline constexpr bool fetch_gather_enabled() noexcept { return false; }
 #endif
 
 extern wgpu::BindGroup g_emptyTextureBindGroup;
@@ -690,7 +696,8 @@ struct ShaderConfig {
   // colour. A bit of the actorDecal byte, so a config with it off keeps its bytes and cache keys.
   u8 colorMatrix : 1 = 0;
   u8 drawUniform : 1 = 0; // H700 bench: group 1 binding 1 instead of user immediates; part of the cache key
-  u8 actorDecalSpare : 5 = 0; // named, so the byte has no padding bits (unique object representations)
+  u8 fetchGather : 1 = 0; // H700 bench: integer gather from vertex mirrors; part of the cache key
+  u8 actorDecalSpare : 4 = 0; // named, so the byte has no padding bits (unique object representations)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -704,7 +711,17 @@ struct ShaderConfig {
   bool operator==(const ShaderConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
 };
 static_assert(std::has_unique_object_representations_v<ShaderConfig>);
-static_assert(offsetof(ShaderConfig, attrs) == 12); // drawUniform uses an existing spare bit, not a new schema
+static_assert(offsetof(ShaderConfig, attrs) == 12); // bench modes use existing spare bits, not a new schema
+
+// Generation follows the serialized config, not the current opt-in: cache warm-up may compile
+// candidate pipelines on a later OFF run. Recording alone selects the current mode.
+constexpr bool uses_fetch_gather([[maybe_unused]] const ShaderConfig& sc) noexcept {
+#ifdef AURORA_H700
+  return sc.fetchGather;
+#else
+  return false;
+#endif
+}
 
 // The candidate changes transport only for ordinary LDR GX draws. Special passes keep their
 // original layouts and immediates, even if a copied/cached config still carries the bit.

@@ -163,7 +163,13 @@ void GL_APIENTRY timed_buffer_data(GLenum target, GLsizeiptr size, const void* d
   timed_gl_call<GLWall::BufferData, PFNGLBUFFERDATAPROC>(requested_gl_buffer_bytes(size), target, size, data, usage);
 }
 void GL_APIENTRY timed_buffer_sub_data(GLenum target, GLintptr offset, GLsizeiptr size, const void* data) {
-  timed_gl_call<GLWall::BufferSubData, PFNGLBUFFERSUBDATAPROC>(requested_gl_buffer_bytes(size), target, offset, size, data);
+  static_assert(GL_UNIFORM_BUFFER == GLWall::UniformBufferTarget && GL_ARRAY_BUFFER == GLWall::ArrayBufferTarget);
+  const auto proc = reinterpret_cast<PFNGLBUFFERSUBDATAPROC>(backend->gl_procs[GLWall::BufferSubData].original);
+  const auto begin = FrameWallTimings::Clock::now();
+  proc(target, offset, size, data);
+  const auto returned = FrameWallTimings::Clock::now();
+  backend->gl_wall.record_buffer_sub_data(target, static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(returned - begin).count()), requested_gl_buffer_bytes(size));
 }
 void GL_APIENTRY timed_copy_buffer_sub_data(GLenum read, GLenum write, GLintptr read_offset,
                                            GLintptr write_offset, GLsizeiptr size) {

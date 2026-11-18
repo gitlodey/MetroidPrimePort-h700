@@ -40,6 +40,7 @@ inline constexpr bool g_mixedFetch = false;
 #endif
 inline constexpr uint32_t MixedSampledTextureBudget = 16;
 inline constexpr uint32_t MixedFragmentStorageBinding = 2;
+inline constexpr uint32_t MixedFetchSamplerBinding = 3;
 // A scale-1 frame's full staging allocation, including texture uploads (not a probe buffer).
 inline constexpr uint64_t MixedMinimumBufferSize =
     VertexBufferSize + UniformBufferSize + IndexBufferSize + StorageBufferSize +
@@ -182,7 +183,7 @@ inline auto uniform_bind_group_layout_entries(uint64_t drawSize = 0) {
 // Shared by the real layout creation and CPU contract tests. Both mirrors remain vertex-visible;
 // the fragment stage reads the original array buffer, never a third mirrored allocation.
 inline auto static_bind_group_layout_entries(bool textureFetch) {
-  std::array<wgpu::BindGroupLayoutEntry, g_mixedFetch ? 3 : 2> entries{};
+  std::array<wgpu::BindGroupLayoutEntry, g_mixedFetch ? 4 : 2> entries{};
   for (uint32_t i = 0; i < 2; ++i) {
     auto& entry = entries[i];
     entry.binding = i;
@@ -201,9 +202,32 @@ inline auto static_bind_group_layout_entries(bool textureFetch) {
         .visibility = wgpu::ShaderStage::Fragment,
         .buffer = {.type = wgpu::BufferBindingType::ReadOnlyStorage},
     };
+    // Keep the candidate layout usable when loading its cached pipelines with the opt-in OFF.
+    entries[MixedFetchSamplerBinding] = {
+        .binding = MixedFetchSamplerBinding,
+        .visibility = wgpu::ShaderStage::Vertex,
+        .sampler = {.type = wgpu::SamplerBindingType::NonFiltering},
+    };
   }
   return entries;
 }
+
+#ifdef AURORA_H700
+inline wgpu::SamplerDescriptor fetch_sampler_descriptor() {
+  return {
+      .label = "Vertex mirror gather sampler",
+      .addressModeU = wgpu::AddressMode::ClampToEdge,
+      .addressModeV = wgpu::AddressMode::ClampToEdge,
+      .addressModeW = wgpu::AddressMode::ClampToEdge,
+      .magFilter = wgpu::FilterMode::Nearest,
+      .minFilter = wgpu::FilterMode::Nearest,
+      .mipmapFilter = wgpu::MipmapFilterMode::Nearest,
+      .lodMinClamp = 0.f,
+      .lodMaxClamp = 0.f,
+      .maxAnisotropy = 1,
+  };
+}
+#endif
 
 inline uint32_t sampled_texture_count(std::span<const wgpu::BindGroupLayoutEntry> entries,
                                       wgpu::ShaderStage stage) noexcept {
@@ -258,6 +282,9 @@ struct Resources {
   wgpu::TextureView storageFetchTextureView;
   wgpu::BindGroupLayout staticBindGroupLayout;
   wgpu::BindGroup staticBindGroup;
+#ifdef AURORA_H700
+  wgpu::Sampler fetchSampler;
+#endif
   wgpu::BindGroupLayout uniformBindGroupLayout;
   wgpu::BindGroup uniformBindGroup;
   wgpu::BindGroupLayout drawUniformBindGroupLayout;
