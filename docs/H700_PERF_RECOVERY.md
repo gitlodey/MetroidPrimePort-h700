@@ -97,7 +97,7 @@ Producer flush **реально исполнялся**, а не только б�
 
 Установленный source finding в pinned `build/h700-game-gm03/inputs/sdl/src/audio/sdl2/SDL_sdl2audio.c`: shim вызывает native `SDL2_Init(AUDIO)`, но его `Deinitialize` пуст. Video teardown выгружает native SDL2; native ALSA имеет hotplug thread, который штатная native ALSA deinitialization завершает через join. Неснятый native AUDIO lifetime перед unload — конкретный применимый defect; что именно этот hotplug thread упал в сохранённом SIGSEGV, **не доказано**. DVD-гипотеза не подтверждается и больше не является направлением проверки.
 
-## PERF08 — native AUDIO release; runtime quit-test pending
+## PERF08 — native AUDIO release; отдельный runtime quit-test отложен
 
 H700-only patch в `platform/main.cpp` и его direct wiring test `tests/port_h700_terminal_wiring.py` добавляют native AUDIO retirement. Scope helper: **после game/audio owners, `AIPortShutdown` и services, до `PollGenerationShutdown`**; guard требует SDL3 audio0. Через `RTLD_NOLOAD` берётся только уже загруженный native SDL2, оставшиеся AUDIO refs снимаются через native AUDIO quit до доказанного0. Если это доказать нельзя — fail-stop. **Никакого полного SDL_Quit, video quit или обхода release/free guards.** Это pending исправление конкретного lifetime, не runtime fix PASS.
 
@@ -109,7 +109,7 @@ Runtime quit-test **pending**: ручной menu run → Select+Start, native AU
 - Stage `build/h700-perf08-audio-exit/package`, stripped executable62,861,992bytes, SHA256 `3b1fa5a42acfb8409ea2f33d9068001c04e83ec67c117e6e402e16163bc3de8e`; source SHA256 `a9395427d8e362c11572d31faf91362f7c362b53e36271ef9703aa80265713c8`. Reused SDL/notices byte-identical RC6; embedded version остаётся `source-snapshot`, не выдуманный revision.
 - Архив `build/h700-perf08-audio-exit/h700-perf08.tar.gz`,21,058,922bytes, SHA256 `0359e3d25579d0fa65f1a80699ca5b7f88c6c4ba9786cbb6433ddc96620cb2b1`; archive inventory/hashes проверены. Это private incremental test package, не fresh RC и не public distribution clearance.
 - Отдельный пункт **Metroid Prime Unbound PERF08** установлен:101payload checksum PASS,28own user/cache files физически скопированы с неактивного PERF07, copy/source-before/source-after hashes совпали. Pre/post no-game/launcher/copier и новый lock absent проверены; agent game starts/signals0. Native audio release, картинка/звук и actual process exit этим deploy не проверены.
-- Нужен ручной PERF08 launch; затем короткая live identity/flags/progress проверка и Select+Start → verified AUDIO0/release/actual child exit/copier drain/lock absent без SIGSEGV. Повтор automatic route/frontend restart не нужен.
+- **После возражения пользователя отдельная приёмка выхода отложена: PERF08 специально запускать не нужно.** Runtime audio fix/clean exit остаётся непроверенным; это не блокер исследования FPS. Текущий приоритет — адресный разбор медленного FileSelect-пути и обоснованный performance-эксперимент, не дальнейшая работа над выходом или launch framework. Выпуск PERF08 не является прогрессом производительности.
 
 ### Evidence
 
