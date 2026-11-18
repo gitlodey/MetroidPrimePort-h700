@@ -32,6 +32,9 @@ add_library(aurora_gx STATIC
         lib/gx/command_processor.cpp
         lib/gx/regs.cpp
         lib/gx/resident.cpp
+        lib/gx/immutable.cpp
+        lib/gx/decoded_cpu.cpp
+        lib/gx/decoded_geometry.cpp
         lib/gx/dl.cpp
         lib/gx/fifo.cpp
         lib/gx/gx.cpp

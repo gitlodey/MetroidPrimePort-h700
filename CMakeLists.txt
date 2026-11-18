@@ -852,6 +852,13 @@ if(MP_BUILD_TESTS)
         add_test(NAME port_h700_dvd_lifetime_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_dvd_lifetime_wiring.py")
         set_tests_properties(port_h700_dvd_lifetime_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_h700_immutable_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_immutable_wiring.py")
+        set_tests_properties(port_h700_immutable_wiring PROPERTIES TIMEOUT 30 LABELS port
+                    ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+        add_test(NAME port_h700_decoded_wiring COMMAND Python3::Interpreter -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_decoded_wiring.py")
+        set_tests_properties(port_h700_decoded_wiring PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_h700_terminal_wiring COMMAND Python3::Interpreter -I
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/port_h700_terminal_wiring.py")
         set_tests_properties(port_h700_terminal_wiring PROPERTIES TIMEOUT 15 LABELS port)

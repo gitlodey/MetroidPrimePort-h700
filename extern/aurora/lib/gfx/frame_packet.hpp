@@ -240,6 +240,9 @@ struct FramePacket {
   SpillBuffer spillStorage;
   wgpu::CommandEncoder encoder;
   std::vector<AfterSubmitCallback> afterSubmitCallbacks;
+  // CPU packet ownership ends before GPU completion; these transfer to the native slot.
+  std::vector<std::shared_ptr<void>> geometryPins;
+  uint32_t geometryNativeSlot = UINT32_MAX;
   uint64_t frameId = 0;
   uint32_t frameIndex = 0;
   size_t stagingBuffer = 0;

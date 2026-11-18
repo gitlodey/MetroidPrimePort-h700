@@ -3,9 +3,11 @@
 
 #include "../../gx/fifo.hpp"
 #include "../../gx/resident.hpp"
+#include "../../gx/immutable.hpp"
 #include "dolphin/gx/GXAurora.h"
 #include "dolphin/gx/GXExtra.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -76,6 +78,18 @@ void GXCallDisplayList(const void* data, u32 nbytes) {
     __GXSendFlushPrim();
   }
 
+  if (!aurora::gx::fifo::in_display_list()) {
+    const auto id = aurora::gx::immutable::producer_admission(
+        data, nbytes, aurora::gx::immutable::SourceKind::DisplayList);
+    if (id != 0) {
+      u8 record[15] = {GX_AURORA, u8(GX_AURORA_CALL_IMMUTABLE_DL >> 8), u8(GX_AURORA_CALL_IMMUTABLE_DL)};
+      for (unsigned i = 0; i < 8; ++i) record[3 + i] = u8(id >> (56 - i * 8));
+      for (unsigned i = 0; i < 4; ++i) record[11 + i] = u8(nbytes >> (24 - i * 8));
+      if (aurora::gx::fifo::write_checked(record, sizeof(record))) aurora::gx::fifo::publish();
+      return; // rejected work is not replaced by an unsafe raw-pointer command
+    }
+  }
+
   if (!sRetained.empty() && !aurora::gx::fifo::in_display_list()) {
     const auto found = sRetained.find(data);
     if (found != sRetained.end() && found->second.size == nbytes) {
@@ -92,6 +106,32 @@ void GXCallDisplayList(const void* data, u32 nbytes) {
   aurora::gx::fifo::write_data(data, nbytes);
   aurora::gx::fifo::publish();
 }
+
+u64 GXPortRegisterImmutableSource(const void* data, u32 size, GXPortImmutableKind kind) {
+#ifdef AURORA_H700
+  static const bool enabled = [] {
+    const char* optIn = std::getenv("MP_H700_RETAIL_GEOMETRY");
+    const char* bench = std::getenv("MP_H700_BENCH");
+    return optIn != nullptr && std::strcmp(optIn, "1") == 0 && bench != nullptr &&
+           (std::strcmp(bench, "1") == 0 || std::strcmp(bench, "menu") == 0);
+  }();
+  if (!enabled || (kind != GX_PORT_IMMUTABLE_ARRAY && kind != GX_PORT_IMMUTABLE_DISPLAY_LIST)) return 0;
+  return aurora::gx::immutable::register_source(
+      data, size, kind == GX_PORT_IMMUTABLE_ARRAY ? aurora::gx::immutable::SourceKind::Array
+                                               : aurora::gx::immutable::SourceKind::DisplayList);
+#else
+  (void)data;
+  (void)size;
+  (void)kind;
+  return 0;
+#endif
+}
+
+GXBool GXPortUnregisterImmutableSource(u64 sourceId) {
+  return aurora::gx::immutable::unregister_source(sourceId);
+}
+
+u64 GXPortImmutableSourceEpoch() { return aurora::gx::immutable::producer_epoch(); }
 
 void GXPortRetainResident(const void* data, u32 size) {
   if (data == nullptr || size == 0) {

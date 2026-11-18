@@ -6,6 +6,7 @@
 #include "../gfx/pipeline_cache.hpp"
 #include "../gfx/resource_cache.hpp"
 
+#include "decoded_geometry.hpp"
 #include "gx_fmt.hpp"
 #include "shader_info.hpp"
 #include "../logging.hpp"
@@ -20,9 +21,9 @@ namespace aurora::gx {
 wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
   if (!pipeline_config_compatible(config, webgpu::g_lightmapBinding)) {
     Log.error("Refusing GX pipeline: shadow pass {} (shader shadow {}), PBR lightmap attribute {} (lightmap "
-              "binding {})",
+              "binding {}), decoded native {}",
               config.shadowPass, static_cast<int>(config.shaderConfig.shadow), config.shaderConfig.pbrLightmapAttr,
-              webgpu::g_lightmapBinding);
+              webgpu::g_lightmapBinding, static_cast<int>(config.shaderConfig.decodedNative));
     return {};
   }
 
@@ -32,6 +33,17 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
   const auto label =
       fmt::format("GX Pipeline {:x} shader {:x}", xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),
                   xxh3_hash(config.shaderConfig));
+  if (uses_decoded_native(config.shaderConfig)) {
+    const auto layout = decoded::make_layout(config.shaderConfig);
+    if (!decoded::limits_valid(layout, gfx::detail::resources().limits)) {
+      Log.error("Refusing decoded GX vertex layout: {} attributes, stride {} exceeds granted vertex limits",
+                layout.attributeCount, layout.stride);
+      return {};
+    }
+    const auto attributes = layout.vertex_attributes();
+    const std::array layouts{layout.buffer_layout(attributes)};
+    return build_pipeline(config, layouts, shader, label.c_str(), dstAlphaMode);
+  }
   if (uses_native_vertex(config.shaderConfig)) {
     const auto stride = config.shaderConfig.vtxStride;
     if (!native_vertex_limits_valid(stride, gfx::detail::resources().limits)) {
@@ -43,6 +55,27 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
     return build_pipeline(config, layouts, shader, label.c_str(), dstAlphaMode);
   }
   return build_pipeline(config, {}, shader, label.c_str(), dstAlphaMode);
+}
+
+void bind_draw_geometry(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+  if (data.decodedGeometry) {
+    AURORA_ASSERT(data.nativeVertexStride == 0 && data.instanceCount == 1 && data.vtxCount != 0 &&
+                      data.indexCount != 0 && decoded::valid(data.decodedMesh),
+                  "GX decoded mesh mode/reference mismatch");
+    decoded::bind(data.decodedMesh, pass);
+    return;
+  }
+  const auto& resources = gfx::detail::resources();
+  if (data.nativeVertexStride != 0) {
+    AURORA_ASSERT(gfx::g_mixedFetch && resources.vertexBuffer &&
+                      (resources.vertexBuffer.GetUsage() & wgpu::BufferUsage::Vertex) != wgpu::BufferUsage::None,
+                  "GX native vertex buffer unavailable");
+    AURORA_ASSERT(native_vertex_draw_range_valid(data, resources.vertexBuffer.GetSize(), resources.limits),
+                  "GX native vertex mode/range mismatch");
+    // Local indices: the bound slice applies the offset once, never baseVertex or imm.vtx_start.
+    pass.SetVertexBuffer(0, resources.vertexBuffer, data.vertRange.offset, data.vertRange.size);
+  }
+  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
 }
 
 void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
@@ -74,17 +107,7 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
     gfx::forget_texture_group();
     sShadowGroupBound = false;
   }
-  if (data.nativeVertexStride != 0) {
-    AURORA_ASSERT(gfx::g_mixedFetch && resources.vertexBuffer &&
-                      (resources.vertexBuffer.GetUsage() & wgpu::BufferUsage::Vertex) != wgpu::BufferUsage::None,
-                  "GX native vertex buffer unavailable");
-    AURORA_ASSERT(native_vertex_draw_range_valid(data, resources.vertexBuffer.GetSize(), resources.limits),
-                  "GX native vertex mode/range mismatch");
-    // Indices remain local to this slice. Neither baseVertex nor imm.vtx_start is
-    // added in the native shader; the slice offset is applied exactly once here.
-    pass.SetVertexBuffer(0, resources.vertexBuffer, data.vertRange.offset, data.vertRange.size);
-  }
-  pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
+  bind_draw_geometry(data, pass);
   if (data.dstAlpha != UINT32_MAX) {
     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
     pass.SetBlendConstant(&color);

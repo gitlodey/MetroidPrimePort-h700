@@ -2,6 +2,7 @@
 
 #include "../gfx/types.hpp"
 #include "gx.hpp"
+#include "decoded_vertex.hpp"
 #include "native_vertex.hpp"
 
 namespace aurora::gx {
@@ -9,7 +10,10 @@ struct DrawData {
   gfx::PipelineRef pipeline;
   GXBindGroups bindGroups;
   gfx::Range vertRange;
-  gfx::Range idxRange;
+  union {
+    gfx::Range idxRange{};
+    decoded::MeshRef decodedMesh;
+  };
   gfx::Range uniformRange;
   gfx::Range drawUniformRange{};
   DrawImmediateData immediateData;
@@ -20,10 +24,12 @@ struct DrawData {
   uint16_t instanceCount;
   u8 shadowGroup : 1 = false; // bindGroups.textureBindGroup has the shadow receiver layout
   u8 drawUniform : 1 = false;
-  u8 drawSpare : 6 = 0;
-  u8 nativeVertexStride = 0; // recorded ABI: 0 = mirror fetch, 16/20 = raw BE native inputs
+  u8 decodedGeometry : 1 = false;
+  u8 drawSpare : 5 = 0;
+  u8 nativeVertexStride = 0; // raw-native only: 16/20; decodedGeometry selects its own persistent buffers
 };
 static_assert(sizeof(DrawData) <= gfx::InlineDrawPayloadSize);
+static_assert(sizeof(void*) != 8 || sizeof(DrawData) == 128);
 static_assert(std::is_trivially_copyable_v<DrawData> && std::is_aggregate_v<DrawData>);
 
 inline void clear_draw_uniform(DrawData& draw) noexcept {
@@ -42,7 +48,8 @@ inline bool draw_uniform_range_valid(const DrawData& draw, uint64_t bufferSize, 
 
 inline bool native_vertex_merge_compatible(const DrawData& draw, const ShaderConfig& config,
                                            bool selected) noexcept {
-  return config.nativeVertex == selected && draw.nativeVertexStride == native_vertex_stride(config);
+  return !draw.decodedGeometry && !config.decodedNative && config.nativeVertex == selected &&
+         draw.nativeVertexStride == native_vertex_stride(config);
 }
 
 inline bool native_vertex_draw_range_valid(const DrawData& draw, uint64_t bufferSize,
@@ -79,11 +86,14 @@ constexpr bool pipeline_config_compatible(const PipelineConfig& config, bool lig
   // know, or one whose shader has no vs_shadow: its pipeline would abort the game in Dawn.
   const bool shadowPassOk =
       config.shadowPass == 0 || (config.shadowPass <= 2 && shader.shadow && shader.lineMode == 0);
-  return shadowPassOk && (shader.pbr == 0 || shader.pbrLightmapAttr == GX_VA_NULL || lightmapBinding);
+  return (!shader.decodedNative || uses_decoded_native(shader)) && shadowPassOk &&
+         (shader.pbr == 0 || shader.pbrLightmapAttr == GX_VA_NULL || lightmapBinding);
 }
 
 wgpu::RenderPipeline create_pipeline([[maybe_unused]] const PipelineConfig& config);
 void render(const DrawData& data, const wgpu::RenderPassEncoder& pass);
+// Shared with the standalone shadow encoders; decodedMesh is never a frame-buffer range.
+void bind_draw_geometry(const DrawData& data, const wgpu::RenderPassEncoder& pass);
 
 void queue_surface(const u8* dlStart, uint32_t dlSize, bool bigEndian) noexcept;
 } // namespace aurora::gx

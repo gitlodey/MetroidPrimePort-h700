@@ -781,6 +781,23 @@ void release_held_depth(bool keep) {
 
 namespace detail {
 
+bool geometry_pins_supported() noexcept {
+  return g_recorder.active() && g_recorder.packet->geometryNativeSlot != UINT32_MAX;
+}
+
+bool retain_geometry(std::shared_ptr<void> owner, uint64_t& lastPinFrame) noexcept {
+  if (!owner || !geometry_pins_supported()) return false;
+  auto& packet = g_recorder.frame();
+  if (lastPinFrame == packet.frameId) return true;
+  try {
+    packet.geometryPins.push_back(std::move(owner));
+    lastPinFrame = packet.frameId;
+    return true;
+  } catch (const std::bad_alloc&) {
+    return false;
+  }
+}
+
 void begin_recording(FramePacket& packet, size_t frameSlot) {
   CHECK(!g_recorder.active(), "A recording session is already active");
   g_recorder.packet = &packet;

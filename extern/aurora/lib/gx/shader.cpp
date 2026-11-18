@@ -7,6 +7,7 @@
 #include "../internal.hpp"
 #include "../webgpu/gpu.hpp"
 #include "gx.hpp"
+#include "decoded_vertex.hpp"
 #include "gx_fmt.hpp"
 #include "shader_info.hpp"
 
@@ -690,6 +691,44 @@ std::string vtx_attr(const ShaderConfig& config, GXAttr attr) {
     return fmt::format("in_texmtxidx{}", idx);
   }
   UNLIKELY FATAL("unhandled vtx attr {}", underlying(attr));
+}
+
+struct DecodedVertexInputs {
+  std::string signature;
+  std::string loads;
+};
+
+DecodedVertexInputs decoded_vertex_inputs(const ShaderConfig& config) {
+  DecodedVertexInputs inputs;
+  if (!uses_decoded_native(config)) {
+    return inputs;
+  }
+  const auto layout = decoded::make_layout(config);
+  for (uint32_t i = 0; i < layout.attributeCount; ++i) {
+    const auto& field = layout.fields[i];
+    if (field.attr == GX_VA_NULL) {
+      inputs.signature += fmt::format(",\n    @location({}) decoded_mtx: {}", field.location,
+                                      decoded::wgsl_type(field.format));
+      for (const auto& selector : decoded::Selectors) {
+        if (!layout.has_selector(selector.attr)) {
+          continue;
+        }
+        const auto value = fmt::format("((decoded_mtx.{} >> {}u) & 255u)", "xyz"[selector.word], selector.shift);
+        inputs.loads += fmt::format("\n    let {} = {}{};", vtx_attr(config, selector.attr), value,
+                                    selector.attr == GX_VA_PNMTXIDX ? " / 3u" : "");
+      }
+    } else {
+      const auto local = vtx_attr(config, field.attr);
+      const auto input = "decoded_" + local.substr(3);
+      inputs.signature += fmt::format(",\n    @location({}) {}: {}", field.location, input,
+                                      decoded::wgsl_type(field.format));
+      inputs.loads += fmt::format("\n    let {} = {};", local, input);
+    }
+  }
+  if (!layout.has_selector(GX_VA_PNMTXIDX)) {
+    inputs.loads += "\n    let in_pnmtxidx = imm.current_pnmtx;";
+  }
+  return inputs;
 }
 
 constexpr std::array<std::string_view, GX_CC_ZERO + 1> TevColorArgNames{
@@ -4335,6 +4374,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   std::string vtxXfrAttrsPre;
   std::string vtxXfrAttrs;
   size_t vtxOutIdx = 0;
+  const auto decodedInputs = decoded_vertex_inputs(config);
 
   // Load points for line/point expansion
   std::string_view vidxAttr = "vidx"sv;
@@ -4374,13 +4414,16 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
           attr_load(config, GX_VA_PNMTXIDX, "vidx_b"sv));
     }
     vidxAttr = "in_vidx"sv;
-  } else if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
+  } else if (!uses_decoded_native(config) && config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
     vtxXfrAttrsPre += "\n    let in_pnmtxidx = imm.current_pnmtx;";
   }
 
   // Native inputs are raw FIFO words, not host-endian floating-point attributes.
   // The bound slice already starts at this draw's first vertex.
-  if (uses_native_vertex(config)) {
+  if (uses_decoded_native(config)) {
+    vtxInAttrs += decodedInputs.signature;
+    vtxXfrAttrsPre += decodedInputs.loads;
+  } else if (uses_native_vertex(config)) {
     vtxInAttrs += ",\n    @location(0) native_pos: vec3u";
     vtxInAttrs += config.vtxStride == 16 ? ",\n    @location(1) native_uv: u32"
                                        : ",\n    @location(1) native_uv: vec2u";
@@ -4397,7 +4440,8 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     }
   }
   // Load vertex attributes
-  for (GXAttr attr = GX_VA_PNMTXIDX; !uses_native_vertex(config) && attr <= GX_VA_TEX7;
+  for (GXAttr attr = GX_VA_PNMTXIDX;
+       !uses_decoded_native(config) && !uses_native_vertex(config) && attr <= GX_VA_TEX7;
        attr = static_cast<GXAttr>(attr + 1)) {
     const auto attrType = config.attrs[attr].attrType;
     if (attrType == GX_NONE) {
@@ -4487,8 +4531,11 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   // ShaderConfig::shadow: vs_shadow places the vertex in the sun's shadow map (gfx/shadow.cpp's caster pass).
   std::string shadowVs;
   if (config.shadow && config.lineMode == 0) {
-    shadowVs = "\n\n@vertex\nfn vs_shadow(@builtin(vertex_index) vidx: u32) -> @builtin(position) vec4f {";
-    if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
+    shadowVs = "\n\n@vertex\nfn vs_shadow(@builtin(vertex_index) vidx: u32" + decodedInputs.signature +
+               ") -> @builtin(position) vec4f {";
+    if (uses_decoded_native(config)) {
+      shadowVs += decodedInputs.loads;
+    } else if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
       shadowVs += "\n    let in_pnmtxidx = imm.current_pnmtx;";
     } else {
       shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_PNMTXIDX),
@@ -4498,11 +4545,15 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     std::string shadowPos = vtx_attr(config, GX_VA_POS);
     std::string shadowWind;
     if (hasWind) {
-      shadowWind = fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_CLR0), attr_load(config, GX_VA_CLR0, vidxAttr)) +
-                   windCode(shadowPos, vtx_attr(config, GX_VA_CLR0));
+      if (!uses_decoded_native(config)) {
+        shadowWind = fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_CLR0), attr_load(config, GX_VA_CLR0, vidxAttr));
+      }
+      shadowWind += windCode(shadowPos, vtx_attr(config, GX_VA_CLR0));
       shadowPos = "wind_pos";
     }
-    shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr));
+    if (!uses_decoded_native(config)) {
+      shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr));
+    }
     shadowVs += shadowWind;
     shadowVs += fmt::format("\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
                             "\n    var pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster[imm.serial];"

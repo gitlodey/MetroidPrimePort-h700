@@ -19,6 +19,8 @@
 #include "pipeline.hpp"
 #include "regs.hpp"
 #include "resident.hpp"
+#include "immutable.hpp"
+#include "decoded_geometry.hpp"
 #include "shader_info.hpp"
 #include "texture.hpp"
 #ifdef AURORA_H700
@@ -188,15 +190,26 @@ DrawCache sDrawCache;
 struct FrameArrayKey {
   const void* data;
   u32 size;
+  immutable::SourceId source = 0;
   bool operator==(const FrameArrayKey&) const = default;
   template <typename H>
   friend H AbslHashValue(H h, const FrameArrayKey& key) {
-    return H::combine(std::move(h), key.data, key.size);
+    return H::combine(std::move(h), key.data, key.size, key.source);
   }
 };
 absl::flat_hash_map<FrameArrayKey, gfx::Range> sFrameArrays;
 // Per attribute: cleared since its last array, so the next one set there is copied afresh.
 bool sArrayFresh[GX_VA_MAX_ATTR] = {};
+std::array<immutable::SourceView, MaxVtxAttr> sImmutableArrays;
+immutable::SourceView sImmutableList;
+struct ImmutableListCall {
+  immutable::SourceView source;
+  u32 offset = 0;
+};
+// No FIFO buffer pointers survive a callback/reallocation. Every suspended level
+// owns its immutable snapshot, including an EOF reached at the final DRAW_DONE.
+std::array<ImmutableListCall, MaxImmutableListDepth> sImmutableCalls;
+u32 sImmutableCallDepth = 0;
 
 bool frame_array_reuse() noexcept {
   static const bool enabled = [] {
@@ -207,16 +220,16 @@ bool frame_array_reuse() noexcept {
 }
 
 // The frame's copy of the array, made now if this frame has none; an overflowed range is not kept.
-gfx::Range frame_array_range(const void* data, u32 size) noexcept {
+gfx::Range frame_array_range(const void* data, u32 size, immutable::SourceId source = 0) noexcept {
   const bool reuse = frame_array_reuse();
   if (reuse) {
-    if (const auto it = sFrameArrays.find(FrameArrayKey{data, size}); it != sFrameArrays.end()) {
+    if (const auto it = sFrameArrays.find(FrameArrayKey{data, size, source}); it != sFrameArrays.end()) {
       return it->second;
     }
   }
   const gfx::Range range = gfx::push_storage(static_cast<const uint8_t*>(data), size);
   if (reuse && range.size != 0 && !gfx::overflowed(range)) {
-    sFrameArrays.emplace(FrameArrayKey{data, size}, range);
+    sFrameArrays.emplace(FrameArrayKey{data, size, source}, range);
   }
   return range;
 }
@@ -288,7 +301,7 @@ u8 line_mode_for_prim(GXPrimitive prim) noexcept {
 } // namespace
 
 static void handle_draw(u8 cmd, ByteReader& reader) noexcept;
-static void handle_aurora(ByteReader& reader) noexcept;
+static bool handle_aurora(ByteReader& reader) noexcept;
 
 ProcessResult process(const u8* data, u32 size) noexcept {
   ZoneScoped;
@@ -369,7 +382,12 @@ ProcessResult process(const u8* data, u32 size) noexcept {
     }
 
     case GX_AURORA: {
-      handle_aurora(reader);
+      const auto callStart = static_cast<u32>(reader.offset() - 1);
+      if (handle_aurora(reader)) {
+        // The callback belongs to a nested list. Leave its outer shortcall
+        // unretired until all held list tails have actually been processed.
+        return {callStart, true, static_cast<u32>(reader.offset()) - callStart};
+      }
       break;
     }
 
@@ -410,6 +428,55 @@ ProcessResult process(const u8* data, u32 size) noexcept {
     }
   }
   return {size, false};
+}
+
+static ProcessResult step_immutable_list(u32 index) noexcept {
+  auto& call = sImmutableCalls[index];
+  AURORA_ASSERT(call.source && call.offset <= call.source.size(), "Invalid immutable continuation");
+  ProcessResult result{};
+  if (call.offset != call.source.size()) {
+    auto previous = std::move(sImmutableList);
+    sImmutableList = call.source; // full source context: decoded keys retain the correct base/ID
+    result = process(call.source.data() + call.offset, call.source.size() - call.offset);
+    sImmutableList = std::move(previous);
+    AURORA_ASSERT(uint64_t(call.offset) + result.bytesProcessed + result.pendingCallBytes <= call.source.size(),
+                  "Immutable continuation exceeds its snapshot");
+    // A suspended child owns its own frame; this parent resumes AFTER that call.
+    call.offset += result.bytesProcessed + result.pendingCallBytes;
+  }
+  sDrawCache.lastDrawFmt = GX_MAX_VTXFMT;
+  return result;
+}
+
+static bool call_immutable_list(immutable::SourceView source) noexcept {
+  AURORA_ASSERT(sImmutableCallDepth < MaxImmutableListDepth, "Immutable display list nesting exceeds {}",
+                MaxImmutableListDepth);
+  const u32 index = sImmutableCallDepth++;
+  sImmutableCalls[index] = {std::move(source), 0};
+  const auto result = step_immutable_list(index);
+  if (result.drawDone) return true; // retain this parent AND every suspended child
+  AURORA_ASSERT(sImmutableCallDepth == index + 1 &&
+                    sImmutableCalls[index].offset == sImmutableCalls[index].source.size(),
+                "Incomplete immutable display list without a DRAW_DONE continuation");
+  sImmutableCalls[index] = {};
+  --sImmutableCallDepth;
+  return false;
+}
+
+ProcessResult resume_immutable_list(uint32_t pendingCallBytes) noexcept {
+  AURORA_ASSERT(pendingCallBytes != 0 && sImmutableCallDepth != 0, "No immutable shortcall to resume");
+  while (sImmutableCallDepth != 0) {
+    const u32 index = sImmutableCallDepth - 1;
+    const auto result = step_immutable_list(index);
+    if (result.drawDone) return {0, true, pendingCallBytes};
+    AURORA_ASSERT(sImmutableCallDepth == index + 1 &&
+                      sImmutableCalls[index].offset == sImmutableCalls[index].source.size(),
+                  "Incomplete resumed immutable display list");
+    sImmutableCalls[index] = {};
+    --sImmutableCallDepth;
+  }
+  // Only now can the FIFO publish the outer shortcall's processed watermark.
+  return {pendingCallBytes, false};
 }
 
 [[noreturn]] static void handle_draw_overrun(size_t totalVtxBytes, const ByteReader& reader) noexcept {
@@ -704,7 +771,7 @@ static bool check_indexed_arrays(const u8* vtxData, GXVtxFmt fmt, GXPrimitive pr
 }
 
 static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange, gfx::Range idxRange,
-                         u32 numIndices) noexcept {
+                         u32 numIndices, const decoded::Admission* decodedMesh = nullptr) noexcept {
   auto& state = g_gxState;
   auto& cache = sDrawCache;
   if (drop_overflowed_draw(vertRange, "vertex") || drop_overflowed_draw(idxRange, "index")) {
@@ -715,12 +782,12 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       .vtxStart = vertRange.offset, .currentPnMtx = state.currentPnMtx, .serial = state.drawSerial};
   const bool bindPos = bind_pos_active();
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
-    if (state.vtxDesc[i] != GX_INDEX8 && state.vtxDesc[i] != GX_INDEX16 && !(bindPos && i == GX_VA_TEX7)) {
+    if (decodedMesh || (state.vtxDesc[i] != GX_INDEX8 && state.vtxDesc[i] != GX_INDEX16 && !(bindPos && i == GX_VA_TEX7))) {
       continue;
     }
     auto& array = state.arrays[i];
     if (array.cachedRange.size == 0 && !resident::array_range(array.data, array.size, array.cachedRange)) {
-      array.cachedRange = frame_array_range(array.data, array.size);
+      array.cachedRange = frame_array_range(array.data, array.size, sImmutableArrays[i].id());
       if (drop_overflowed_draw(array.cachedRange, "storage")) {
         array.cachedRange = {};
         return;
@@ -737,7 +804,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
                              cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
                              cache.config.shaderConfig.drawUniform == draw_uniform_for_state(cache.config.shaderConfig) &&
                              cache.config.shaderConfig.fetchGather == fetch_gather_enabled() &&
-                             cache.config.shaderConfig.nativeVertex == native_vertex_for_state(cache.config.shaderConfig) &&
+                             cache.config.shaderConfig.decodedNative == (decodedMesh != nullptr) &&
+                                                          cache.config.shaderConfig.nativeVertex ==
+                                                              (decodedMesh ? false : native_vertex_for_state(cache.config.shaderConfig)) &&
                              // A lit config made before aurora_set_per_pixel_lighting changed.
                              cache.config.shaderConfig.perPixelLight ==
                                  config_per_pixel_light(cache.config.shaderConfig) &&
@@ -755,6 +824,10 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     const bool prevUsesShell = cache.shaderInfo.usesShell;
     const bool prevUsesLightmap = cache.shaderInfo.usesLightmap;
     populate_pipeline_config(cache.config, prim, fmt);
+    if (decodedMesh) {
+      cache.config.shaderConfig.nativeVertex = 0;
+      cache.config.shaderConfig.decodedNative = 1;
+    }
     // GX_AURORA_PORT_DEPTH_PREPASS: pass 2 shades an eligible draw where the depth is equal without
     // writing it, yet it casts as the draw it stands for (LEQUAL, writing). Its config can equal a
     // plain EQUAL draw's, which doesn't cast, so it bypasses the memo.
@@ -914,7 +987,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
   }
   AURORA_ASSERT(instanceCount <= UINT16_MAX, "GX instance count exceeds its u16 vertex count");
   cache.lastDrawFmt = fmt;
-  const DrawData draw{
+  DrawData draw{
       .pipeline = cache.pipelineRef,
       .bindGroups = cache.bindGroups,
       .vertRange = vertRange,
@@ -930,6 +1003,13 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       .drawUniform = drawUniform,
       .nativeVertexStride = native_vertex_stride(cache.config.shaderConfig),
   };
+  if (decodedMesh) {
+    draw.decodedMesh = decodedMesh->ref;
+    draw.decodedGeometry = true;
+    draw.nativeVertexStride = 0;
+    draw.vtxCount = decodedMesh->vertexCount;
+    draw.indexCount = decodedMesh->indexCount;
+  }
   if (!state.shadowCasterOnly) {
     gfx::push_draw_command(draw);
   }
@@ -980,6 +1060,8 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
   push_gx_draw(prim, fmt, vtxCount, vertRange, idxRange, numIndices);
 }
 
+static u32 triangle_index_count(GXPrimitive prim, u16 vtxCount) noexcept;
+
 static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& reader) noexcept {
   ZoneScoped;
   u32 vtxSize;
@@ -991,6 +1073,28 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   u32 totalVtxBytes = vtxCount * vtxSize;
   if (totalVtxBytes > reader.remaining())
     UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
+
+  // Immutable cache admission precedes BOTH the raw-array bounds scan and all frame uploads.
+  // The decoder checked the full tuple once; cache keys include source lifetime, layout and bases.
+  if (decoded::enabled() && sImmutableList && triangle_index_count(prim, vtxCount) != 0) {
+    PipelineConfig candidate{};
+    populate_pipeline_config(candidate, prim, fmt);
+    candidate.shaderConfig.nativeVertex = 0;
+    std::array<u32, MaxVtxAttr> bases{};
+    for (u32 attr = 0; attr < MaxVtxAttr; ++attr) bases[attr] = g_gxState.arrays[attr].baseIndex;
+    const decoded::DecodeInput input{candidate.shaderConfig, prim, vtxCount,
+        {reader.data() + reader.offset(), totalVtxBytes}, sImmutableArrays, bases};
+    const auto offset = uint64_t(reinterpret_cast<uintptr_t>(input.vertices.data())) -
+                        uint64_t(reinterpret_cast<uintptr_t>(sImmutableList.data()));
+    if (offset <= UINT32_MAX) {
+      if (const auto mesh = decoded::acquire(sImmutableList, static_cast<u32>(offset), input)) {
+        reader.skip(totalVtxBytes);
+        push_gx_draw(prim, fmt, vtxCount, {}, {}, mesh->indexCount, &*mesh);
+        sDrawCache.lastDrawFmt = GX_MAX_VTXFMT; // never extend a persistent IB with a frame draw
+        return;
+      }
+    }
+  }
 
   // A draw whose indices read past its arrays reads garbage, or crashes where nothing bounds the
   // read (807013b1e): dropped instead. Checked before a merge, whose vertices it would otherwise add.
@@ -1209,7 +1313,34 @@ static void handle_draw(u8 cmd, ByteReader& reader) noexcept {
   draw_prim(prim, fmt, reader.read<u16>(), reader);
 }
 
-void handle_aurora(ByteReader& reader) noexcept {
+static void bind_array(u32 attrIdx, const void* newData, u32 arraySize, bool le,
+                       immutable::SourceView source = {}) noexcept {
+  AURORA_ASSERT(attrIdx < g_gxState.arrays.size() && attrIdx < sImmutableArrays.size(), "Invalid GX array attribute {}", attrIdx);
+  auto& array = g_gxState.arrays[attrIdx];
+  auto& held = sImmutableArrays[attrIdx];
+  if (array.data != newData || array.size != arraySize || array.le != le || held.id() != source.id()) {
+    const auto type = g_gxState.vtxDesc[attrIdx];
+    const bool inConfig = type == GX_INDEX8 || type == GX_INDEX16 || (attrIdx == GX_VA_TEX7 && g_gxState.pbr != 0);
+    if (inConfig && (array.le != le || (attrIdx == GX_VA_TEX7 && (array.data == nullptr) != (newData == nullptr))))
+      g_gxState.dirty |= DirtyPipeline;
+    if (newData == nullptr) {
+      sFrameArrays.erase(FrameArrayKey{array.data, array.size, held.id()});
+      sArrayFresh[attrIdx] = true;
+    } else if (sArrayFresh[attrIdx]) {
+      sFrameArrays.erase(FrameArrayKey{newData, arraySize, source.id()});
+      sArrayFresh[attrIdx] = false;
+    }
+    array.data = newData;
+    array.size = arraySize;
+    array.le = le;
+    array.cachedRange = {};
+    g_gxState.dirty |= DirtyImmediates;
+  }
+  // Indexed XF and legacy shaders read this snapshot too, never the original allocation.
+  held = std::move(source);
+}
+
+bool handle_aurora(ByteReader& reader) noexcept {
   ZoneScoped;
   const u16 subCmd = reader.read<u16>();
 
@@ -1252,34 +1383,7 @@ void handle_aurora(ByteReader& reader) noexcept {
     const u32 arraySize = reader.read<u32>();
     const bool le = reader.read<u8>() == 1;
 
-    auto& array = g_gxState.arrays[attrIdx];
-    const auto newData = reinterpret_cast<void*>(arrayAddr);
-    if (array.data != newData || array.size != arraySize || array.le != le) {
-      // Only an indexed attribute's array, or TEX7's under pbr (bind_pos_active), is in the
-      // pipeline config (a VCD or pbr change dirties it anyway).
-      const auto type = g_gxState.vtxDesc[attrIdx];
-      const bool inConfig =
-          type == GX_INDEX8 || type == GX_INDEX16 || (attrIdx == GX_VA_TEX7 && g_gxState.pbr != 0);
-      if (inConfig &&
-          (array.le != le || (attrIdx == GX_VA_TEX7 && (array.data == nullptr) != (newData == nullptr)))) {
-        // Endianness is baked into the shader
-        g_gxState.dirty |= DirtyPipeline;
-      }
-      if (newData == nullptr) {
-        // CGX::ClearArray: this array and the next one set here are copied again, even within
-        // the frame (the skinned workspaces keep their pointer and are rewritten per draw).
-        sFrameArrays.erase(FrameArrayKey{array.data, array.size});
-        sArrayFresh[attrIdx] = true;
-      } else if (sArrayFresh[attrIdx]) {
-        sFrameArrays.erase(FrameArrayKey{newData, arraySize});
-        sArrayFresh[attrIdx] = false;
-      }
-      array.data = newData;
-      array.size = arraySize;
-      array.le = le;
-      array.cachedRange = {};
-      g_gxState.dirty |= DirtyImmediates;
-    }
+    bind_array(attrIdx, reinterpret_cast<const void*>(arrayAddr), arraySize, le);
   } else if (subCmd == GX_AURORA_LOAD_TEXOBJ) {
     const auto texMapId = reader.read<u8>();
     CHECK(texMapId < MaxTextures, "invalid texture map id {}", texMapId);
@@ -1392,6 +1496,28 @@ void handle_aurora(ByteReader& reader) noexcept {
       AURORA_ASSERT(vtxCount <= 0xFFFF, "GX_AURORA_DRAW_SIZED: too many vertices ({})", vtxCount);
       draw_prim(prim, fmt, static_cast<u16>(vtxCount), reader);
     }
+  } else if (subCmd == GX_AURORA_REGISTER_IMMUTABLE_SOURCE) {
+    const auto id = reader.read<u64>();
+    AURORA_ASSERT(immutable::consume_register(id), "Invalid immutable source registration {}", id);
+  } else if (subCmd == GX_AURORA_RELEASE_IMMUTABLE_SOURCE) {
+    const auto id = reader.read<u64>();
+    AURORA_ASSERT(immutable::consume_release(id), "Invalid immutable source release {}", id);
+    decoded::invalidate_source(id);
+  } else if (subCmd == GX_AURORA_LOAD_IMMUTABLE_ARRAY) {
+    const u32 attrIdx = u32(reader.read<u8>()) + GX_VA_POS;
+    const auto id = reader.read<u64>();
+    const u32 size = reader.read<u32>();
+    const bool le = reader.read<u8>() == 1;
+    auto source = immutable::lookup_array(id, size);
+    AURORA_ASSERT(source, "Missing immutable array {} ({} bytes)", id, size);
+    const auto* data = source.data();
+    bind_array(attrIdx, data, size, le, std::move(source));
+  } else if (subCmd == GX_AURORA_CALL_IMMUTABLE_DL) {
+    const auto id = reader.read<u64>();
+    const u32 size = reader.read<u32>();
+    auto source = immutable::lookup_display_list(id, size);
+    AURORA_ASSERT(source, "Missing immutable display list {} ({} bytes)", id, size);
+    return call_immutable_list(std::move(source));
   } else if (subCmd == GX_AURORA_RESIDENT_RETAIN) {
     const auto* key = reinterpret_cast<const void*>(reader.read<u64>());
     std::unique_ptr<std::vector<u8>> bytes{reinterpret_cast<std::vector<u8>*>(reader.read<u64>())};
@@ -2089,9 +2215,25 @@ void handle_aurora(ByteReader& reader) noexcept {
   else {
     Log.error("Unknown Aurora subcommand: {:04X}", subCmd);
   }
+  return false;
 }
 
 void clear_frame_arrays() noexcept { sFrameArrays.clear(); }
+
+void clear_immutable_bindings() noexcept {
+  for (size_t attr = 0; attr < sImmutableArrays.size(); ++attr) {
+    if (sImmutableArrays[attr]) {
+      g_gxState.arrays[attr].data = nullptr;
+      g_gxState.arrays[attr].size = 0;
+      g_gxState.arrays[attr].cachedRange = {};
+    }
+  }
+  sImmutableArrays = {};
+  sImmutableList = {};
+  sImmutableCalls = {};
+  sImmutableCallDepth = 0;
+  sFrameArrays.clear();
+}
 
 void clear_draw_cache() noexcept {
   sDrawCache.bindGeneration = 0;

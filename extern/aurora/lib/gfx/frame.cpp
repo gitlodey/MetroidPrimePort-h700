@@ -1,4 +1,6 @@
 #include "frame.hpp"
+#include "../gx/decoded_geometry.hpp"
+#include "../gx/command_processor.hpp"
 #include "overdraw.hpp"
 
 #include "depth_peek.hpp"
@@ -70,6 +72,9 @@ Resources g_resources;
 using FrameDestBindings = h700::FrameDestRingBindings<wgpu::Buffer, wgpu::BindGroup>;
 std::array<FrameDestBindings, h700::FrameDestRingSlots> g_frameDestRing;
 h700::FrameDestRingState g_frameDestRingState;
+std::array<std::vector<std::shared_ptr<void>>, h700::FrameDestRingSlots> g_geometrySlotPins;
+uint64_t g_geometryGeneration = 0;
+std::optional<uint64_t> g_geometryLastFrame;
 #endif
 
 enum class BufferMapState {
@@ -1083,6 +1088,8 @@ void initialize() {
 #endif
 
   gx::initialize();
+  if (gx::decoded::enabled())
+    Log.info("H700 PERF12 retail geometry enabled: source_budget_mib=32 gpu_budget_mib=64 scratch_mib=16; native slots required");
 #ifdef AURORA_ENABLE_RMLUI
   rmlui::initialize_pipeline();
 #endif
@@ -1144,6 +1151,15 @@ bool release_frame_holders_after_quiescence() {
   envfx::shutdown();
   tex_palette_conv::shutdown();
   texture_replacement::shutdown();
+#ifdef AURORA_H700
+  // Same guarded holder phase as destinations: packet reset/afterSubmit are too early.
+  g_geometrySlotPins.fill({});
+  for (auto& packet : g_framePackets) packet.geometryPins.clear();
+  g_geometryGeneration = 0;
+  g_geometryLastFrame.reset();
+#endif
+  gx::decoded::shutdown();
+  gx::fifo::clear_immutable_bindings();
   gx::shutdown();
 #ifdef AURORA_ENABLE_RMLUI
   rmlui::shutdown_pipeline();
@@ -1461,6 +1477,10 @@ bool begin_frame() {
   frame.frameId = g_nextFrameId++;
   frame.frameIndex = g_frameIndex;
   frame.stagingBuffer = *stagingSlot;
+#ifdef AURORA_H700
+  if (gx::decoded::enabled() && nativeFrame && nativeFrame->slot < g_geometrySlotPins.size())
+    frame.geometryNativeSlot = nativeFrame->slot;
+#endif
   size_t bufferOffset = 0;
   const auto& stagingBuf = g_stagingBuffers[*stagingSlot];
   const auto mapBuffer = [&](ByteBuffer& buf, uint64_t size) {
@@ -1487,6 +1507,22 @@ bool begin_frame() {
   ] {
 #ifdef AURORA_H700
     if (!select_frame_dest_ring(nativeFrame, frameSlot)) return;
+    if (gx::decoded::enabled() && nativeFrame) {
+      if (!h700::native_slot(*nativeFrame) || nativeFrame->generation == 0 ||
+          nativeFrame->slot >= g_geometrySlotPins.size() ||
+          (g_geometryLastFrame && (nativeFrame->generation != g_geometryGeneration ||
+                                  nativeFrame->frame <= *g_geometryLastFrame))) {
+        Log.error("PERF12 invalid native geometry reservation");
+        fail_frame_work(frameSlot);
+        render_worker::notify_failure();
+        return;
+      }
+      // native_slot proves the existing completion/reverse-fence reservation is current.
+      // FIFO/render jobs are ordered; the previous packet's pins transferred before this.
+      g_geometrySlotPins[nativeFrame->slot].clear();
+      g_geometryGeneration = nativeFrame->generation;
+      g_geometryLastFrame = nativeFrame->frame;
+    }
 #endif
     constexpr wgpu::CommandEncoderDescriptor EncoderDescriptor{.label = "Redraw encoder"};
 #ifdef AURORA_H700
@@ -1543,6 +1579,14 @@ bool end_frame(EndFrameCallback callback, std::function<void()> preSubmitAbort) 
     auto encoder = std::move(packet.encoder);
     const auto stats = packet.stats;
     auto afterSubmitCallbacks = std::move(packet.afterSubmitCallbacks);
+#ifdef AURORA_H700
+    if (!packet.geometryPins.empty()) {
+      AURORA_ASSERT(packet.geometryNativeSlot < g_geometrySlotPins.size(), "PERF12 pins without native owner");
+      auto& pins = g_geometrySlotPins[packet.geometryNativeSlot];
+      AURORA_ASSERT(pins.empty(), "PERF12 native slot reused before guarded begin");
+      pins = std::move(packet.geometryPins);
+    }
+#endif
     packet = {};
     g_resources.stats.drawCallCount = stats.drawCallCount;
     g_resources.stats.mergedDrawCallCount = stats.mergedDrawCallCount;

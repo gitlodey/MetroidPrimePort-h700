@@ -23,6 +23,7 @@
 #include "h700/presentation.hpp"
 #include "h700/lifecycle.hpp"
 #include "gx/resident.hpp"
+#include "gx/immutable.hpp"
 #endif
 #include <webgpu/webgpu_cpp.h>
 #endif
@@ -1072,7 +1073,11 @@ bool h700::generation_cpu_quiescence_held() noexcept {
 }
 bool h700::resident_resources_empty() noexcept {
   if (!h700::generation_cpu_quiescence_held()) return false;
-  return gx::resident::can_destroy_without_graphics_commands();
+  return gx::resident::can_destroy_without_graphics_commands() && gx::immutable::registries_empty();
+}
+bool h700::release_immutable_sources_at_cpu_quiescence() noexcept {
+  if (!h700::generation_cpu_quiescence_held()) return false;
+  return gx::immutable::release_at_cpu_quiescence();
 }
 void h700::request_generation_shutdown() noexcept { request_h700_shutdown(); }
 h700::ShutdownResult h700::poll_generation_shutdown() noexcept { return poll_h700_shutdown(); }

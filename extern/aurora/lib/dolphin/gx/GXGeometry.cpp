@@ -1,6 +1,9 @@
 #include "gx.hpp"
 #include "__gx.h"
 #include "dolphin/gd/GDGeometry.h"
+#include "dolphin/gx/GXAurora.h"
+#include "../../gx/fifo.hpp"
+#include "../../gx/immutable.hpp"
 
 static inline void SETVCDATTR(GXAttr attr, GXAttrType type) {
   switch (attr) {
@@ -227,6 +230,23 @@ void GXSetArray(GXAttr attr, const void* data, u32 size, u8 stride, bool le) {
   u32 cpIdx = cpAttr - GX_VA_POS;
 
   assert((cpIdx & ~0xF) == 0);
+
+  if (!aurora::gx::fifo::in_display_list()) {
+    const auto id = aurora::gx::immutable::producer_admission(data, size, aurora::gx::immutable::SourceKind::Array);
+    if (id != 0) {
+      // Bind and stride are one checked append; no partially accepted source record.
+      u8 record[23] = {GX_AURORA, u8(GX_AURORA_LOAD_IMMUTABLE_ARRAY >> 8),
+                       u8(GX_AURORA_LOAD_IMMUTABLE_ARRAY), u8(cpIdx)};
+      for (unsigned i = 0; i < 8; ++i) record[4 + i] = u8(id >> (56 - i * 8));
+      for (unsigned i = 0; i < 4; ++i) record[12 + i] = u8(size >> (24 - i * 8));
+      record[16] = le ? 1 : 0;
+      record[17] = GX_LOAD_CP_REG;
+      record[18] = CP_REG_ARRAYSTRIDE_ID | cpIdx;
+      record[22] = stride;
+      (void)aurora::gx::fifo::write_checked(record, sizeof(record));
+      return;
+    }
+  }
 
   // Write array base
   GX_WRITE_AURORA(GX_AURORA_LOAD_ARRAYBASE | cpIdx);

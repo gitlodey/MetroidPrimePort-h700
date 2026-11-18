@@ -372,7 +372,8 @@ TEST_F(H700NativeVertex, SourceHooksKeepSelectionRecordingMergeAndRealBindConnec
   EXPECT_NE(gate.find("native_vertex_limits_valid(sc.vtxStride, gfx::detail::resources().limits)"), std::string::npos);
   EXPECT_NE(gx.find("config.shaderConfig.nativeVertex = native_vertex_for_state(config.shaderConfig)"), std::string::npos);
   const auto processor = source_file("/gx/command_processor.cpp");
-  EXPECT_NE(processor.find("cache.config.shaderConfig.nativeVertex == native_vertex_for_state(cache.config.shaderConfig)"), std::string::npos);
+  EXPECT_NE(processor.find("cache.config.shaderConfig.decodedNative == (decodedMesh != nullptr)"), std::string::npos);
+  EXPECT_NE(processor.find("(decodedMesh ? false : native_vertex_for_state(cache.config.shaderConfig))"), std::string::npos);
   EXPECT_NE(processor.find(".nativeVertexStride = native_vertex_stride(cache.config.shaderConfig)"), std::string::npos);
   const auto merge = section(processor, "const bool canMerge =", "handle_draw_unmerged(prim, fmt, vtxCount, vertRange);");
   EXPECT_NE(merge.find("native_vertex_merge_compatible(*lastDraw, sDrawCache.config.shaderConfig,"), std::string::npos);

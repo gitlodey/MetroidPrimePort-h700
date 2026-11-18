@@ -106,7 +106,12 @@ bool generation_cpu_quiescence_held() noexcept;
 // False outside that boundary (without reading registries), or if EITHER producer retains
 // or processor entries remain, even with zero GPU bytes. Read-only: no polling/progress,
 // reset, release, enqueue or command consumption. True is NOT GPU completion/release and
-// does not authorize cleanup of other game-owner obligations.
+// does not authorize cleanup of other game-owner obligations. Also requires empty
+// immutable admission/ticket/processor registries; surviving owning CPU views are safe.
 bool resident_resources_empty() noexcept;
+// Root-only CPU source/ticket release, before the existing read-only obligation
+// guard. Rechecks the actual held checkpoint; no FIFO consumption or GPU release.
+// Held SourceViews remain alive and budget-accounted until their last owner dies.
+bool release_immutable_sources_at_cpu_quiescence() noexcept;
 #endif
 } // namespace aurora::h700

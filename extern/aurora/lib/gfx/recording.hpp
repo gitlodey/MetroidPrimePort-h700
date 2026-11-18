@@ -4,6 +4,7 @@
 #include "hdr_tone.hpp"
 
 #include <cstddef>
+#include <memory>
 #include <string>
 
 namespace aurora::gx {
@@ -23,6 +24,9 @@ void begin_recording(FramePacket& packet, size_t frameSlot);
 RecordedFrame end_recording();
 void shutdown_recording();
 void increment_merged_draw_count() noexcept;
+// Only native reservations can retain persistent geometry until actual slot reuse.
+bool geometry_pins_supported() noexcept;
+bool retain_geometry(std::shared_ptr<void> owner, uint64_t& lastPinFrame) noexcept;
 
 namespace testing {
 void suppress_render_worker(bool suppress) noexcept;

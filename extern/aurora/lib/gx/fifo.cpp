@@ -6,6 +6,8 @@
 #include "../h700/presentation.hpp"
 #endif
 #include "command_processor.hpp"
+#include <dolphin/gx/GXAurora.h>
+#include <dolphin/gx/GXCommandList.h>
 
 #include <algorithm>
 #include <atomic>
@@ -95,6 +97,7 @@ bool lock_buffer(std::unique_lock<std::mutex>& lock) {
 
 bool process_to(uint64_t target, std::memory_order order) noexcept {
   uint64_t processed = sProcessed.load(std::memory_order_relaxed);
+  uint32_t pendingCallBytes = 0;
   while (processed < target) {
     if (!healthy()) return false;
     ProcessResult result{};
@@ -108,20 +111,28 @@ bool process_to(uint64_t target, std::memory_order order) noexcept {
                     published);
       const auto start = static_cast<uint32_t>(processed - sStreamBase);
       const auto size = static_cast<uint32_t>(target - processed);
-      result = process(detail::sBufferData + start, size);
+      result = pendingCallBytes != 0 ? resume_immutable_list(pendingCallBytes)
+                                     : process(detail::sBufferData + start, size);
     }
-    AURORA_ASSERT(result.bytesProcessed > 0 && result.bytesProcessed <= target - processed,
+    AURORA_ASSERT(result.bytesProcessed <= target - processed &&
+                      (result.bytesProcessed != 0 || (result.drawDone && result.pendingCallBytes != 0)),
                   "FIFO processor made invalid progress: processed {} of {} remaining bytes", result.bytesProcessed,
                   target - processed);
+    AURORA_ASSERT(result.pendingCallBytes == 0 ||
+                      (result.drawDone && result.pendingCallBytes <= target - processed - result.bytesProcessed),
+                  "Pending immutable shortcall exceeds the accepted FIFO range");
+    pendingCallBytes = result.pendingCallBytes;
     if (!healthy()) return false;
     if (result.drawDone) {
       dispatch_draw_done();
     }
     // A cancelled waiter does not retire the range while its callback is executing.
     if (!healthy()) return false;
-    processed += result.bytesProcessed;
-    sProcessed.store(processed, order);
-    sProcessed.notify_all();
+    if (result.bytesProcessed != 0) {
+      processed += result.bytesProcessed;
+      sProcessed.store(processed, order);
+      sProcessed.notify_all();
+    }
   }
   return true;
 }
@@ -294,6 +305,24 @@ bool write_data_grow(const void* data, uint32_t length) {
   detail::sBufferSize = needed;
   detail::sBufferCapacity = newCapacity;
   return true;
+}
+
+bool write_checked(const void* data, uint32_t length) noexcept {
+  if (data == nullptr || length == 0 || detail::sInDisplayList || !detail::sWritesOpen || !healthy()) return false;
+  if (length > detail::sBufferCapacity - detail::sBufferSize) return write_data_grow(data, length);
+  // Only the producer appends; the worker cannot see this tail before publish().
+  // There is no failure point after the complete record's copy has started.
+  std::memcpy(detail::sBufferData + detail::sBufferSize, data, length);
+  detail::sBufferSize += length;
+  return true;
+}
+
+bool enqueue_ownership(uint16_t command, uint64_t sourceId) noexcept {
+  if (sourceId == 0 || (command != GX_AURORA_REGISTER_IMMUTABLE_SOURCE &&
+                        command != GX_AURORA_RELEASE_IMMUTABLE_SOURCE)) return false;
+  uint8_t record[11] = {GX_AURORA, uint8_t(command >> 8), uint8_t(command)};
+  for (unsigned i = 0; i < 8; ++i) record[3 + i] = uint8_t(sourceId >> (56 - i * 8));
+  return write_checked(record, sizeof(record));
 }
 
 void publish() noexcept {

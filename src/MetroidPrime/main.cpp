@@ -338,6 +338,9 @@ static void PortH700ClearGlobalAliases() {
                             ? "30s diagnostic deadline expired before CPU checkpoint"
                             : "exact CPU checkpoint unproven; root unwind forbidden");
   }
+  if (!aurora::h700::release_immutable_sources_at_cpu_quiescence()) {
+    PortH700RootFailStop(safePoint, checkpoint, "immutable CPU source retirement checkpoint unproven");
+  }
   if (!PortH700::RootCleanupAllowed(checkpoint, PortH700CleanupObligationsEmpty)) {
     PortH700RootFailStop(safePoint, checkpoint,
                         "room/resident obligations forbid no-new-graphics owner cleanup");

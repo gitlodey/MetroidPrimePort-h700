@@ -213,6 +213,10 @@ public:
     float x1134_weaponWorldLightingSpeed;
     float x1138_weaponWorldLightingTarget;
     int x113c_playerActorsLoading;
+#ifdef AURORA_H700
+    // CPU source registrations follow MRAM geometry lifetime, not renderer wrappers.
+    rstl::vector< u64 > mPortImmutableSources;
+#endif
 
     CPostConstructed();
   };
@@ -331,6 +335,10 @@ private:
   void ClearTokenList();
   void VerifyTokenList(CStateManager& mgr);
   void KillmAreaData();
+#ifdef AURORA_H700
+  void PortRegisterImmutableSource(const void* data, uint size, bool displayList);
+  void PortReleaseImmutableSources();
+#endif
   void LoadScriptObjects(CStateManager& mgr);
   void PostConstructArea();
   char* AllocNewAreaData(int offset, int size);

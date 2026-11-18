@@ -91,6 +91,7 @@ case "${MP_H700_BENCH-}" in
     [ "${MP_H700_PRODUCER_FLUSH+x}" != x ] || set -- "$@" "MP_H700_PRODUCER_FLUSH=$MP_H700_PRODUCER_FLUSH"
     [ "${MP_H700_MOVIE_CLIENT_UPLOAD+x}" != x ] || set -- "$@" "MP_H700_MOVIE_CLIENT_UPLOAD=$MP_H700_MOVIE_CLIENT_UPLOAD"
     [ "${MP_H700_FRAME_DEST_RING+x}" != x ] || set -- "$@" "MP_H700_FRAME_DEST_RING=$MP_H700_FRAME_DEST_RING"
+    [ "${MP_H700_RETAIL_GEOMETRY+x}" != x ] || set -- "$@" "MP_H700_RETAIL_GEOMETRY=$MP_H700_RETAIL_GEOMETRY"
     ;;
 esac
 [ "${MP_PASS_LOG+x}" != x ] || set -- "$@" "MP_PASS_LOG=$MP_PASS_LOG"

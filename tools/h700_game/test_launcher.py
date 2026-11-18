@@ -267,8 +267,9 @@ class LauncherTests(unittest.TestCase):
     def test_experimental_render_flags_are_forwarded_only_for_explicit_bench_route(self):
         for name in ('MP_H700_DRAW_UBO', 'MP_H700_FETCH_GATHER', 'MP_H700_NATIVE_VERTEX',
                      'MP_H700_PROGRAM_CACHE', 'MP_H700_PRODUCER_FLUSH',
-                     'MP_H700_MOVIE_CLIENT_UPLOAD', 'MP_H700_FRAME_DEST_RING'):
-            for mode in (None, '', '0', 'invalid'):
+                     'MP_H700_MOVIE_CLIENT_UPLOAD', 'MP_H700_FRAME_DEST_RING',
+                     'MP_H700_RETAIL_GEOMETRY'):
+            for mode in (None, '', '0', 'invalid', '01', ' 1', '1 ', 'MENU', 'menu '):
                 env = {**self.env, name: '1'}
                 if mode is not None:
                     env['MP_H700_BENCH'] = mode

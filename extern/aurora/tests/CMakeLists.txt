@@ -107,7 +107,8 @@ gtest_discover_tests(os_time_tests)
 
 if (AURORA_ENABLE_GX)
   # Actual GX source generator, CPU only: no Aurora/SDL/WebGPU initialization.
-  add_executable(h700_shader_generator_tests h700_shader_generator_test.cpp h700_native_vertex_test.cpp)
+  add_executable(h700_shader_generator_tests h700_shader_generator_test.cpp h700_native_vertex_test.cpp
+    h700_decoded_vertex_test.cpp)
   target_include_directories(h700_shader_generator_tests PRIVATE ../include ../lib)
   target_compile_definitions(h700_shader_generator_tests PRIVATE AURORA TARGET_PC
     $<$<BOOL:${AURORA_H700}>:AURORA_H700>
@@ -122,6 +123,29 @@ if (AURORA_ENABLE_GX)
   target_link_libraries(h700_shader_generator_tests PRIVATE gtest_main absl::btree absl::flat_hash_map)
   aurora_copy_runtime_dlls(h700_shader_generator_tests)
   gtest_discover_tests(h700_shader_generator_tests PROPERTIES TIMEOUT 10)
+
+  # PERF12 CPU snapshots, full-tuple decoder and retained allocation budget: no device.
+  add_executable(gx_immutable_source_tests gx_immutable_source_test.cpp ../lib/gx/immutable.cpp)
+  target_include_directories(gx_immutable_source_tests PRIVATE ../include)
+  target_compile_definitions(gx_immutable_source_tests PRIVATE AURORA_H700)
+  target_link_libraries(gx_immutable_source_tests PRIVATE Threads::Threads)
+  add_test(NAME gx_immutable_source COMMAND gx_immutable_source_tests)
+
+  add_executable(h700_decoded_cpu_tests ../../../tests/h700_decoded_cpu_test.cpp
+    ../lib/gx/decoded_cpu.cpp ../lib/gx/immutable.cpp)
+  target_include_directories(h700_decoded_cpu_tests PRIVATE ../include ../lib)
+  target_compile_definitions(h700_decoded_cpu_tests PRIVATE AURORA TARGET_PC
+    $<$<BOOL:${AURORA_H700}>:AURORA_H700>)
+  target_link_libraries(h700_decoded_cpu_tests PRIVATE fmt::fmt xxHash::xxhash absl::btree absl::flat_hash_map
+    dawn::dawncpp_headers ${AURORA_SDL3_TARGET})
+  add_test(NAME h700_decoded_cpu COMMAND h700_decoded_cpu_tests)
+
+  add_executable(h700_decoded_lifetime_tests h700_decoded_lifetime_test.cpp)
+  target_include_directories(h700_decoded_lifetime_tests PRIVATE ../include ../lib)
+  target_compile_definitions(h700_decoded_lifetime_tests PRIVATE AURORA TARGET_PC)
+  target_link_libraries(h700_decoded_lifetime_tests PRIVATE gtest_main Threads::Threads fmt::fmt xxHash::xxhash
+    absl::btree absl::flat_hash_map dawn::dawncpp_headers ${AURORA_SDL3_TARGET})
+  gtest_discover_tests(h700_decoded_lifetime_tests PROPERTIES TIMEOUT 10)
 
   # GX FIFO round-trip tests
   # Compile GX sources directly to avoid pulling in the full renderer/WebGPU runtime
@@ -154,6 +178,9 @@ if (AURORA_ENABLE_GX)
     ../lib/gx/command_processor.cpp
     ../lib/gx/regs.cpp
     ../lib/gx/resident.cpp
+    ../lib/gx/immutable.cpp
+    ../lib/gx/decoded_geometry.cpp
+    gx_immutable_fifo_test.cpp
     ../lib/gfx/render_worker.cpp
     ../lib/thread.cpp
     # Display list reader/optimizer

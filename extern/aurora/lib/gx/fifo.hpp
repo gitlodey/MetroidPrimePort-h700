@@ -57,6 +57,14 @@ bool frame_active() noexcept;
 // Out-of-line slow path: grows internal buffer then appends data
 bool write_data_grow(const void* data, uint32_t length);
 
+// Main producer only, outside display-list recording. Appends a complete record
+// or nothing, never publishes. True transfers accepted ownership even if a later
+// backend failure leaves the record unprocessed; root must then retire its ticket.
+bool write_checked(const void* data, uint32_t length) noexcept;
+// One GX_AURORA REGISTER/RELEASE_IMMUTABLE_SOURCE record: u8 opcode, BE u16 command,
+// BE u64 non-reused source ID. Rejection leaves all FIFO bytes/watermarks unchanged.
+bool enqueue_ownership(uint16_t command, uint64_t sourceId) noexcept;
+
 inline void write_data(const void* data, const uint32_t length) {
   if (detail::sFailed.load(std::memory_order_acquire) || !detail::sWritesOpen) return;
   if (!detail::sInDisplayList)

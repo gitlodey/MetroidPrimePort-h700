@@ -10,6 +10,20 @@
 #include "dolphin/gx/GXGeometry.h"
 #include "dolphin/gx/GXLighting.h"
 #include "dolphin/gx/GXTev.h"
+#ifdef AURORA_H700
+#include "dolphin/gx/GXAurora.h"
+
+namespace PortGXImmutableDetail {
+inline bool ArrayLifetimeChanged(uint idx) {
+  static u64 epochs[12] = {};
+  if (idx >= 12) return false;
+  const u64 epoch = GXPortImmutableSourceEpoch();
+  const bool changed = epochs[idx] != epoch || epoch == ~u64(0);
+  epochs[idx] = epoch;
+  return changed;
+}
+} // namespace PortGXImmutableDetail
+#endif
 
 #ifndef CGX_INLINE
 #define CGX_INLINE inline
@@ -310,8 +324,13 @@ CGX_INLINE void CGX::SetArray(GXAttr attr, const void* data, uchar stride) {
 
 CGX_INLINE void CGX::SetArray(GXAttr attr, const void* data, uint size, uchar stride) {
   uint idx = attr - GX_VA_POS;
+#ifdef AURORA_H700
+  const bool sourceChanged = data != nullptr && PortGXImmutableDetail::ArrayLifetimeChanged(idx);
+#else
+  const bool sourceChanged = false;
+#endif
   if (data == nullptr ||
-      (sGXState.x0_arrayPtrs[idx] == data && sGXState.x4_arraySizes[idx] == size)) {
+      (!sourceChanged && sGXState.x0_arrayPtrs[idx] == data && sGXState.x4_arraySizes[idx] == size)) {
     return;
   }
   sGXState.x0_arrayPtrs[idx] = data;
@@ -323,8 +342,13 @@ CGX_INLINE void CGX::SetArray(GXAttr attr, const void* data, uint size, uchar st
 
 CGX_INLINE void CGX::SetArrayNative(GXAttr attr, const void* data, uint size, uchar stride) {
   uint idx = attr - GX_VA_POS;
+#ifdef AURORA_H700
+  const bool sourceChanged = data != nullptr && PortGXImmutableDetail::ArrayLifetimeChanged(idx);
+#else
+  const bool sourceChanged = false;
+#endif
   if (data == nullptr ||
-      (sGXState.x0_arrayPtrs[idx] == data && sGXState.x4_arraySizes[idx] == size)) {
+      (!sourceChanged && sGXState.x0_arrayPtrs[idx] == data && sGXState.x4_arraySizes[idx] == size)) {
     return;
   }
   sGXState.x0_arrayPtrs[idx] = data;

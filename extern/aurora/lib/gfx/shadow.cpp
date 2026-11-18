@@ -180,7 +180,7 @@ void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const vo
       }
       pass.SetImmediates(0, &immediates, sizeof(immediates));
       pass.SetBindGroup(1, resources.uniformBindGroup, 1, &draw.uniformRange.offset);
-      pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, draw.idxRange.offset, draw.idxRange.size);
+      gx::bind_draw_geometry(draw, pass);
       if (draw.indexCount == 0) {
         pass.Draw(draw.vtxCount, draw.instanceCount);
       } else {

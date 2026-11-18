@@ -704,7 +704,8 @@ struct ShaderConfig {
   u8 drawUniform : 1 = 0; // H700 bench: group 1 binding 1 instead of user immediates; part of the cache key
   u8 fetchGather : 1 = 0; // H700 bench: integer gather from vertex mirrors; part of the cache key
   u8 nativeVertex : 1 = 0; // H700 bench: raw BE direct attributes through native vertex inputs
-  u8 actorDecalSpare : 3 = 0; // named, so the byte has no padding bits (unique object representations)
+  u8 decodedNative : 1 = 0; // immutable decoded-native v1; raw attrs/vtxStride keep their FIFO semantics
+  u8 actorDecalSpare : 2 = 0; // named, so the byte has no padding bits (unique object representations)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -795,6 +796,70 @@ constexpr bool uses_native_vertex([[maybe_unused]] const ShaderConfig& sc) noexc
 }
 constexpr u8 native_vertex_stride(const ShaderConfig& sc) noexcept {
   return uses_native_vertex(sc) ? sc.vtxStride : 0;
+}
+
+// Geometry support only: the recorder must separately prove immutable ownership and pin the mesh.
+// Lighting, TEV, indirect textures and special colour/depth passes keep their original shading.
+constexpr bool decoded_native_eligible(const ShaderConfig& sc) noexcept {
+  if (sc.nativeVertex || sc.lineMode != 0 || sc.pbrBindPos || sc.attrs[GX_VA_POS].attrType == GX_NONE) {
+    return false;
+  }
+  for (size_t i = 0; i < sc.attrs.size(); ++i) {
+    const auto& a = sc.attrs[i];
+    if (a.attrType == GX_NONE) {
+      continue;
+    }
+    if (a.nbt3) {
+      return false;
+    }
+    if (i <= GX_VA_TEX7MTXIDX) {
+      if (a.attrType != GX_DIRECT || a.cnt != 1) {
+        return false;
+      }
+      continue;
+    }
+    if (i < GX_VA_POS || i > GX_VA_TEX7 ||
+        (a.attrType != GX_DIRECT && a.attrType != GX_INDEX8 && a.attrType != GX_INDEX16)) {
+      return false;
+    }
+    if (i == GX_VA_CLR0 || i == GX_VA_CLR1) {
+      if (a.cnt != 1 || (a.compType != GX_RGB565 && a.compType != GX_RGB8 && a.compType != GX_RGBX8 &&
+                         a.compType != GX_RGBA4 && a.compType != GX_RGBA6 && a.compType != GX_RGBA8)) {
+        return false;
+      }
+    } else {
+      if (a.frac > 31 || (a.compType != GX_U8 && a.compType != GX_S8 && a.compType != GX_U16 &&
+                          a.compType != GX_S16 && a.compType != GX_F32)) {
+        return false;
+      }
+      if ((i == GX_VA_POS && a.cnt != 2 && a.cnt != 3) || (i == GX_VA_NRM && a.cnt != 3) ||
+          (i >= GX_VA_TEX0 && a.cnt != 1 && a.cnt != 2)) {
+        return false;
+      }
+    }
+  }
+  for (const auto& tcg : sc.tcgs) {
+    if (tcg.type >= GX_TG_BUMP0 && tcg.type <= GX_TG_BUMP7) {
+      return false;
+    }
+    if (tcg.src == GX_MAX_TEXGENSRC) {
+      continue;
+    }
+    if ((tcg.type != GX_TG_MTX2x4 && tcg.type != GX_TG_MTX3x4 && tcg.type != GX_TG_SRTG) ||
+        (tcg.src != GX_TG_POS && tcg.src != GX_TG_NRM && tcg.src != GX_TG_COLOR0 && tcg.src != GX_TG_COLOR1 &&
+         !(tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) &&
+         !(tcg.src >= GX_TG_TEXCOORD0 && tcg.src <= GX_TG_TEXCOORD6))) {
+      return false;
+    }
+  }
+  return true;
+}
+constexpr bool uses_decoded_native([[maybe_unused]] const ShaderConfig& sc) noexcept {
+#ifdef AURORA_H700
+  return sc.decodedNative && decoded_native_eligible(sc);
+#else
+  return false;
+#endif
 }
 #ifdef AURORA_H700
 bool native_vertex_for_state(const ShaderConfig& sc) noexcept;

@@ -93,6 +93,57 @@ static u32 read_fifo_u32(const std::vector<u8>& bytes, size_t offset) {
          (static_cast<u32>(bytes[offset + 2]) << 8) | static_cast<u32>(bytes[offset + 3]);
 }
 
+TEST_F(GXFifoTest, CheckedOwnershipEnqueueIsOneUnpublishedBigEndianRecord) {
+  constexpr u64 id = 0x0102030405060708ull;
+  const auto published = aurora::gx::fifo::published_bytes();
+  const auto processed = aurora::gx::fifo::processed_bytes();
+  ASSERT_TRUE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_REGISTER_IMMUTABLE_SOURCE, id));
+  EXPECT_EQ(aurora::gx::fifo::published_bytes(), published);
+  EXPECT_EQ(aurora::gx::fifo::processed_bytes(), processed);
+  const auto bytes = capture_fifo();
+  const std::vector<u8> expected{GX_AURORA, 0, 0x75, 1, 2, 3, 4, 5, 6, 7, 8};
+  EXPECT_EQ(bytes, expected);
+}
+
+TEST_F(GXFifoTest, CheckedOwnershipRejectsUserDisplayListsWithoutWritingEitherBuffer) {
+  std::array<u8, 32> dl{};
+  dl.fill(0xCD);
+  const auto size = aurora::gx::fifo::get_buffer_size();
+  const auto published = aurora::gx::fifo::published_bytes();
+  aurora::gx::fifo::begin_display_list(dl.data(), dl.size());
+  EXPECT_FALSE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_REGISTER_IMMUTABLE_SOURCE, 1));
+  EXPECT_EQ(aurora::gx::fifo::end_display_list(), 0u);
+  EXPECT_EQ(aurora::gx::fifo::get_buffer_size(), size);
+  EXPECT_EQ(aurora::gx::fifo::published_bytes(), published);
+  EXPECT_TRUE(std::all_of(dl.begin(), dl.end(), [](u8 value) { return value == 0xCD; }));
+}
+
+TEST_F(GXFifoTest, CheckedOwnershipRejectsClosedWritesAndInvalidRecordsWithoutAppending) {
+  EXPECT_FALSE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_REGISTER_IMMUTABLE_SOURCE, 0));
+  EXPECT_FALSE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_RESIDENT_RETAIN, 1));
+  EXPECT_FALSE(aurora::gx::fifo::write_checked(nullptr, 4));
+  aurora::gx::fifo::DrainRequest drain;
+  aurora::gx::fifo::request_drain(drain);
+  const auto size = aurora::gx::fifo::get_buffer_size();
+  const auto published = aurora::gx::fifo::published_bytes();
+  EXPECT_FALSE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_RELEASE_IMMUTABLE_SOURCE, 1));
+  EXPECT_EQ(aurora::gx::fifo::get_buffer_size(), size);
+  EXPECT_EQ(aurora::gx::fifo::published_bytes(), published);
+}
+
+TEST_F(GXFifoTest, CheckedOwnershipGrowthPreservesCompleteRecordAndUnpublishedPrefix) {
+  const std::vector<u8> prefix(64 * 1024, GX_NOP);
+  aurora::gx::fifo::write_data(prefix.data(), prefix.size());
+  ASSERT_TRUE(aurora::gx::fifo::enqueue_ownership(GX_AURORA_RELEASE_IMMUTABLE_SOURCE, 9));
+  EXPECT_EQ(aurora::gx::fifo::published_bytes(), 0u);
+  const auto bytes = capture_fifo();
+  ASSERT_EQ(bytes.size(), prefix.size() + 11);
+  EXPECT_TRUE(std::equal(prefix.begin(), prefix.end(), bytes.begin()));
+  EXPECT_EQ(bytes[prefix.size()], GX_AURORA);
+  EXPECT_EQ(bytes[prefix.size() + 2], 0x76);
+  EXPECT_EQ(bytes.back(), 9);
+}
+
 TEST_F(GXFifoTest, FifoPublishesOnlyAtExplicitBoundary) {
   constexpr size_t largeCommandPrefixSize = 64 * 1024;
   const std::vector<u8> nops(largeCommandPrefixSize, GX_NOP);

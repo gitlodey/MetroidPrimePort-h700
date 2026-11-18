@@ -2,6 +2,7 @@
 #define DOLPHIN_GXAURORA_H
 
 #include <dolphin/types.h>
+#include <dolphin/gx/GXEnum.h>
 
 #if __cplusplus
 extern "C" {
@@ -360,6 +361,33 @@ extern "C" {
 // Payload:
 //   u32 mode (0 off, 1 on, 2 glow only), f32 rows[3][3] (all zero when off)
 #define GX_AURORA_SET_COLOR_MATRIX 0x0074
+
+// PERF12 CPU-only immutable source transport. No resident GPU regions are used.
+// REGISTER/RELEASE: u64 non-reused source ID; REGISTER consumes its checked CPU ticket.
+// ARRAY: u8 attrIndex (attr - GX_VA_POS), u64 ID, u32 size, u8 littleEndian.
+//        Followed by the ordinary CP array-stride write. Bind an owning CPU view,
+//        including for legacy/indexed-XF reads; never fall back to the original pointer.
+// CALL_DL: u64 ID, u32 size. Lookup requires ordered active admission; held views
+//         remain valid after RELEASE. Unknown/unregistered data keeps legacy opcodes.
+#define GX_AURORA_REGISTER_IMMUTABLE_SOURCE 0x0075
+#define GX_AURORA_RELEASE_IMMUTABLE_SOURCE 0x0076
+#define GX_AURORA_LOAD_IMMUTABLE_ARRAY 0x0077
+#define GX_AURORA_CALL_IMMUTABLE_DL 0x0078
+
+typedef enum GXPortImmutableKind {
+  GX_PORT_IMMUTABLE_ARRAY = 0,
+  GX_PORT_IMMUTABLE_DISPLAY_LIST = 1,
+} GXPortImmutableKind;
+
+// Main/game thread only, outside display-list recording. Makes one CPU snapshot;
+// 0 on invalid input, conflict, allocation/budget exhaustion or rejected enqueue.
+// The 32 MiB hard budget includes every surviving view, not merely registrations.
+u64 GXPortRegisterImmutableSource(const void* data, u32 size, GXPortImmutableKind kind);
+// Revokes future producer admission. False keeps a retirement obligation; held
+// CPU views are safe independently of game memory. An already retired ID is inert.
+GXBool GXPortUnregisterImmutableSource(u64 sourceId);
+// Main-only shadow-cache epoch; unchanged when no source lifetime has changed.
+u64 GXPortImmutableSourceEpoch(void);
 
 #define GX2_SET_POLYGON_OFFSET 0x1000
 

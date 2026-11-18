@@ -21,6 +21,10 @@
 #include "WorldFormat/CAreaBspTree.hpp"
 #include "WorldFormat/CAreaOctTree.hpp"
 #include "WorldFormat/CPVSAreaSet.hpp"
+#ifdef AURORA_H700
+#include <dolphin/gx/GXAurora.h>
+#include "port_h700_game_failure.h"
+#endif
 
 #ifdef TARGET_PC
 #include "port_pipeline_context.h"
@@ -280,7 +284,34 @@ static rstl::pair< rstl::auto_ptr< char[] >, int > GetScriptingMemoryAlways(cons
   return rstl::pair< rstl::auto_ptr< char[] >, int >(nullptr, 0);
 }
 
+#ifdef AURORA_H700
+void CGameArea::PortRegisterImmutableSource(const void* data, uint size, bool displayList) {
+  if (data == nullptr || size == 0) return;
+  rstl::vector< u64 >& sources = x12c_postConstructed->mPortImmutableSources;
+  // Allocate bookkeeping before transferring ownership to the FIFO.
+  if (sources.size() == sources.capacity()) sources.reserve(sources.size() + 16);
+  const u64 id = GXPortRegisterImmutableSource(
+      data, size, displayList ? GX_PORT_IMMUTABLE_DISPLAY_LIST : GX_PORT_IMMUTABLE_ARRAY);
+  if (id != 0) sources.push_back(id);
+}
+
+void CGameArea::PortReleaseImmutableSources() {
+  if (x12c_postConstructed.get() == nullptr) return;
+  rstl::vector< u64 >& sources = x12c_postConstructed->mPortImmutableSources;
+  for (int i = 0; i < sources.size(); ++i) {
+    if (!GXPortUnregisterImmutableSource(sources[i])) {
+      PortH700::NoteGameFailure(PortH700::GameFailure::Backend, "CGameArea immutable source release");
+    }
+  }
+  // Rejected releases remain owned by the immutable registry until root quiescence.
+  sources.clear();
+}
+#endif
+
 void CGameArea::FillInStaticGeometry() {
+#ifdef AURORA_H700
+  PortReleaseImmutableSources();
+#endif
   AUTO(section, x110_mreaSecBufs.begin() + x12c_postConstructed->x10ec_firstMatSection);
   x12c_postConstructed->x10d4_firstMatPtr = reinterpret_cast< const u8* >(section->first.get());
   x12c_postConstructed->x4c_insts.clear();
@@ -303,11 +334,27 @@ void CGameArea::FillInStaticGeometry() {
         CBasics::SwapBytes(*reinterpret_cast< const uint* >((++section)->first.get()));
     ++section;
     if (surfaceCount != 0) {
+#ifdef AURORA_H700
+      PortRegisterImmutableSource(positions, positionsSize, false);
+      PortRegisterImmutableSource(normals, normalsSize, false);
+      PortRegisterImmutableSource(colors, colorsSize, false);
+      PortRegisterImmutableSource(texCoords, texCoordsSize, false);
+      PortRegisterImmutableSource(packedTexCoords, packedTexCoordsSize, false);
+#endif
       surfaces.reserve(surfaceCount);
       for (uint surface = 0; surface < surfaceCount; ++surface) {
         if (!x12c_postConstructed->x1108_31_surfaceHeadersNative) {
           CCubeSurface::ConvertSurfaceHeader(section->first.get());
         }
+#ifdef AURORA_H700
+        const CCubeSurface sourceSurface(section->first.get());
+        const uint headerSize = sourceSurface.GetSurfaceHeaderSize();
+        const uint dlSize = sourceSurface.GetDisplayListSize();
+        if (section->second > 0 && headerSize <= uint(section->second) &&
+            dlSize <= uint(section->second) - headerSize) {
+          PortRegisterImmutableSource(sourceSurface.GetDisplayList(), dlSize, true);
+        }
+#endif
         surfaces.push_back(section->first.get());
         ++section;
       }
@@ -762,6 +809,9 @@ void CGameArea::CullDeadAreaRequests() {
 }
 
 void CGameArea::KillmAreaData() {
+#ifdef AURORA_H700
+  PortReleaseImmutableSources();
+#endif
 #ifdef TARGET_PC
   for (AUTO(it, x110_mreaSecBufs.begin()); it != x110_mreaSecBufs.end(); ++it) {
     if (it->first.owner()) {
@@ -787,6 +837,9 @@ bool CGameArea::Invalidate(CStateManager* mgr) {
     if (!xf8_loadTransactions.empty()) {
       return false;
     }
+#ifdef AURORA_H700
+    PortReleaseImmutableSources();
+#endif
     x12c_postConstructed = nullptr;
     xf4_phase = kP_LoadHeader;
     KillmAreaData();
@@ -802,6 +855,9 @@ bool CGameArea::Invalidate(CStateManager* mgr) {
   }
   CMemoryDrawEnum::SubtractWorldMemory(GetPostConstructedSize());
   RemoveStaticGeometry();
+#ifdef AURORA_H700
+  PortReleaseImmutableSources();
+#endif
   x12c_postConstructed = nullptr;
   xf0_24_postConstructed = false;
   xf0_28_validated = false;
@@ -1004,6 +1060,9 @@ bool CGameArea::TransferARAMTokensOver(EARAMTransfer mode) {
 }
 
 bool CGameArea::TransferTokensToARAM() {
+#ifdef AURORA_H700
+  PortReleaseImmutableSources();
+#endif
   bool finished = true;
   int part = x12c_postConstructed->x10e8_;
   AUTO(it, x12c_postConstructed->x10f0_tokens.begin());
