@@ -265,7 +265,7 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(observed['MP_FAST_BOOT'], '1')
 
     def test_experimental_render_flags_are_forwarded_only_for_explicit_bench_route(self):
-        for name in ('MP_H700_DRAW_UBO', 'MP_H700_FETCH_GATHER'):
+        for name in ('MP_H700_DRAW_UBO', 'MP_H700_FETCH_GATHER', 'MP_H700_NATIVE_VERTEX'):
             for mode in (None, '', '0', 'invalid'):
                 env = {**self.env, name: '1'}
                 if mode is not None:

@@ -2,6 +2,7 @@
 
 #include "../gfx/types.hpp"
 #include "gx.hpp"
+#include "native_vertex.hpp"
 
 namespace aurora::gx {
 struct DrawData {
@@ -17,8 +18,10 @@ struct DrawData {
   uint32_t dstAlpha;
   // Instanced lines/points come from a u16 GX vertex count; merged triangles keep one instance.
   uint16_t instanceCount;
-  bool shadowGroup; // bindGroups.textureBindGroup has the shadow receiver layout
-  bool drawUniform = false;
+  u8 shadowGroup : 1 = false; // bindGroups.textureBindGroup has the shadow receiver layout
+  u8 drawUniform : 1 = false;
+  u8 drawSpare : 6 = 0;
+  u8 nativeVertexStride = 0; // recorded ABI: 0 = mirror fetch, 16/20 = raw BE native inputs
 };
 static_assert(sizeof(DrawData) <= gfx::InlineDrawPayloadSize);
 static_assert(std::is_trivially_copyable_v<DrawData> && std::is_aggregate_v<DrawData>);
@@ -35,6 +38,18 @@ inline bool draw_uniform_range_valid(const DrawData& draw, uint64_t bufferSize, 
          draw.drawUniformRange.offset % alignment == 0 &&
          draw.drawUniformRange.size == sizeof(DrawImmediateData) &&
          uint64_t{draw.drawUniformRange.offset} + draw.drawUniformRange.size <= bufferSize;
+}
+
+inline bool native_vertex_merge_compatible(const DrawData& draw, const ShaderConfig& config,
+                                           bool selected) noexcept {
+  return config.nativeVertex == selected && draw.nativeVertexStride == native_vertex_stride(config);
+}
+
+inline bool native_vertex_draw_range_valid(const DrawData& draw, uint64_t bufferSize,
+                                           const wgpu::Limits& limits) noexcept {
+  return draw.nativeVertexStride == 0 ||
+         native_vertex_binding_valid(draw.vertRange, draw.vtxCount, draw.instanceCount, draw.nativeVertexStride,
+                                     bufferSize, limits);
 }
 
 constexpr uint32_t GXPipelineConfigVersion = 16;

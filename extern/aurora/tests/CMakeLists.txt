@@ -107,7 +107,7 @@ gtest_discover_tests(os_time_tests)
 
 if (AURORA_ENABLE_GX)
   # Actual GX source generator, CPU only: no Aurora/SDL/WebGPU initialization.
-  add_executable(h700_shader_generator_tests h700_shader_generator_test.cpp)
+  add_executable(h700_shader_generator_tests h700_shader_generator_test.cpp h700_native_vertex_test.cpp)
   target_include_directories(h700_shader_generator_tests PRIVATE ../include ../lib)
   target_compile_definitions(h700_shader_generator_tests PRIVATE AURORA TARGET_PC
     $<$<BOOL:${AURORA_H700}>:AURORA_H700>

@@ -32,6 +32,16 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
   const auto label =
       fmt::format("GX Pipeline {:x} shader {:x}", xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),
                   xxh3_hash(config.shaderConfig));
+  if (uses_native_vertex(config.shaderConfig)) {
+    const auto stride = config.shaderConfig.vtxStride;
+    if (!native_vertex_limits_valid(stride, gfx::detail::resources().limits)) {
+      Log.error("Refusing native GX vertex layout: stride {} exceeds granted vertex limits", stride);
+      return {};
+    }
+    const auto attributes = native_vertex_attributes(stride);
+    const std::array layouts{native_vertex_layout(stride, attributes)};
+    return build_pipeline(config, layouts, shader, label.c_str(), dstAlphaMode);
+  }
   return build_pipeline(config, {}, shader, label.c_str(), dstAlphaMode);
 }
 
@@ -63,6 +73,16 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
     pass.SetBindGroup(2, g_emptyTextureBindGroup);
     gfx::forget_texture_group();
     sShadowGroupBound = false;
+  }
+  if (data.nativeVertexStride != 0) {
+    AURORA_ASSERT(gfx::g_mixedFetch && resources.vertexBuffer &&
+                      (resources.vertexBuffer.GetUsage() & wgpu::BufferUsage::Vertex) != wgpu::BufferUsage::None,
+                  "GX native vertex buffer unavailable");
+    AURORA_ASSERT(native_vertex_draw_range_valid(data, resources.vertexBuffer.GetSize(), resources.limits),
+                  "GX native vertex mode/range mismatch");
+    // Indices remain local to this slice. Neither baseVertex nor imm.vtx_start is
+    // added in the native shader; the slice offset is applied exactly once here.
+    pass.SetVertexBuffer(0, resources.vertexBuffer, data.vertRange.offset, data.vertRange.size);
   }
   pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
   if (data.dstAlpha != UINT32_MAX) {

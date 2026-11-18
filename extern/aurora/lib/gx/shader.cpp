@@ -4378,8 +4378,27 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     vtxXfrAttrsPre += "\n    let in_pnmtxidx = imm.current_pnmtx;";
   }
 
+  // Native inputs are raw FIFO words, not host-endian floating-point attributes.
+  // The bound slice already starts at this draw's first vertex.
+  if (uses_native_vertex(config)) {
+    vtxInAttrs += ",\n    @location(0) native_pos: vec3u";
+    vtxInAttrs += config.vtxStride == 16 ? ",\n    @location(1) native_uv: u32"
+                                       : ",\n    @location(1) native_uv: vec2u";
+    vtxXfrAttrsPre +=
+        "\n    let in_pos = bitcast<vec3f>(vec3u(bswap32(native_pos.x, false),"
+        " bswap32(native_pos.y, false), bswap32(native_pos.z, false)));";
+    if (config.vtxStride == 16) {
+      vtxXfrAttrsPre += fmt::format(
+          "\n    let in_tex0_uv = vec2f(f32(bswap16(native_uv & 0xFFFFu, false)),"
+          " f32(bswap16(native_uv >> 16u, false))) / f32(1u << {}u);", config.attrs[GX_VA_TEX0].frac);
+    } else {
+      vtxXfrAttrsPre +=
+          "\n    let in_tex0_uv = bitcast<vec2f>(vec2u(bswap32(native_uv.x, false), bswap32(native_uv.y, false)));";
+    }
+  }
   // Load vertex attributes
-  for (GXAttr attr = GX_VA_PNMTXIDX; attr <= GX_VA_TEX7; attr = static_cast<GXAttr>(attr + 1)) {
+  for (GXAttr attr = GX_VA_PNMTXIDX; !uses_native_vertex(config) && attr <= GX_VA_TEX7;
+       attr = static_cast<GXAttr>(attr + 1)) {
     const auto attrType = config.attrs[attr].attrType;
     if (attrType == GX_NONE) {
       continue;

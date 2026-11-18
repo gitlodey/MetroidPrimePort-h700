@@ -113,12 +113,18 @@ constexpr bool fetch_gather_requested(const char* value, const char* bench) noex
   return value != nullptr && bench != nullptr && std::string_view{value} == "1" &&
          (std::string_view{bench} == "1" || std::string_view{bench} == "menu");
 }
+constexpr bool native_vertex_requested(const char* value, const char* bench) noexcept {
+  return value != nullptr && bench != nullptr && std::string_view{value} == "1" &&
+         (std::string_view{bench} == "1" || std::string_view{bench} == "menu");
+}
 #ifdef AURORA_H700
 bool draw_uniform_enabled() noexcept;
 bool fetch_gather_enabled() noexcept;
+bool native_vertex_enabled() noexcept;
 #else
 inline constexpr bool draw_uniform_enabled() noexcept { return false; }
 inline constexpr bool fetch_gather_enabled() noexcept { return false; }
+inline constexpr bool native_vertex_enabled() noexcept { return false; }
 #endif
 
 extern wgpu::BindGroup g_emptyTextureBindGroup;
@@ -697,7 +703,8 @@ struct ShaderConfig {
   u8 colorMatrix : 1 = 0;
   u8 drawUniform : 1 = 0; // H700 bench: group 1 binding 1 instead of user immediates; part of the cache key
   u8 fetchGather : 1 = 0; // H700 bench: integer gather from vertex mirrors; part of the cache key
-  u8 actorDecalSpare : 4 = 0; // named, so the byte has no padding bits (unique object representations)
+  u8 nativeVertex : 1 = 0; // H700 bench: raw BE direct attributes through native vertex inputs
+  u8 actorDecalSpare : 3 = 0; // named, so the byte has no padding bits (unique object representations)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -746,6 +753,54 @@ constexpr bool draw_uniform_state_eligible(const GXState& state) noexcept {
 inline bool draw_uniform_for_state(const ShaderConfig& sc) noexcept {
   return draw_uniform_enabled() && draw_uniform_state_eligible(g_gxState) && draw_uniform_eligible(sc);
 }
+constexpr bool native_vertex_eligible(const ShaderConfig& sc) noexcept {
+  if (!draw_uniform_eligible(sc) || sc.numIndStages != 0) {
+    return false;
+  }
+  for (size_t i = 0; i < sc.attrs.size(); ++i) {
+    if (i != GX_VA_POS && i != GX_VA_TEX0 && sc.attrs[i].attrType != GX_NONE) {
+      return false;
+    }
+  }
+  const auto& pos = sc.attrs[GX_VA_POS];
+  const auto& uv = sc.attrs[GX_VA_TEX0];
+  if (pos.attrType != GX_DIRECT || pos.compType != GX_F32 || pos.cnt != 3 || pos.offset != 0 ||
+      pos.stride != 0 || pos.le || pos.nbt3 || uv.attrType != GX_DIRECT || uv.cnt != 2 || uv.offset != 12 ||
+      uv.stride != 0 || uv.le || uv.nbt3 || uv.frac > 31) {
+    return false;
+  }
+  if (!((uv.compType == GX_F32 && sc.vtxStride == 20) || (uv.compType == GX_U16 && sc.vtxStride == 16))) {
+    return false;
+  }
+  for (const auto& cc : sc.colorChannels) {
+    if (cc.lightingEnabled) {
+      return false;
+    }
+  }
+  for (const auto& tcg : sc.tcgs) {
+    if (tcg.src != GX_MAX_TEXGENSRC &&
+        ((tcg.src != GX_TG_POS && tcg.src != GX_TG_TEX0) ||
+         (tcg.type != GX_TG_MTX2x4 && tcg.type != GX_TG_MTX3x4))) {
+      return false;
+    }
+  }
+  return true;
+}
+constexpr bool uses_native_vertex([[maybe_unused]] const ShaderConfig& sc) noexcept {
+#ifdef AURORA_H700
+  return sc.nativeVertex && native_vertex_eligible(sc);
+#else
+  return false;
+#endif
+}
+constexpr u8 native_vertex_stride(const ShaderConfig& sc) noexcept {
+  return uses_native_vertex(sc) ? sc.vtxStride : 0;
+}
+#ifdef AURORA_H700
+bool native_vertex_for_state(const ShaderConfig& sc) noexcept;
+#else
+inline constexpr bool native_vertex_for_state(const ShaderConfig&) noexcept { return false; }
+#endif
 // The fog as the pipeline sees it: GX_FOG_NONE only for the drawid view, the actor decal and the
 // silhouette shell, which never fog; every other draw takes the fogged pipeline and the Fog
 // uniform's kind (0 = none) turns it off, so a draw fogged in one room and not in another is one

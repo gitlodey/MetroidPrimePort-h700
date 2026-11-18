@@ -1,6 +1,7 @@
 #include "gx.hpp"
 
 #include "pipeline.hpp"
+#include "native_vertex.hpp"
 #include "texture.hpp"
 #include "../dolphin/vi/vi_internal.hpp"
 #include "../webgpu/gpu.hpp"
@@ -268,6 +269,16 @@ bool draw_uniform_enabled() noexcept {
 bool fetch_gather_enabled() noexcept {
   static const bool enabled = fetch_gather_requested(std::getenv("MP_H700_FETCH_GATHER"), std::getenv("MP_H700_BENCH"));
   return enabled;
+}
+
+bool native_vertex_enabled() noexcept {
+  static const bool enabled = native_vertex_requested(std::getenv("MP_H700_NATIVE_VERTEX"), std::getenv("MP_H700_BENCH"));
+  return enabled;
+}
+
+bool native_vertex_for_state(const ShaderConfig& sc) noexcept {
+  return native_vertex_enabled() && draw_uniform_state_eligible(g_gxState) && native_vertex_eligible(sc) &&
+         native_vertex_limits_valid(sc.vtxStride, gfx::detail::resources().limits);
 }
 #endif
 
@@ -722,6 +733,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
                                     shell == 0 && config.shaderConfig.actorDecal == 0;
   config.shaderConfig.drawUniform = draw_uniform_for_state(config.shaderConfig);
   config.shaderConfig.fetchGather = fetch_gather_enabled();
+  config.shaderConfig.nativeVertex = native_vertex_for_state(config.shaderConfig);
   // Field by field: an aggregate assignment would copy the 2.7 KB shader config twice more on
   // every pipeline switch. Every field outside shaderConfig is written here.
   config.version = GXPipelineConfigVersion;
@@ -1118,6 +1130,9 @@ void initialize() noexcept {
     }
     if (fetch_gather_enabled()) {
       Log.info("H700 vertex mirror integer gather candidate enabled (bench only)");
+    }
+    if (native_vertex_enabled()) {
+      Log.info("H700 native direct vertex input candidate enabled (bench only)");
     }
   }
   {
