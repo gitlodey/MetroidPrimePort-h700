@@ -1,5 +1,6 @@
 #include "presentation.hpp"
 #include "diagnostics.hpp"
+#include "forward_wait.hpp"
 #include "presentation_timing.hpp"
 
 #include "../internal.hpp"
@@ -676,36 +677,55 @@ std::array<std::shared_ptr<NativeFlight>, 2> flights_snapshot() {
   std::lock_guard lock(backend->flights_mutex);
   return backend->flights;
 }
-void poll_forward(const std::shared_ptr<NativeFlight>& flight) {
-  if (!flight->published.load(std::memory_order_acquire) || flight->forward_observed || !flight->forward.id) return;
-  wgpu::FutureWaitInfo info{.future = flight->forward};
+void poll_forward(const std::array<std::shared_ptr<NativeFlight>, 2>& flights) {
+  // Retain selected flights with the same indices as their wait infos through result handling.
+  std::array<std::shared_ptr<NativeFlight>, 2> selected{};
+  std::array<wgpu::FutureWaitInfo, 2> infos{};
+  size_t count = 0;
+  for (const auto& flight : flights) {
+    if (!flight || !flight->published.load(std::memory_order_acquire) ||
+        flight->forward_observed || !flight->forward.id) continue;
+    selected[count] = flight;
+    infos[count].future = flight->forward;
+    ++count;
+  }
+  if (count == 0) return;
   const auto wait = probe_wall_call(backend->gl_timing_enabled,
-      [&] { return webgpu::g_instance.WaitAny(1, &info, 0); },
+      [&] { return webgpu::g_instance.WaitAny(count, infos.data(), 0); },
       [](uint64_t wall_ns, wgpu::WaitStatus result) {
         const auto outcome = result == wgpu::WaitStatus::TimedOut ? GLWall::WaitOutcome::TimedOut
             : result == wgpu::WaitStatus::Success ? GLWall::WaitOutcome::Signaled : GLWall::WaitOutcome::Other;
         backend->gl_wall.record_wait(GLWall::ForwardWaitAny, wall_ns, 0, 0, outcome);
       });
-  if (wait == wgpu::WaitStatus::TimedOut) return;
-  if (wait != wgpu::WaitStatus::Success || !info.completed || !flight->callback_called.load(std::memory_order_acquire)) {
-    quarantine_frame(flight->descriptor, "H700 forward wait unresolved; future/callback retained");
-    return;
+  const auto wait_status = wait == wgpu::WaitStatus::TimedOut ? ForwardWaitStatus::TimedOut
+      : wait == wgpu::WaitStatus::Success ? ForwardWaitStatus::Success : ForwardWaitStatus::Error;
+  for (size_t i = 0; i < count; ++i) {
+    const auto& flight = selected[i];
+    const bool callback_called = wait_status == ForwardWaitStatus::Success && infos[i].completed &&
+        flight->callback_called.load(std::memory_order_acquire);
+    const auto decision = forward_wait_decision(wait_status, infos[i].completed, callback_called,
+        callback_called && flight->status.load(std::memory_order_relaxed) == wgpu::QueueWorkDoneStatus::Success);
+    if (decision == ForwardWaitDecision::Pending) continue;
+    if (decision == ForwardWaitDecision::Unresolved) {
+      quarantine_frame(flight->descriptor, "H700 forward wait unresolved; future/callback retained");
+      continue;
+    }
+    flight->forward_observed = true;
+    if (decision == ForwardWaitDecision::WorkFailed) {
+      quarantine_frame(flight->descriptor, "H700 forward work-done wait/status failed");
+      continue;
+    }
+    flight->wall.completion_observed = FrameWallTimings::Clock::now();
+    const auto ownership = backend->state->snapshot();
+    const auto& slot = ownership.slots[flight->descriptor.slot];
+    if (!slot.descriptor || *slot.descriptor != flight->descriptor) {
+      backend->state->fail("H700 stale forward completion");
+    } else if (slot.status == SlotStatus::Submitted &&
+               !backend->state->complete_forward(flight->descriptor, flight->forward.id)) {
+      quarantine_frame(flight->descriptor, "H700 forward transition failed");
+    }
+    // A quarantined publication is still observed and retained, never converted into Ready.
   }
-  flight->forward_observed = true;
-  if (flight->status.load(std::memory_order_relaxed) != wgpu::QueueWorkDoneStatus::Success) {
-    quarantine_frame(flight->descriptor, "H700 forward work-done wait/status failed");
-    return;
-  }
-  flight->wall.completion_observed = FrameWallTimings::Clock::now();
-  const auto ownership = backend->state->snapshot();
-  const auto& slot = ownership.slots[flight->descriptor.slot];
-  if (!slot.descriptor || *slot.descriptor != flight->descriptor) {
-    backend->state->fail("H700 stale forward completion");
-  } else if (slot.status == SlotStatus::Submitted &&
-             !backend->state->complete_forward(flight->descriptor, flight->forward.id)) {
-    quarantine_frame(flight->descriptor, "H700 forward transition failed");
-  }
-  // A quarantined publication is still observed and retained, never converted into Ready.
 }
 bool poll_diagnostic_pixels(const std::shared_ptr<NativeFlight>& flight, bool teardown = false) {
   if (!teardown && !flight->published.load(std::memory_order_acquire)) return false;
@@ -1032,7 +1052,7 @@ bool main_progress_once() {
   if (backend->state->snapshot().phase == PresentationPhase::Failed)
     if (const auto observation = diagnostic::current()) observation->cancel(); // release own gates on real Dawn failure too
   const auto flights = flights_snapshot();
-  for (const auto& flight : flights) if (flight) poll_forward(flight);
+  poll_forward(flights);
   if (backend->state->snapshot().phase != PresentationPhase::Failed)
     for (const auto& flight : flights) if (flight) (void)poll_diagnostic_pixels(flight);
   for (const auto& flight : flights) if (flight)

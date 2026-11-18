@@ -1,3 +1,4 @@
+#include "h700/forward_wait.hpp"
 #include "h700/presentation_state.hpp"
 
 #include <gtest/gtest.h>
@@ -31,6 +32,45 @@ void ordered(const std::string& text, std::initializer_list<std::string_view> pi
     const auto position = text.find(piece, next);
     ASSERT_NE(position, std::string::npos) << piece;
     next = position + piece.size();
+  }
+}
+
+TEST(H700PresentationIntegration, ForwardWaitTimeoutLeavesEveryEntryPending) {
+  for (bool completed : {false, true}) {
+    for (bool callback_called : {false, true}) {
+      for (bool work_succeeded : {false, true}) {
+        EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::TimedOut, completed, callback_called, work_succeeded),
+                  ForwardWaitDecision::Pending);
+      }
+    }
+  }
+}
+
+TEST(H700PresentationIntegration, ForwardWaitPartialSuccessOnlyCompletesReadyEntry) {
+  EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, true, true, true), ForwardWaitDecision::Complete);
+  for (bool callback_called : {false, true}) {
+    for (bool work_succeeded : {false, true}) {
+      EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, false, callback_called, work_succeeded),
+                ForwardWaitDecision::Pending);
+    }
+  }
+}
+
+TEST(H700PresentationIntegration, ForwardWaitCompletionRequiresCallbackAndSuccessfulStatus) {
+  EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, true, false, false), ForwardWaitDecision::Unresolved);
+  EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, true, false, true), ForwardWaitDecision::Unresolved);
+  EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, true, true, false), ForwardWaitDecision::WorkFailed);
+  EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Success, true, true, true), ForwardWaitDecision::Complete);
+}
+
+TEST(H700PresentationIntegration, ForwardWaitErrorQuarantinesEverySelectedEntry) {
+  for (bool completed : {false, true}) {
+    for (bool callback_called : {false, true}) {
+      for (bool work_succeeded : {false, true}) {
+        EXPECT_EQ(forward_wait_decision(ForwardWaitStatus::Error, completed, callback_called, work_succeeded),
+                  ForwardWaitDecision::Unresolved);
+      }
+    }
   }
 }
 
@@ -137,15 +177,47 @@ TEST(H700PresentationIntegration, ActualSubmitPublishesStatusBearingFutureWithou
   EXPECT_EQ(submit.find("SwapWindow("), std::string::npos);
   EXPECT_EQ(submit.find("eglSwapBuffers("), std::string::npos);
   EXPECT_EQ(submit.find("acquire_frame("), std::string::npos);
-  const auto forward = section(presentation, "void poll_forward(", "void poll_reverse(");
-  ordered(forward, {"WaitAny(1, &info, 0)", "wait == wgpu::WaitStatus::TimedOut", "!info.completed",
-                    "flight->callback_called.load", "wgpu::QueueWorkDoneStatus::Success", "complete_forward("});
+  const auto forward = section(presentation, "void poll_forward(", "bool poll_diagnostic_pixels(");
+  ordered(forward, {"WaitAny(count, infos.data(), 0)", "const auto& flight = selected[i]",
+                    "wait_status == ForwardWaitStatus::Success && infos[i].completed &&",
+                    "flight->callback_called.load(std::memory_order_acquire)",
+                    "forward_wait_decision(wait_status, infos[i].completed, callback_called",
+                    "callback_called && flight->status.load(std::memory_order_relaxed)",
+                    "wgpu::QueueWorkDoneStatus::Success", "if (decision == ForwardWaitDecision::Pending) continue",
+                    "if (decision == ForwardWaitDecision::Unresolved)",
+                    "quarantine_frame(flight->descriptor, \"H700 forward wait unresolved; future/callback retained\")",
+                    "continue;", "flight->forward_observed = true", "if (decision == ForwardWaitDecision::WorkFailed)",
+                    "quarantine_frame(flight->descriptor, \"H700 forward work-done wait/status failed\")", "continue;",
+                    "const auto ownership = backend->state->snapshot()", "!slot.descriptor || *slot.descriptor != flight->descriptor",
+                    "slot.status == SlotStatus::Submitted", "complete_forward(flight->descriptor, flight->forward.id)",
+                    "quarantine_frame(flight->descriptor, \"H700 forward transition failed\")"});
+}
+
+TEST(H700PresentationIntegration, ActualForwardBatchUsesOneSnapshotAndSkipsEmptyWait) {
+  const auto presentation = source("h700/presentation.cpp");
+  const auto forward = section(presentation, "void poll_forward(", "bool poll_diagnostic_pixels(");
+  ordered(forward, {"const std::array<std::shared_ptr<NativeFlight>, 2>& flights",
+                    "std::array<std::shared_ptr<NativeFlight>, 2> selected{}",
+                    "std::array<wgpu::FutureWaitInfo, 2> infos{}", "size_t count = 0",
+                    "for (const auto& flight : flights)",
+                    "if (!flight || !flight->published.load(std::memory_order_acquire) ||",
+                    "flight->forward_observed || !flight->forward.id) continue",
+                    "selected[count] = flight", "infos[count].future = flight->forward", "++count",
+                    "if (count == 0) return", "probe_wall_call(backend->gl_timing_enabled",
+                    "WaitAny(count, infos.data(), 0)", "for (size_t i = 0; i < count; ++i)",
+                    "const auto& flight = selected[i]", "forward_wait_decision("});
+  EXPECT_EQ(forward.find(".WaitAny("), forward.rfind(".WaitAny("));
+  EXPECT_EQ(forward.find("flights_snapshot("), std::string::npos);
+  const auto progress = section(presentation, "bool main_progress_once()", "std::array<std::optional<NativePending>");
+  ordered(progress, {"webgpu::poll_h700_device_events()", "const auto flights = flights_snapshot()", "poll_forward(flights)",
+                     "poll_diagnostic_pixels(flight)", "poll_reverse(flight)", "present_ready()"});
+  EXPECT_EQ(progress.find("poll_forward("), progress.rfind("poll_forward("));
 }
 
 TEST(H700PresentationIntegration, ActualMainProgressAndReverseOrderingNeverFakeCompletion) {
   const auto presentation = source("h700/presentation.cpp");
   const auto progress = section(presentation, "bool main_progress_once()", "std::array<std::optional<NativePending>");
-  ordered(progress, {"backend->progressing", "webgpu::g_instance.ProcessEvents()", "poll_forward(flight)", "present_ready()"});
+  ordered(progress, {"backend->progressing", "webgpu::g_instance.ProcessEvents()", "poll_forward(flights)", "present_ready()"});
   for (const auto forbidden : {"enqueue_", "window::poll_events(", "gfx::begin_frame(", "shutdown(", "callback()"}) {
     EXPECT_EQ(progress.find(forbidden), std::string::npos) << forbidden;
   }
@@ -222,10 +294,16 @@ TEST(H700PresentationIntegration, ProbeOffGateAndTypedEglResolverKeepRawCapabili
 TEST(H700PresentationIntegration, ProbeKeepsActualWaitArgumentsGuardsAndProgressOrder) {
   const auto presentation = source("h700/presentation.cpp");
   const auto forward = section(presentation, "void poll_forward(", "bool poll_diagnostic_pixels(");
-  ordered(forward, {"if (!flight->published", "probe_wall_call(backend->gl_timing_enabled",
-                    "WaitAny(1, &info, 0)", "record_wait(GLWall::ForwardWaitAny, wall_ns, 0, 0, outcome)",
-                    "if (wait == wgpu::WaitStatus::TimedOut) return", "!info.completed",
-                    "flight->callback_called.load", "wgpu::QueueWorkDoneStatus::Success", "complete_forward("});
+  ordered(forward, {"flight->published.load(std::memory_order_acquire)", "if (count == 0) return",
+                    "probe_wall_call(backend->gl_timing_enabled", "WaitAny(count, infos.data(), 0)",
+                    "result == wgpu::WaitStatus::TimedOut ? GLWall::WaitOutcome::TimedOut",
+                    "result == wgpu::WaitStatus::Success ? GLWall::WaitOutcome::Signaled : GLWall::WaitOutcome::Other",
+                    "record_wait(GLWall::ForwardWaitAny, wall_ns, 0, 0, outcome)",
+                    "wait == wgpu::WaitStatus::TimedOut ? ForwardWaitStatus::TimedOut",
+                    "wait == wgpu::WaitStatus::Success ? ForwardWaitStatus::Success : ForwardWaitStatus::Error",
+                    "flight->callback_called.load(std::memory_order_acquire)", "forward_wait_decision(",
+                    "wgpu::QueueWorkDoneStatus::Success", "if (decision == ForwardWaitDecision::Pending) continue",
+                    "if (decision == ForwardWaitDecision::Unresolved)", "complete_forward("});
   const auto reverse = section(presentation, "void poll_reverse(", "void report_frame_wall(");
   ordered(reverse, {"flight_for(flight->descriptor)", "*owned.reverse != reinterpret_cast<uintptr_t>(flight->reverse)",
                     "probe_wall_call(backend->gl_timing_enabled",
@@ -236,7 +314,7 @@ TEST(H700PresentationIntegration, ProbeKeepsActualWaitArgumentsGuardsAndProgress
   const auto progress = section(presentation, "bool main_progress_once()", "std::array<std::optional<NativePending>");
   ordered(progress, {"backend->progressing", "timed_progress_call<GLWall::ProcessEvents>",
                      "webgpu::g_instance.ProcessEvents()", "timed_progress_call<GLWall::DeviceLostPoll>",
-                     "webgpu::poll_h700_device_events()", "poll_forward(flight)", "poll_diagnostic_pixels(flight)",
+                     "webgpu::poll_h700_device_events()", "poll_forward(flights)", "poll_diagnostic_pixels(flight)",
                      "timed_progress_call<GLWall::ReversePoll>", "poll_reverse(flight)", "present_ready()",
                      "timed_progress_call<GLWall::ReversePoll>", "poll_reverse(flight)"});
   const auto report = section(presentation, "void report_frame_wall(", "void present_ready()");
