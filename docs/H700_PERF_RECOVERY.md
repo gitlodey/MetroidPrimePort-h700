@@ -43,10 +43,40 @@ Pinned Dawn zero-timeout completion poll действительно захват
 
 ## Следующий live шаг: PERF07 / producer flush A/B
 
-Пользователь подтвердил Select+Start exit и разрешил активные tests на свободной приставке. Первый PERF06 capture разделён по одновременно записанному power state; steady active tail138frames/12,1286s=11,378FPS. Submit12,45ms, completion-observed152,89ms; actual EGL waits~0,186ms/frame и множество timeout0/Pending. Значит, steady153ms не находятся внутри poll/mutex. Возврат меню и normal release stage11 после физического Select+Start записаны в логе.
+Пользователь подтвердил Select+Start exit и разрешил активные tests на свободной приставке. Первый PERF06 capture разделён по одновременно записанному power state; steady active tail138frames/12,1286s=11,378FPS. Submit12,45ms, completion-observed152,89ms; actual EGL waits~0,186ms/frame и множество timeout0/Pending. Значит, steady153ms не объясняются временем внутри измеренных poll/API envelopes. Возврат меню и Released/Done stage11 после физического Select+Start записаны в логе, но следом обнаружен поздний SIGSEGV: чистый process exit НЕ подтверждён.
 
 Проверяем только гипотезу задержанной producer dispatch: exact opt-in `MP_H700_PRODUCER_FLUSH=1` + bench1/menu добавляет один реальный glFlush после успешного создания нового Dawn FENCE/NATIVE_FENCE, пока известный live producer context current. Presenter/imported FD fences исключены; arguments/results/real completion/reverse/swap guards неизменны. Default OFF; glFinish не добавляется. Считать фактические типы sync и число flush. Если FPS не растёт или ожидание просто переезжает в Submit — кандидат не включать.
 
 Проверка: узкие CPU/source tests + existing incremental ARM64 build/package gates; один и тот же binary/меню/settings/cache, OFF→ON и при необходимости обратный контроль; simultaneous process/power/progress, без смешивания idle/transitions. Штатный muOS content-loader route с существующими configured flags, не bare SDL поверх меню. Не менять firmware, governors или services; остановка только identity-bound own game и один TERM с последующим actual release/lock drain. Исходные установки/сохранения не трогать.
 
-Прежний пользовательский diff progress и `.DS_Store` не включены в commits. Private scripts/evidence/results сохранены в ignored `build/h700-perf06-recovery/`.
+## Live результаты: прирост steady FPS не подтверждён
+
+PERF06: один user-launched process,21samples/~61,2s, simultaneous process identity/power/RAM/GL/progress. Сначала12samples powersave/480MHz/idle=true, затем9samples ondemand/1,008–1,512GHz/idle=false. Переход не смешивается со steady результатом; agent governor/services/clocks не менял.
+
+| Сохранённый запуск | FPS | Средний interval | Presented frames / report duration | Ограничение |
+| --- | ---: | ---: | ---: | --- |
+| PERF-02 |8,299|120,50ms|452 /54,4674s|История; power не записан|
+| UBO /GL timing OFF |7,381|135,48ms|123 /16,6635s|История; power не записан|
+| UBO /GL timing ON |7,837|127,60ms|131 /16,715s|История; power не записан|
+| GATHER /FPS ON |14,465|69,13ms|208 /14,38s|История; power не записан|
+| GATHER /FPS OFF |4,095|244,18ms|71 /17,3368s|Диагностика, не контролируемый FPS A/B|
+| NATIVE /FPS ON |11,300|88,50ms|207 /18,319s|Активный ondemand, прежний capture|
+| **PERF06 /cache ON /steady active** |**11,378**|**87,89ms**|**138 /12,1286s**|6последних полных report groups, после переходного участка|
+
+Разница PERF06 к NATIVE численно+0,69%, в пределах наблюдаемых колебаний; подтверждённого acceleration нет. Прежний лучший GATHER не превзойдён, но старые runs не matched A/B. Для30FPS всё ещё нужно~2,64×. Весь активный фрагмент дал13,073FPS/240frames/18,3582s, однако содержит переходную нестабильность (2s reports11,24–19,29FPS), поэтому не объявлен steady gain. Idle-фрагмент12,223FPS/351frames/28,7174s также не используется как доказательство ускорения.
+
+Steady frame-weighted means: prepare7,53ms, Queue::Submit12,42ms, completion-observed152,89ms, presenter0,572ms/swap0,040ms. Перекрывающиеся интервалы НЕ складывать.97indexed draws/frame:7,045ms API wall;4BufferSubData/frame:0,045ms; map/unmap~0,084/0,012ms. ProcessEvents2,826ms/frame, forwardWaitAny1,610ms/~83,8calls/frame; actual EGL waits0,186ms/~175,6calls/frame. Из24,239EGL polls23,906TimedOut, всеtimeout0/FLUSH, other0. Следовательно, нужно объяснить позднюю готовность fence/serial, не убрать реальный completion guard. GPU util в steady samples6–7%, minimum available в активной фазе381,5MiB; errors/slow-compile warnings в capture0. CPU window samples16→20: всего46,60% четырёхъядерной capacity; один Mali utility24,88% capacity≈одно ядро, роль compiler не установлена. Нет per-frame p95/p99:2s means ими не заменяются.
+
+### Выход: usability PASS, clean process exit FAIL
+
+Пользователь подтвердил физический chord и возврат меню. Final log после него: `H700 normal exit released: status=1 stage=11` (Released/Done, НЕ exit code), затем SIGSEGV. PC не атрибутирован библиотеке: maps не сохранены, stack offset соответствует signal handler. Game roots/Dawn/window retirement уже вернулись; первый прямой caller после release marker — `aurora_dvd_close`, затем return из platform main. Это точка следующей проверки, НЕ установленная причина crash. Нужны узкие before/after DVD close/return markers и maps до shutdown, без перестановки owner destruction наугад.
+
+### PERF07: LOCAL/package/upload PASS, runtime A/B НЕ выполнен
+
+Код `f285275cf307140a28f653023e5180e2e44a7998`. Incremental game build19,704s;94/94scoped CTest +269/269FIFO +16/16launcher tests и18staged gates PASS. Executable62,861,920bytes, SHA256 `abbf8b75eb2dd4e93631df37f55882dde600d2a927a4dc5a6e62382db9b22854`; source SHA256 `2fb1d4d05e99375ee0d8eca996979e6d8e1fccab5a43193b500c9ad63b87bfec`. Архив `build/h700-perf07-producer-flush/h700-perf07.tar.gz`, SHA256 `d05c142b55a3a15fe6f5c8af917ec8c3ac1af014bfc72369273c0677bde45f06`. Отдельный Ports пункт **Metroid Prime Unbound PERF07**,101payload checksum PASS, verified own warm PERF06 data copy; прежние установки не изменены.
+
+Штатный9-line content request +safe_quit не был подхвачен уже работающим muOS menu даже после одного поддерживаемого нейтрального BTN_C press/release. Два bounded observation windows не увидели нового game process; это не два game runs. Frontend не остановлен/не перезапущен, process signals0. Только собственный неиспользованный request/четыре runtime flags/marker отменены после проверки identity/bytes/no-child. Final proof: no game/lock/pending request,5route hashes unchanged. Не углубляться в launch framework ради своего A/B.
+
+Manual PERF07 entry теперь явно включает эксперимент `MP_H700_PRODUCER_FLUSH=1`; кодовый default остаётся OFF. Реального создания/типа sync/числа eager flush/FPS на Mali этим запуском ещё НЕ проверяли; прирост не заявлен. Следующий минимальный шаг — ручной PERF07 launch пользователем; затем actual capture и адресный разбор позднего quit. Разрешение уже дано, препятствие — неподхваченный automatic route, не approval.
+
+Прежний пользовательский diff progress и `.DS_Store` не включены в commits. Private scripts/evidence/results сохранены в ignored `build/h700-perf06-recovery/` и `build/h700-perf07-producer-flush/`.
