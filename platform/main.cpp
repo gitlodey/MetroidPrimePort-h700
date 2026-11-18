@@ -47,7 +47,9 @@
 #include "port_h700_init.h"
 #include "port_room_env.h"
 #include "port_room_liquid.h"
+#include <SDL3/SDL_init.h>
 #include <chrono>
+#include <dlfcn.h>
 #include <thread>
 #endif
 
@@ -95,6 +97,42 @@ extern "C" int metroid_main(int argc, char** argv);
 extern "C" void AIPortShutdown(void);
 
 namespace {
+#ifdef AURORA_H700
+static bool ShutdownH700NativeAudio() {
+    if (SDL_WasInit(SDL_INIT_AUDIO) != 0) {
+        PortLog::Write("port: H700 native audio retained: SDL3 audio owners remain\n");
+        return false;
+    }
+    void* library = dlopen("libSDL2-2.0.so.0", RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD);
+    if (library == nullptr) {
+        PortLog::Write("port: H700 native audio retained: loaded SDL2 unavailable: %s\n", dlerror());
+        return false;
+    }
+    const auto wasInit = reinterpret_cast<Uint32 (*)(Uint32)>(dlsym(library, "SDL_WasInit"));
+    const auto quitSubSystem = reinterpret_cast<void (*)(Uint32)>(dlsym(library, "SDL_QuitSubSystem"));
+    // On failure retain this handle too: the caller must not release video/SDL2.
+    if (!wasInit || !quitSubSystem) {
+        PortLog::Write("port: H700 native audio retained: SDL2 lifecycle symbols unavailable\n");
+        return false;
+    }
+    // The pinned shim never quits native AUDIO. Its ALSA hotplug thread sleeps in
+    // SDL2_Delay and must be joined before video unloads SDL2. Audio reinitialization
+    // may have accumulated native refs; no SDL3 audio owner remains to use them.
+    constexpr Uint32 nativeAudio = 0x00000010;
+    unsigned releasedRefs = 0;
+    for (; releasedRefs < 256 && wasInit(nativeAudio) != 0; ++releasedRefs) {
+        quitSubSystem(nativeAudio);
+    }
+    if (wasInit(nativeAudio) != 0) {
+        PortLog::Write("port: H700 native audio retained: SDL2 AUDIO still initialized\n");
+        return false;
+    }
+    if (dlclose(library) != 0) return false; // the video backend still holds its own SDL2 handle
+    PortLog::Write("port: H700 native audio released: refs=%u\n", releasedRefs);
+    return true;
+}
+#endif
+
 #if defined(__ANDROID__)
 // Aurora logs to stderr, which Android discards. Send it to logcat instead so
 // the Vulkan/audio/disc diagnostics are actually reachable on a device.
@@ -1743,8 +1781,14 @@ int main(int argc, char** argv) {
     PortDiscReplace::Shutdown();
     PortActorCollisionBounds::Reset();
 #ifdef AURORA_H700
-    // Game/resource-factory destructors have returned, and disc-dependent services are
-    // stopped. AIPortShutdown above must precede IG11's SDL_Quit (SDL_AudioStream owner).
+    // Game/audio owners and disc-dependent services have returned, including their
+    // callback/DMA waits. Native SDL2 AUDIO also owns the ALSA hotplug thread; the
+    // pinned shim does not stop it when SDL3 audio shuts down.
+    if (!ShutdownH700NativeAudio()) {
+        PortLog::Write("port: H700 normal exit fail-stop: native SDL2 audio release unproven; "
+                       "retaining main stack/runtime/disc; no SDL/video teardown or unwind\n");
+        for (;;) std::this_thread::sleep_for(std::chrono::seconds{1});
+    }
     // Leave the disc mounted until the full generation release is proven.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{30};
     const auto shutdown = PortH700::PollGenerationShutdown(
